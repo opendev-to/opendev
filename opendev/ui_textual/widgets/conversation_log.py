@@ -765,6 +765,14 @@ class ConversationLog(RichLog):
         """Check if there's an active parallel agent group."""
         return self._tool_renderer.has_active_parallel_group()
 
+    def has_expandable_single_agent(self) -> bool:
+        """Check if there's a completed single agent that can be expanded."""
+        return self._tool_renderer.has_expandable_single_agent()
+
+    def toggle_single_agent_expansion(self) -> bool:
+        """Toggle expand/collapse of last completed single agent's tool calls."""
+        return self._tool_renderer.toggle_single_agent_expansion()
+
     # --- Collapsible Output Methods ---
 
     def toggle_output_expansion(self) -> bool:

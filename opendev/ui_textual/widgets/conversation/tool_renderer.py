@@ -71,6 +71,17 @@ class AgentInfo:
 
 
 @dataclass
+@dataclass
+class SingleAgentToolRecord:
+    """Record of a single tool call within a subagent execution."""
+
+    tool_name: str
+    display_text: str
+    success: bool = True
+    elapsed_s: int = 0
+
+
+@dataclass
 class SingleAgentInfo:
     """Info for a single (non-parallel) agent execution."""
 
@@ -83,6 +94,7 @@ class SingleAgentInfo:
     current_tool: str = "Initializing..."
     status: str = "running"
     start_time: float = field(default_factory=time.monotonic)
+    tool_records: List["SingleAgentToolRecord"] = field(default_factory=list)
 
 
 @dataclass
@@ -144,6 +156,9 @@ class DefaultToolRenderer:
 
         # Single agent tracking (treat single agents like parallel group of 1)
         self._single_agent: Optional[SingleAgentInfo] = None
+        # Completed single agent info (for Ctrl+O expansion)
+        self._completed_single_agent: Optional[SingleAgentInfo] = None
+        self._single_agent_expanded: bool = False
 
         # Animation indices for single agent
         self._header_spinner_index = 0  # For ⠋⠙⠹... rotation
@@ -563,9 +578,15 @@ class DefaultToolRenderer:
             else:
                 tool_name = plain_text.split()[0] if plain_text.split() else "unknown"
 
-            # Count tool calls
+            # Count tool calls and store record for expansion
             self._single_agent.tool_count += 1
             self._single_agent.current_tool = plain_text
+            self._single_agent.tool_records.append(
+                SingleAgentToolRecord(
+                    tool_name=tool_name,
+                    display_text=plain_text,
+                )
+            )
 
             # Update header with rotating spinner
             self._update_header_spinner()
@@ -690,6 +711,14 @@ class DefaultToolRenderer:
         """
         if self._interrupted:
             return
+
+        # Update single agent tool records with completion status
+        if self._single_agent is not None and self._single_agent.tool_records:
+            # Find the most recent record for this tool and update it
+            for record in reversed(self._single_agent.tool_records):
+                if record.tool_name == tool_name and record.success is True:
+                    record.success = success
+                    break
 
         # Try to find the tool in multi-tool tracking dict
         state: Optional[NestedToolState] = None
@@ -1251,6 +1280,82 @@ class DefaultToolRenderer:
         self._parallel_expanded = not self._parallel_expanded
         return self._parallel_expanded
 
+    def has_expandable_single_agent(self) -> bool:
+        """Check if there's a completed single agent that can be expanded."""
+        return (
+            self._completed_single_agent is not None
+            and len(self._completed_single_agent.tool_records) > 0
+        )
+
+    def toggle_single_agent_expansion(self) -> bool:
+        """Toggle expand/collapse of the last completed single agent's tool calls.
+
+        Returns:
+            New expansion state (True = expanded)
+        """
+        agent = self._completed_single_agent
+        if agent is None or not agent.tool_records:
+            return False
+
+        self._single_agent_expanded = not self._single_agent_expanded
+
+        if self._single_agent_expanded:
+            # Expand: insert tool call lines after the tool_line
+            insert_at = agent.tool_line + 1
+            lines_to_insert = []
+            for record in agent.tool_records:
+                row = Text()
+                row.append("    ", style="")
+                status_char = "✓" if record.success else "✗"
+                status_color = SUCCESS if record.success else ERROR
+                row.append(f"{status_char} ", style=status_color)
+                row.append(record.display_text, style=SUBTLE)
+                lines_to_insert.append(self._text_to_strip(row))
+
+            # Insert lines into the log
+            for i, strip in enumerate(lines_to_insert):
+                self.log.lines.insert(insert_at + i, strip)
+
+            # Update tool_line summary hint
+            self._update_single_agent_summary(agent, "(ctrl+o to collapse)")
+
+            if hasattr(self.log, "_recalculate_virtual_size"):
+                self.log._recalculate_virtual_size()
+            self.log.refresh()
+        else:
+            # Collapse: remove the inserted tool call lines
+            insert_at = agent.tool_line + 1
+            count = len(agent.tool_records)
+            del self.log.lines[insert_at:insert_at + count]
+
+            # Restore tool_line summary hint
+            hint = " (ctrl+o to expand)" if agent.status == "failed" else ""
+            self._update_single_agent_summary(agent, hint)
+
+            if hasattr(self.log, "_recalculate_virtual_size"):
+                self.log._recalculate_virtual_size()
+            self.log.refresh()
+
+        return self._single_agent_expanded
+
+    def _update_single_agent_summary(self, agent: SingleAgentInfo, hint: str) -> None:
+        """Update the tool line summary with the given hint text."""
+        tool_word = "tool use" if agent.tool_count == 1 else "tool uses"
+        elapsed = int(time.monotonic() - agent.start_time)
+        tool_row = Text()
+        tool_row.append("  ⎿  ", style=GREY)
+        status_text = (
+            f"Failed ({agent.tool_count} {tool_word} · {elapsed}s)"
+            if agent.status == "failed"
+            else f"Done ({agent.tool_count} {tool_word} · {elapsed}s)"
+        )
+        style = ERROR if agent.status == "failed" else SUBTLE
+        tool_row.append(status_text, style=style)
+        if hint:
+            tool_row.append(f" {hint}", style=f"{SUBTLE} italic")
+        if agent.tool_line < len(self.log.lines):
+            self.log.lines[agent.tool_line] = self._text_to_strip(tool_row)
+
     def on_single_agent_start(self, agent_type: str, description: str, tool_call_id: str) -> None:
         """Called when a single agent starts (non-parallel execution).
 
@@ -1383,6 +1488,7 @@ class DefaultToolRenderer:
             tool_row.append(
                 f"Failed ({agent.tool_count} {tool_word} · {elapsed}s)", style=ERROR
             )
+            tool_row.append(" (ctrl+o to expand)", style=f"{SUBTLE} italic")
 
         strip = self._text_to_strip(tool_row)
         if agent.tool_line < len(self.log.lines):
@@ -1392,6 +1498,9 @@ class DefaultToolRenderer:
         # Add blank line for spacing before next content
         self._spacing.after_single_agent()
 
+        # Store for Ctrl+O expansion (keep tool records for user to inspect)
+        self._completed_single_agent = agent
+        self._single_agent_expanded = False
         self._single_agent = None
 
     def has_active_parallel_group(self) -> bool:

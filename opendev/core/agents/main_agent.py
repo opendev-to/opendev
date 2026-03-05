@@ -672,23 +672,48 @@ class MainAgent(BaseAgent):
                 if monitor is None and hasattr(self, "web_state"):
                     monitor = WebInterruptMonitor(self.web_state)
 
-                result = http_client.post_json(payload, task_monitor=monitor)
-                if not result.success or result.response is None:
-                    error_msg = result.error or "Unknown error"
-                    return {
-                        "content": error_msg,
-                        "messages": messages,
-                        "success": False,
-                    }
+                # Retry transient API errors (rate limits, server errors)
+                MAX_API_RETRIES = 3
+                api_retry_delays = [2, 5, 10]
+                result = None
+                last_api_error = ""
+                for api_attempt in range(MAX_API_RETRIES):
+                    result = http_client.post_json(payload, task_monitor=monitor)
+                    if not result.success or result.response is None:
+                        last_api_error = result.error or "Unknown error"
+                        if api_attempt < MAX_API_RETRIES - 1:
+                            import time as _time_mod
+                            _time_mod.sleep(api_retry_delays[api_attempt])
+                            continue
+                        return {
+                            "content": last_api_error,
+                            "messages": messages,
+                            "success": False,
+                        }
 
-                response = result.response
-                if response.status_code != 200:
-                    error_msg = f"API Error {response.status_code}: {response.text}"
-                    return {
-                        "content": error_msg,
-                        "messages": messages,
-                        "success": False,
-                    }
+                    response = result.response
+                    if response.status_code == 200:
+                        break  # Success
+                    elif response.status_code in (429, 500, 502, 503, 504):
+                        last_api_error = (
+                            f"API Error {response.status_code}: {response.text}"
+                        )
+                        if api_attempt < MAX_API_RETRIES - 1:
+                            import time as _time_mod
+                            _time_mod.sleep(api_retry_delays[api_attempt])
+                            continue
+                        return {
+                            "content": last_api_error,
+                            "messages": messages,
+                            "success": False,
+                        }
+                    else:
+                        # Non-retryable error
+                        return {
+                            "content": f"API Error {response.status_code}: {response.text}",
+                            "messages": messages,
+                            "success": False,
+                        }
 
                 response_data = response.json()
                 choice = response_data["choices"][0]
@@ -713,7 +738,7 @@ class MainAgent(BaseAgent):
                     for msg in reversed(messages):
                         if msg.get("role") == "tool":
                             content = msg.get("content", "")
-                            if content.startswith("Error:"):
+                            if content.startswith("Error"):
                                 last_tool_failed = True
                                 last_error_text = content
                             break
@@ -884,7 +909,7 @@ class MainAgent(BaseAgent):
                         if completion_status:
                             tool_result = f"[completion_status={completion_status}]\n{tool_result}"
                     else:
-                        tool_result = f"Error: {result.get('error', 'Tool execution failed')}"
+                        tool_result = f"Error in {tool_name}: {result.get('error', 'Tool execution failed')}"
                     # Append LLM-only suffix (e.g., retry prompts) - hidden from UI
                     if result.get("_llm_suffix"):
                         tool_result += result["_llm_suffix"]

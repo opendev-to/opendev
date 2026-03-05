@@ -1196,7 +1196,7 @@ Please provide refined reasoning that addresses these concerns. Keep it concise 
         for msg in reversed(ctx.messages):
             if msg.get("role") == "tool":
                 msg_content = msg.get("content", "")
-                if msg_content.startswith("Error:"):
+                if msg_content.startswith("Error"):
                     last_tool_failed = True
                 break
 
@@ -1802,7 +1802,7 @@ Please provide refined reasoning that addresses these concerns. Keep it concise 
             if completion_status:
                 tool_result = f"[completion_status={completion_status}]\n{tool_result}"
         else:
-            tool_result = f"Error: {result.get('error', 'Tool execution failed')}"
+            tool_result = f"Error in {tool_name}: {result.get('error', 'Tool execution failed')}"
 
         # Offload large outputs to scratch files
         tool_result = self._maybe_offload_output(

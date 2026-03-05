@@ -899,7 +899,8 @@ class SWECLIChatApp(App):
 
         Priority order:
         1. If there's an active parallel agent group, toggle its expansion
-        2. Otherwise, if there's collapsible output, toggle it
+        2. If there's a completed single agent with tool records, toggle its expansion
+        3. Otherwise, if there's collapsible output, toggle it
         """
         # First priority: parallel agent groups
         if hasattr(self.conversation, "has_active_parallel_group"):
@@ -907,7 +908,13 @@ class SWECLIChatApp(App):
                 self.conversation.toggle_parallel_expansion()
                 return
 
-        # Second priority: collapsible output regions
+        # Second priority: completed single agent tool expansion
+        if hasattr(self.conversation, "has_expandable_single_agent"):
+            if self.conversation.has_expandable_single_agent():
+                self.conversation.toggle_single_agent_expansion()
+                return
+
+        # Third priority: collapsible output regions
         if hasattr(self.conversation, "has_collapsible_output"):
             if self.conversation.has_collapsible_output():
                 self.conversation.toggle_output_expansion()
