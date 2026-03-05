@@ -1,0 +1,24 @@
+<!--
+name: 'System Context: Docker'
+description: Docker environment context
+version: 1.0.0
+-->
+
+## CRITICAL: Docker Environment
+
+YOU ARE RUNNING INSIDE A DOCKER CONTAINER.
+
+Working directory: {workspace_dir}
+All file paths MUST be relative (e.g., `file.py`, `src/file.py`) or start with {workspace_dir}/.
+
+NEVER use paths like:
+- /Users/...
+- /home/...
+- Any absolute path outside {workspace_dir}
+
+ALWAYS use paths like:
+- pyproject.toml
+- src/model.py
+- config.yaml
+
+Use ONLY the filename or relative path for all file operations.

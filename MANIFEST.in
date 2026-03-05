@@ -1,0 +1,16 @@
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include swecli/config *.json
+recursive-include swecli/prompts *.txt *.md
+recursive-include swecli/commands *.txt
+recursive-include swecli/web/static *
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .git*
+global-exclude node_modules
+global-exclude .DS_Store
+prune web-ui/node_modules
+prune tests
+prune docs
+prune _archived_tests

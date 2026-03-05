@@ -1,0 +1,249 @@
+Screen {
+    background: $background;
+}
+
+#main-container {
+    height: 1fr;
+    layout: vertical;
+    background: $background;
+}
+
+#welcome-panel {
+    width: 100%;
+    height: auto;
+    max-height: 60%;
+    content-align: center middle;
+    background: $background;
+    padding: 0;
+    overflow-y: hidden;
+}
+
+#conversation {
+    height: 1fr;
+    border: none;
+    background: $background;
+    padding: 1 2;
+    overflow-y: scroll;
+}
+
+Rule {
+    height: 1;
+    color: $text 30%;
+    background: transparent;
+    margin: 0;
+}
+
+#input-container {
+    height: auto;
+    layout: vertical;
+    background: $background;
+}
+
+#input-label {
+    height: 1;
+    content-align: left middle;
+    color: $text-muted;
+    background: $background;
+    padding: 0 2;
+}
+
+#input {
+    height: 5;
+    max-height: 15;
+    min-height: 3;
+    border: none;
+    background: $background;
+    padding: 1 2;
+}
+
+#autocomplete-popup {
+    display: none;
+    background: $surface-darken-3;
+    color: $text;
+    border: round $surface-darken-1;
+    padding: 0 1;
+    overflow-y: hidden;
+    margin: 0 2 0 2;
+    max-height: 10;
+}
+
+#status-bar {
+    height: 1;
+    background: $background;
+    color: $text-muted;
+    padding: 0 2;
+    content-align: left middle;
+}
+
+TextArea {
+    background: $background;
+    color: $text;
+    border: none;
+    min-width: 0;
+    content-align: left top;
+}
+
+TextArea:focus {
+    border-left: thick $accent;
+    background: $background;
+}
+
+Footer {
+    background: $background;
+    color: $text;
+}
+
+Footer > .footer--links {
+    color: $text-muted;
+}
+
+Footer > .footer--models {
+    color: $text-muted;
+    padding: 0 2;
+    width: 1fr;
+    min-width: 0;
+    height: auto;
+}
+
+Footer > .footer--keys {
+    background: transparent;
+}
+
+FooterKey {
+    background: $background;
+    color: $text;
+    border: none;
+}
+
+FooterKey .footer-key--key {
+    background: $background;
+    color: $text;
+}
+
+FooterKey .footer-key--description {
+    background: $background;
+    color: $text-muted;
+}
+
+FooterKey.-command-palette {
+    border-left: none;
+}
+
+FooterKey:hover {
+    background: $surface;
+    color: $accent;
+    .footer-key--key {
+        background: $surface;
+        color: $accent;
+    }
+    .footer-key--description {
+        background: $surface;
+        color: $accent;
+    }
+}
+
+Footer:ansi {
+    background: $background;
+    .footer-key--key {
+        background: $background;
+        color: $text;
+    }
+    .footer-key--description {
+        background: $background;
+        color: $text-muted;
+    }
+    FooterKey.-command-palette {
+        border-left: none;
+    }
+}
+
+Footer > .footer--text {
+    color: $text;
+}
+
+Footer > .footer--keys .key {
+    background: $surface-darken-1;
+    color: $text;
+    border: none;
+}
+
+Footer > .footer--keys .key:hover {
+    background: $surface;
+    color: $accent;
+}
+
+ScrollbarCorner {
+    background: #1e1e1e;
+}
+
+/* ============================================
+   PROGRESS BAR
+   ============================================ */
+
+#progress-bar {
+    height: 1;
+    width: 100%;
+    background: transparent;
+    text-align: left;
+    padding: 0 2;
+}
+
+/* ============================================
+   LOADING INDICATOR
+   ============================================ */
+
+/* ============================================
+   TODO PANEL
+   ============================================ */
+
+#todo-panel {
+    height: auto;
+    max-height: 12;
+    background: $background;
+    padding: 0 2;
+    display: none;
+}
+
+#todo-panel.collapsed {
+    display: block;
+    height: 2;
+    max-height: 2;
+    border-bottom: solid $surface;
+}
+
+#todo-panel.expanded {
+    display: block;
+    height: auto;
+    max-height: 12;
+    border-top: solid $surface;
+    border-bottom: solid $surface;
+}
+
+LoadingIndicator {
+    color: #007acc;              /* Muted blue (was bright cyan) */
+    background: transparent;
+}
+
+/* ============================================
+   DESIGN NOTES
+   ============================================
+
+   Color Palette:
+   - Background Primary: #1e1e1e (neutral dark gray)
+   - Background Secondary: #252526 (subtle depth)
+   - Background Elevated: #2d2d2d (focus states)
+   - Text Primary: #cccccc (soft white)
+   - Text Secondary: #808080 (muted gray)
+   - Text Muted: #6a6a6a (very subtle)
+   - Accent Primary: #007acc (professional blue)
+   - Accent Subtle: #3a3d41 (barely visible)
+
+   Key Changes from Previous Design:
+   - ✨ Removed ALL bright cyan (#00ffff) borders
+   - ✨ Borderless conversation panel (user request!)
+   - ✨ Softer colors throughout (less eye strain)
+   - ✨ Subtle focus indicators (left accent bar)
+   - ✨ More generous padding and spacing
+   - ✨ Professional, minimal aesthetic
+
+   ============================================ */

@@ -1,0 +1,19 @@
+<!--
+name: 'System Context: Docker Preamble'
+description: Docker session preamble
+version: 1.0.0
+-->
+
+## CRITICAL: Docker Environment
+
+YOU ARE RUNNING INSIDE A DOCKER CONTAINER.
+
+Working directory: {working_dir}
+All file operations execute inside the container.
+
+FILE PATHS - VERY IMPORTANT:
+- CORRECT: `pyproject.toml`, `src/model.py`, `config.yaml`
+- WRONG: `/Users/.../file.py`, `/home/.../file.py`
+
+NEVER use absolute paths like /Users/, /home/, /var/.
+ALWAYS use relative paths (just the filename or relative path like src/file.py).

@@ -1,0 +1,187 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-000: 0 0% 100%;
+  --bg-100: 48 33.3% 97.1%;
+  --bg-200: 53 28.6% 94.5%;
+  --bg-300: 48 25% 92.2%;
+  --bg-400: 50 20.7% 88.6%;
+  --bg-500: 50 20.7% 88.6%;
+  --text-000: 60 2.6% 7.6%;
+  --text-100: 60 2.6% 7.6%;
+  --text-200: 60 2.5% 23.3%;
+  --text-300: 60 2.5% 23.3%;
+  --text-400: 51 3.1% 43.7%;
+  --text-500: 51 3.1% 43.7%;
+  --border-100: 30 3.3% 11.8%;
+  --border-200: 30 3.3% 11.8%;
+  --border-300: 30 3.3% 11.8%;
+  --border-400: 30 3.3% 11.8%;
+  --accent-main-100: 15 54.2% 51.2%;
+  --accent-main-200: 15 63.1% 59.6%;
+  --accent-secondary-100: 210 70.9% 51.6%;
+  --accent-secondary-900: 211 72% 90%;
+  --danger-000: 0 58.6% 34.1%;
+  --danger-100: 0 56.2% 45.4%;
+  --success-000: 125 100% 18%;
+  --success-100: 103 72.3% 26.9%;
+  --warning-100: 39 88.8% 28%;
+}
+
+@layer base {
+  * {
+    @apply border-gray-200;
+  }
+
+  body {
+    @apply bg-[hsl(var(--bg-100))] text-[hsl(var(--text-000))] antialiased;
+  }
+}
+
+/* Custom scrollbar - Claude style */
+::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border-400) / 0.3);
+  border-radius: 9999px;
+}
+
+*:hover > ::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--border-400) / 0.5);
+  width: 6px;
+}
+
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid hsl(var(--accent-secondary-100));
+  outline-offset: 2px;
+}
+
+/* Smooth transitions */
+* {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Code blocks */
+code {
+  @apply font-mono text-sm px-1.5 py-0.5 rounded;
+  background: hsl(var(--bg-200));
+  color: hsl(var(--text-100));
+  border: 1px solid hsl(var(--border-300) / 0.2);
+}
+
+pre code {
+  @apply bg-transparent px-0 py-0 border-0;
+}
+
+pre {
+  @apply rounded-lg p-4 overflow-x-auto;
+  background: hsl(var(--bg-300));
+  border: 1px solid hsl(var(--border-300) / 0.15);
+  color: hsl(var(--text-000));
+}
+
+/* Markdown content */
+.prose {
+  color: hsl(var(--text-200));
+}
+
+.prose p {
+  @apply mb-4;
+}
+
+.prose ul, .prose ol {
+  @apply mb-4 pl-6;
+}
+
+.prose li {
+  @apply mb-2;
+}
+
+.prose strong {
+  @apply font-semibold;
+  color: hsl(var(--text-000));
+}
+
+.prose a {
+  color: hsl(var(--accent-secondary-100));
+  @apply hover:underline;
+}
+
+.prose blockquote {
+  @apply border-l-4 pl-4 italic;
+  border-color: hsl(var(--border-300) / 0.3);
+  color: hsl(var(--text-300));
+}
+
+/* Extra small prose for our new compact UI */
+.prose-xs {
+  color: hsl(var(--text-200));
+  @apply text-xs;
+}
+
+.prose-xs p {
+  @apply mb-1.5 leading-5 last:mb-0;
+}
+
+.prose-xs ul, .prose-xs ol {
+  @apply mb-1.5 pl-4;
+}
+
+.prose-xs li {
+  @apply mb-0.5 leading-5;
+}
+
+.prose-xs strong {
+  @apply font-semibold text-xs;
+  color: hsl(var(--text-000));
+}
+
+.prose-xs a {
+  @apply underline text-xs;
+  color: hsl(var(--accent-secondary-100));
+}
+
+.prose-xs blockquote {
+  @apply border-l-4 pl-3 italic text-xs;
+  border-color: hsl(var(--border-300) / 0.3);
+  color: hsl(var(--text-300));
+}
+
+.prose-xs h1, .prose-xs h2, .prose-xs h3, .prose-xs h4, .prose-xs h5, .prose-xs h6 {
+  @apply font-semibold text-xs mb-1.5 leading-5;
+  color: hsl(var(--text-000));
+}
+
+.prose-xs h1 {
+  @apply text-base;
+}
+
+.prose-xs h2 {
+  @apply text-sm;
+}
+
+.prose-xs pre {
+  @apply rounded-lg p-3 overflow-x-auto text-xs leading-5;
+  background: hsl(var(--bg-300));
+  border: 1px solid hsl(var(--border-300) / 0.15);
+}
+
+.prose-xs code {
+  @apply font-mono text-xs px-1 py-0.5 rounded leading-5;
+  background: hsl(var(--bg-200));
+  color: hsl(var(--text-100));
+  border: 1px solid hsl(var(--border-300) / 0.2);
+}

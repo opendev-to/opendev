@@ -1,0 +1,126 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opendev"
+version = "0.1.7"
+description = "AI-powered command-line tool for accelerated development workflows"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "OpenDev Team", email = "bdqnghi@gmail.com"}
+]
+maintainers = [
+    {name = "OpenDev Team", email = "bdqnghi@gmail.com"}
+]
+keywords = [
+    "ai",
+    "coding-assistant",
+    "cli",
+    "developer-tools",
+    "code-generation",
+    "llm",
+    "automation",
+    "software-engineering",
+    "mcp",
+    "agentic-systems"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "pydantic>=2.12.3",
+    "rich>=14.2.0",
+    "prompt-toolkit>=3.0.52",
+    "textual>=0.60.0",
+    "httpx>=0.28.1",
+    "crawl4ai>=0.7.6",
+    "gitpython>=3.1.45",
+    "python-dotenv>=1.1.1",
+    "tiktoken>=0.12.0",
+    "fastmcp>=3.0.1",
+    "playwright>=1.55.0",
+    "pillow>=10.0.0",
+    "fastapi>=0.119.1",
+    "uvicorn>=0.38.0",
+    # AST-based code search
+    "ast-grep-cli>=0.35.0",
+    # LSP server dependencies (solidlsp)
+    "pathspec>=0.11.0",
+    "overrides>=7.0.0",
+    "psutil>=5.9.0",
+    # PDF extraction for Paper2Code subagent
+    "pypdf>=4.0.0",
+    # SWE-bench dataset loading
+    "datasets>=2.0.0",
+    # Web search via DuckDuckGo
+    "duckduckgo-search>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "black>=25.9.0",
+    "ruff>=0.14.1",
+    "mypy>=1.18.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/swe-cli/swe-cli"
+Documentation = "https://github.com/swe-cli/swe-cli#readme"
+Repository = "https://github.com/swe-cli/swe-cli"
+"Bug Tracker" = "https://github.com/swe-cli/swe-cli/issues"
+Changelog = "https://github.com/swe-cli/swe-cli/releases"
+
+[project.scripts]
+opendev = "swecli.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["swecli*"]
+exclude = ["tests*", "docs*", "_archived_tests*"]
+
+[tool.setuptools.package-data]
+swecli = [
+    "config/**/*.json",
+    "prompts/**/*.txt",
+    "prompts/**/*.md",
+    "core/agents/prompts/**/*.txt",
+    "core/agents/prompts/**/*.md",
+    "skills/**/*.md",
+    "web/static/**/*",
+    "ui_textual/styles/**/*.tcss",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
