@@ -10,8 +10,8 @@ def find_static_directory() -> Path:
         Path to the static directory containing built web UI files,
         or None if not found.
     """
-    from swecli import __file__ as swecli_init_file
-    package_dir = Path(swecli_init_file).parent
+    import opendev as _opendev_pkg
+    package_dir = Path(_opendev_pkg.__file__).parent
 
     # Check for built static files in the package
     static_dir = package_dir / "web" / "static"
@@ -19,7 +19,7 @@ def find_static_directory() -> Path:
         return static_dir
 
     # Check for development directory (for fallback)
-    dev_static = package_dir.parent.parent / "swecli" / "web" / "static"
+    dev_static = package_dir.parent.parent / "opendev" / "web" / "static"
     if dev_static.exists() and (dev_static / "index.html").exists():
         return dev_static
 
