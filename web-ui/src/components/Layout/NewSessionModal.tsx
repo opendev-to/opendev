@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { XMarkIcon, ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '../../api/client';
+import { useChatStore } from '../../stores/chat';
 
 interface NewSessionModalProps {
   isOpen: boolean;
@@ -30,6 +31,8 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
   const [isLoadingDirs, setIsLoadingDirs] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const loadSession = useChatStore(state => state.loadSession);
+  const bumpSessionList = useChatStore(state => state.bumpSessionList);
 
   const fetchDirectory = async (path: string, hidden?: boolean) => {
     setIsLoadingDirs(true);
@@ -74,10 +77,15 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
     if (!currentPath) return;
     setIsCreating(true);
     try {
-      await apiClient.createSession(currentPath);
-      window.location.reload();
+      const result = await apiClient.createSession(currentPath);
+      bumpSessionList();
+      if (result.session?.id) {
+        await loadSession(result.session.id);
+      }
+      onClose();
     } catch (err) {
       console.error('Failed to create session:', err);
+    } finally {
       setIsCreating(false);
     }
   };
