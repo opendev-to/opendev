@@ -35,6 +35,7 @@ export interface Session {
   message_count: number;
   token_usage: Record<string, number>;
   title?: string;
+  has_session_model?: boolean;
 }
 
 // Configuration types
@@ -43,7 +44,6 @@ export interface Config {
   model: string;
   api_key: string | null;
   temperature: number;
-  max_tokens: number;
   enable_bash: boolean;
   working_directory: string;
 }

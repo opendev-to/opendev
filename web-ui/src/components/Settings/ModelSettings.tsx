@@ -1,18 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '../../api/client';
-
-interface Provider {
-  id: string;
-  name: string;
-  description: string;
-  models: Model[];
-}
-
-interface Model {
-  id: string;
-  name: string;
-  description: string;
-}
+import { ModelSlot } from './ModelSlot';
+import type { Provider } from './ModelSlot';
 
 interface Config {
   model_provider: string;
@@ -26,115 +15,6 @@ interface Config {
   model_compact_provider?: string | null;
   model_compact?: string | null;
   temperature: number;
-  max_tokens: number;
-}
-
-interface ModelSlotProps {
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  providers: Provider[];
-  selectedProvider: string;
-  selectedModel: string;
-  onProviderChange: (provider: string) => void;
-  onModelChange: (model: string) => void;
-  optional?: boolean;
-  notSetText?: string;
-}
-
-function ModelSlot({
-  title,
-  description,
-  icon,
-  providers,
-  selectedProvider,
-  selectedModel,
-  onProviderChange,
-  onModelChange,
-  optional = false,
-  notSetText = "Not configured"
-}: ModelSlotProps) {
-  const currentProvider = providers.find(p => p.id === selectedProvider);
-  const availableModels = currentProvider?.models || [];
-
-  return (
-    <div className="border border-gray-200 rounded-lg p-4 bg-gradient-to-br from-white to-gray-50">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md flex-shrink-0">
-          {icon}
-        </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-gray-900">{title}</h3>
-            {optional && (
-              <span className="text-xs px-2 py-0.5 bg-gray-200 text-gray-600 rounded-full">
-                Optional
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-gray-600 mt-0.5">{description}</p>
-        </div>
-      </div>
-
-      {/* Provider Selection */}
-      <div className="space-y-3">
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1.5">
-            Provider
-          </label>
-          <select
-            value={selectedProvider || ''}
-            onChange={(e) => {
-              const newProvider = e.target.value;
-              onProviderChange(newProvider);
-              // Reset model selection when provider changes
-              const provider = providers.find(p => p.id === newProvider);
-              if (provider && provider.models.length > 0) {
-                onModelChange(provider.models[0].id);
-              }
-            }}
-            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-          >
-            {optional && (
-              <option value="">{notSetText}</option>
-            )}
-            {providers.map(provider => (
-              <option key={provider.id} value={provider.id}>
-                {provider.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Model Selection */}
-        {selectedProvider && (
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1.5">
-              Model
-            </label>
-            <select
-              value={selectedModel || ''}
-              onChange={(e) => onModelChange(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-              disabled={availableModels.length === 0}
-            >
-              {availableModels.map(model => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </select>
-            {availableModels.find(m => m.id === selectedModel) && (
-              <p className="mt-1.5 text-xs text-gray-500">
-                {availableModels.find(m => m.id === selectedModel)?.description}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
 }
 
 export function ModelSettings() {
@@ -166,7 +46,7 @@ export function ModelSettings() {
 
   // Other settings
   const [temperature, setTemperature] = useState<number>(0.7);
-  const [maxTokens, setMaxTokens] = useState<number>(4096);
+
 
   useEffect(() => {
     loadSettings();
@@ -205,7 +85,6 @@ export function ModelSettings() {
 
       // Other settings
       setTemperature(configData.temperature);
-      setMaxTokens(configData.max_tokens);
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
@@ -230,7 +109,6 @@ export function ModelSettings() {
         model_compact_provider: compactProvider || null,
         model_compact: compactModel || null,
         temperature,
-        max_tokens: maxTokens,
       });
 
       // Dispatch custom event to notify other components
@@ -239,7 +117,6 @@ export function ModelSettings() {
           model_provider: normalProvider,
           model: normalModel,
           temperature,
-          max_tokens: maxTokens,
         }
       }));
 
@@ -413,24 +290,6 @@ export function ModelSettings() {
           </div>
         </div>
 
-        {/* Max Tokens */}
-        <div>
-          <label className="block text-sm font-medium text-gray-900 mb-2">
-            Max Tokens
-          </label>
-          <input
-            type="number"
-            min="100"
-            max="32000"
-            step="100"
-            value={maxTokens}
-            onChange={(e) => setMaxTokens(parseInt(e.target.value))}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-          <p className="mt-1 text-xs text-gray-500">
-            Maximum number of tokens to generate in the response
-          </p>
-        </div>
       </div>
 
       {/* Save Button */}
