@@ -74,7 +74,8 @@ class WebSocketManager:
     async def handle_message(self, websocket: WebSocket, data: Dict[str, Any]):
         """Handle incoming WebSocket message."""
         msg_type = data.get("type")
-        logger.debug(f"Received WebSocket message: type={msg_type}")
+        if msg_type != "ping":
+            logger.debug(f"Received WebSocket message: type={msg_type}")
 
         if msg_type == "query":
             await self._handle_query(websocket, data)
@@ -316,7 +317,8 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # Receive message from client
             data = await websocket.receive_json()
-            logger.debug(f"Raw message received: {data}")
+            if data.get("type") != "ping":
+                logger.debug(f"Raw message received: {data}")
 
             # Handle the message
             await ws_manager.handle_message(websocket, data)
