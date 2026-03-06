@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { XMarkIcon, ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, ChevronRightIcon, FolderIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '../../api/client';
 import { useChatStore } from '../../stores/chat';
 
@@ -30,6 +30,7 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
   const [showHidden, setShowHidden] = useState(false);
   const [isLoadingDirs, setIsLoadingDirs] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
+  const [filterText, setFilterText] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const loadSession = useChatStore(state => state.loadSession);
@@ -44,6 +45,7 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
       setParentPath(result.parent_path);
       setDirectories(result.directories);
       setManualPath(result.current_path);
+      setFilterText('');
       if (result.error) {
         setBrowseError(result.error);
       }
@@ -188,6 +190,22 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
             </div>
           ) : (
             <div className="py-1">
+              {/* Filter input */}
+              {directories.length > 0 && (
+                <div className="px-5 py-2">
+                  <div className="relative">
+                    <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                    <input
+                      type="text"
+                      value={filterText}
+                      onChange={(e) => setFilterText(e.target.value)}
+                      placeholder="Filter folders..."
+                      className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Parent directory row */}
               {parentPath && (
                 <button
@@ -202,16 +220,32 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
               )}
 
               {/* Directory rows */}
-              {directories.length === 0 && !parentPath ? (
-                <div className="px-5 py-8 text-center">
-                  <p className="text-sm text-gray-400">No subdirectories</p>
-                </div>
-              ) : directories.length === 0 && parentPath ? (
-                <div className="px-5 py-6 text-center">
-                  <p className="text-sm text-gray-400">No subdirectories</p>
-                </div>
-              ) : (
-                directories.map((dir) => (
+              {(() => {
+                const filteredDirs = directories.filter(d =>
+                  d.name.toLowerCase().includes(filterText.toLowerCase())
+                );
+                if (directories.length === 0 && !parentPath) {
+                  return (
+                    <div className="px-5 py-8 text-center">
+                      <p className="text-sm text-gray-400">No subdirectories</p>
+                    </div>
+                  );
+                }
+                if (directories.length === 0 && parentPath) {
+                  return (
+                    <div className="px-5 py-6 text-center">
+                      <p className="text-sm text-gray-400">No subdirectories</p>
+                    </div>
+                  );
+                }
+                if (filteredDirs.length === 0) {
+                  return (
+                    <div className="px-5 py-6 text-center">
+                      <p className="text-sm text-gray-400">No matching folders</p>
+                    </div>
+                  );
+                }
+                return filteredDirs.map((dir) => (
                   <button
                     key={dir.path}
                     onClick={() => fetchDirectory(dir.path)}
@@ -220,8 +254,8 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
                     <FolderIcon className="w-4 h-4 text-amber-500 flex-shrink-0" />
                     <span className="text-sm text-gray-800 truncate">{dir.name}</span>
                   </button>
-                ))
-              )}
+                ));
+              })()}
             </div>
           )}
         </div>
