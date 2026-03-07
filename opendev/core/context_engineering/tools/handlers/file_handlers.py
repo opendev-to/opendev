@@ -59,6 +59,10 @@ class FileToolHandler:
             if context.undo_manager:
                 context.undo_manager.record_operation(operation)
 
+            # Auto-format if formatter is available
+            if context.formatter_manager:
+                context.formatter_manager.format_file(file_path)
+
             # Track file change in session
             if context.session_manager:
                 from opendev.models.file_change import FileChange, FileChangeType
@@ -147,6 +151,10 @@ class FileToolHandler:
             if context.undo_manager:
                 context.undo_manager.record_operation(operation)
 
+            # Auto-format if formatter is available
+            if context.formatter_manager:
+                context.formatter_manager.format_file(file_path)
+
             # Invalidate stale-read record: agent must re-read before next edit
             if context.file_time_tracker:
                 context.file_time_tracker.invalidate(file_path)
@@ -209,9 +217,35 @@ class FileToolHandler:
             # Record read timestamp for stale-read detection
             if context and context.file_time_tracker:
                 context.file_time_tracker.record_read(file_path)
-            return {"success": True, "output": content, "error": None}
+            result = {"success": True, "output": content, "error": None}
+            # Inject paired instruction file if present
+            if result["success"] and result["output"]:
+                instruction = self._get_file_instruction(file_path)
+                if instruction:
+                    result["output"] = (
+                        f"[Instruction for {Path(file_path).name}]\n"
+                        f"{instruction}\n\n{result['output']}"
+                    )
+            return result
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "error": str(exc), "output": None}
+
+    def _get_file_instruction(self, file_path: str) -> str | None:
+        """Check for instruction file paired with the target file."""
+        target = Path(file_path)
+        filename = target.name
+
+        # Check project-level instructions
+        if self._file_ops and self._file_ops.working_dir:
+            instruction_path = (
+                self._file_ops.working_dir / ".opendev" / "instructions" / f"{filename}.md"
+            )
+            if instruction_path.exists():
+                try:
+                    return instruction_path.read_text(encoding="utf-8").strip()
+                except OSError:
+                    return None
+        return None
 
     def list_files(self, args: dict[str, Any]) -> dict[str, Any]:
         if not self._file_ops:
