@@ -158,11 +158,14 @@ class PersistenceMixin:
         # Auto-generate title before writing (single write)
         if not session.metadata.get("title"):
             msg_dicts = [
-                {"role": m.role.value, "content": m.content} for m in session.messages
+                {"role": m.role.value, "content": m.content}
+                for m in session.messages
+                if not m.metadata.get("display_hidden")
             ]
             title = self.generate_title(msg_dicts)
             if title != "Untitled":
                 session.metadata["title"] = title
+                session.slug = session.generate_slug(title)
 
         if use_jsonl:
             # JSONL mode: separate metadata and transcript

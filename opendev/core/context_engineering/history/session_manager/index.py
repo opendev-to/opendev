@@ -92,6 +92,10 @@ class IndexMixin:
             "channelUserId": session.channel_user_id,
             "threadId": session.thread_id,
             "ownerId": session.owner_id,
+            "summaryAdditions": session.summary_additions,
+            "summaryDeletions": session.summary_deletions,
+            "summaryFiles": session.summary_files,
+            "timeArchived": session.time_archived.isoformat() if session.time_archived else None,
         }
 
     @staticmethod
@@ -112,6 +116,9 @@ class IndexMixin:
             channel_user_id=entry.get("channelUserId", ""),
             thread_id=entry.get("threadId"),
             owner_id=entry.get("ownerId"),
+            summary_additions=entry.get("summaryAdditions", 0),
+            summary_deletions=entry.get("summaryDeletions", 0),
+            summary_files=entry.get("summaryFiles", 0),
         )
 
     def _update_index_entry(self, session: Session) -> None:

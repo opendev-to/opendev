@@ -1,6 +1,7 @@
 """Session management models."""
 
 import json
+import re as _re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import uuid4
@@ -28,6 +29,11 @@ class SessionMetadata(BaseModel):
     working_directory: Optional[str] = None
     has_session_model: bool = False
     owner_id: Optional[str] = None
+
+    # Summary stats (populated from Session computed properties)
+    summary_additions: int = 0
+    summary_deletions: int = 0
+    summary_files: int = 0
 
     # Multi-channel fields
     channel: str = "cli"  # "telegram", "whatsapp", "web", "cli"
@@ -66,6 +72,12 @@ class Session(BaseModel):
     last_activity: Optional[datetime] = None  # Last message timestamp (for reset policies)
     workspace_confirmed: bool = False  # Has user selected workspace for this channel session?
     owner_id: Optional[str] = None
+    parent_id: Optional[str] = None  # ID of parent session (if forked)
+    subagent_sessions: dict[str, str] = Field(
+        default_factory=dict
+    )  # tool_call_id -> child session_id
+    time_archived: Optional[datetime] = None
+    slug: Optional[str] = None
 
     model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
 
@@ -91,6 +103,47 @@ class Session(BaseModel):
         """
         self.playbook = playbook.to_dict()
         self.updated_at = datetime.now()
+
+    @property
+    def summary_additions(self) -> int:
+        """Total lines added across all file changes."""
+        return sum(fc.lines_added for fc in self.file_changes)
+
+    @property
+    def summary_deletions(self) -> int:
+        """Total lines removed across all file changes."""
+        return sum(fc.lines_removed for fc in self.file_changes)
+
+    @property
+    def summary_files(self) -> int:
+        """Number of unique files changed."""
+        return len(set(fc.file_path for fc in self.file_changes))
+
+    def archive(self) -> None:
+        """Soft-archive this session."""
+        self.time_archived = datetime.now()
+        self.updated_at = datetime.now()
+
+    def unarchive(self) -> None:
+        """Restore an archived session."""
+        self.time_archived = None
+        self.updated_at = datetime.now()
+
+    @property
+    def is_archived(self) -> bool:
+        """Check if session is archived."""
+        return self.time_archived is not None
+
+    def generate_slug(self, title: Optional[str] = None) -> str:
+        """Generate URL-friendly slug from title."""
+        text = title or self.metadata.get("title", "")
+        if not text:
+            return self.id[:8]
+        # Lowercase, replace non-alnum with hyphens, collapse multiple hyphens
+        slug = _re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+        # Limit length
+        slug = slug[:50].rstrip("-")
+        return slug or self.id[:8]
 
     def add_message(self, message: ChatMessage) -> None:
         """Add a message to the session."""
@@ -159,6 +212,9 @@ class Session(BaseModel):
             summary=self.metadata.get("summary"),
             tags=self.metadata.get("tags", []),
             working_directory=self.working_directory,
+            summary_additions=self.summary_additions,
+            summary_deletions=self.summary_deletions,
+            summary_files=self.summary_files,
             channel=self.channel,
             channel_user_id=self.channel_user_id,
             thread_id=self.thread_id,

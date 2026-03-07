@@ -10,25 +10,52 @@ from opendev.models.session import Session, SessionMetadata
 class ListingMixin:
     """Mixin for session listing and lookup operations."""
 
-    def list_sessions(self, owner_id: Optional[str] = None) -> list[SessionMetadata]:
-        """List saved sessions, optionally filtered by owner."""
+    def list_sessions(
+        self,
+        owner_id: Optional[str] = None,
+        include_archived: bool = False,
+    ) -> list[SessionMetadata]:
+        """List saved sessions, optionally filtered by owner.
+
+        Args:
+            owner_id: If provided, only return sessions owned by this user.
+            include_archived: If False (default), exclude archived sessions.
+        """
         index = self._read_index()
         if index is not None:
-            sessions = [self._metadata_from_index_entry(e) for e in index["entries"]]
+            if not include_archived:
+                entries = [
+                    e for e in index["entries"] if not e.get("timeArchived")
+                ]
+            else:
+                entries = index["entries"]
+            sessions = [self._metadata_from_index_entry(e) for e in entries]
         else:
             sessions = self.rebuild_index()
+            if not include_archived:
+                # rebuild_index returns all sessions; filter archived ones
+                # by re-reading the index which now has timeArchived info
+                re_index = self._read_index()
+                if re_index is not None:
+                    entries = [
+                        e for e in re_index["entries"] if not e.get("timeArchived")
+                    ]
+                    sessions = [self._metadata_from_index_entry(e) for e in entries]
 
         if owner_id:
             sessions = [s for s in sessions if s.owner_id == owner_id]
 
         return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
 
-    def list_all_sessions(self) -> list[SessionMetadata]:
+    def list_all_sessions(self, include_archived: bool = False) -> list[SessionMetadata]:
         """List sessions from ALL project directories.
 
         Scans every subdirectory under ``~/.opendev/projects/`` and merges
         their session indexes into a single list. Useful for the web UI
         sidebar which needs to display sessions across all workspaces.
+
+        Args:
+            include_archived: If False (default), exclude archived sessions.
 
         Returns:
             List of session metadata from all projects, sorted by update time
@@ -62,6 +89,8 @@ class ListingMixin:
                         for entry in data["entries"]:
                             sid = entry.get("sessionId")
                             if sid and sid not in seen_ids:
+                                if not include_archived and entry.get("timeArchived"):
+                                    continue
                                 seen_ids.add(sid)
                                 all_sessions.append(
                                     self._metadata_from_index_entry(entry)
@@ -75,6 +104,8 @@ class ListingMixin:
                     try:
                         session = self._load_from_file(session_file)
                         if len(session.messages) == 0:
+                            continue
+                        if not include_archived and session.is_archived:
                             continue
                         sid = session.id
                         if sid not in seen_ids:

@@ -88,6 +88,67 @@ class SessionManager(IndexMixin, PersistenceMixin, ListingMixin):
                 return title if title else "Untitled"
         return "Untitled"
 
+    def fork_session(self, message_index: Optional[int] = None) -> Optional[Session]:
+        """Fork the current session, cloning messages up to a given point.
+
+        Creates a new child session containing a copy of the messages from the
+        current session up to ``message_index``. The new session's ``parent_id``
+        is set to the current session's ID and metadata records the fork origin.
+
+        Args:
+            message_index: Clone messages up to this index (0-based, inclusive).
+                          If None, clones all messages.
+
+        Returns:
+            The new forked Session, or None if there is no active session.
+        """
+        current = self.get_current_session()
+        if current is None:
+            return None
+
+        from uuid import uuid4
+        from datetime import datetime
+
+        # Determine which messages to clone
+        if message_index is not None:
+            messages = list(current.messages[: message_index + 1])
+        else:
+            messages = list(current.messages)
+
+        # Build the new session
+        new_session = Session(
+            id=uuid4().hex[:12],
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            messages=messages,
+            context_files=list(current.context_files),
+            working_directory=current.working_directory,
+            metadata={
+                **current.metadata,
+                "forked_from": current.id,
+                "forked_at_message": message_index,
+            },
+            parent_id=current.id,
+            channel=current.channel,
+            channel_user_id=current.channel_user_id,
+            chat_type=current.chat_type,
+            thread_id=current.thread_id,
+            delivery_context=dict(current.delivery_context),
+            owner_id=current.owner_id,
+        )
+
+        # Generate a title for the fork
+        parent_title = current.metadata.get("title", f"Session {current.id[:8]}")
+        new_session.metadata["title"] = f"Fork of {parent_title}"
+        new_session.slug = new_session.generate_slug()
+
+        # Persist and switch to the new session
+        self.save_session(new_session)
+        self.current_session = new_session
+        self.turn_count = len(new_session.messages)
+
+        return new_session
+
     def set_title(self, session_id: str, title: str) -> None:
         """Set the title for a session.
 
@@ -100,6 +161,7 @@ class SessionManager(IndexMixin, PersistenceMixin, ListingMixin):
         # Update in-memory if it's the current session
         if self.current_session and self.current_session.id == session_id:
             self.current_session.metadata["title"] = title
+            self.current_session.slug = self.current_session.generate_slug(title)
             self.save_session()
             return
 
@@ -114,6 +176,10 @@ class SessionManager(IndexMixin, PersistenceMixin, ListingMixin):
         if "metadata" not in data:
             data["metadata"] = {}
         data["metadata"]["title"] = title
+
+        # Generate slug from the new title
+        temp_session = Session(id=data.get("id", session_id), metadata=data.get("metadata", {}))
+        data["slug"] = temp_session.generate_slug(title)
 
         with open(session_file, "w") as f:
             json.dump(data, f, indent=2, default=str)
