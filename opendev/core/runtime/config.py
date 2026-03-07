@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +45,8 @@ class ConfigManager:
         global_config = paths.global_settings
         if global_config.exists():
             with open(global_config) as f:
-                global_data = json.load(f)
+                raw = f.read()
+                global_data = json.loads(self._strip_json_comments(raw))
                 # Remove legacy api_key from config - keys should come from environment
                 global_data.pop("api_key", None)
                 _, global_changed = self._normalize_fireworks_models(global_data)
@@ -56,7 +59,8 @@ class ConfigManager:
         local_config = paths.project_settings
         if local_config.exists():
             with open(local_config) as f:
-                local_data = json.load(f)
+                raw = f.read()
+                local_data = json.loads(self._strip_json_comments(raw))
                 # Remove legacy api_key from config - keys should come from environment
                 local_data.pop("api_key", None)
                 _, local_changed = self._normalize_fireworks_models(local_data)
@@ -65,7 +69,22 @@ class ConfigManager:
                         json.dump(local_data, target, indent=2)
                 config_data.update(local_data)
 
+        # H3: Instructions are accumulated, not overridden
+        # Concatenate instructions from all config levels
+        global_instructions = global_data.get("instructions", "")
+        local_instructions = local_data.get("instructions", "")
+        if global_instructions or local_instructions:
+            parts = []
+            if global_instructions:
+                parts.append(global_instructions.strip())
+            if local_instructions:
+                parts.append(local_instructions.strip())
+            config_data["instructions"] = "\n\n".join(parts)
+
         self._normalize_fireworks_models(config_data)
+
+        # Substitute {env:VAR} and {file:path} references in config values
+        config_data = self._substitute_variables(config_data)
 
         # Create AppConfig with merged data
         self._config = AppConfig(**config_data)
@@ -214,6 +233,75 @@ class ConfigManager:
                 changed = True
 
         return data, changed
+
+    @staticmethod
+    def _strip_json_comments(text: str) -> str:
+        """Strip // and /* */ comments from JSON text, respecting strings."""
+        result = []
+        i = 0
+        in_string = False
+        while i < len(text):
+            c = text[i]
+            if in_string:
+                result.append(c)
+                if c == "\\" and i + 1 < len(text):
+                    i += 1
+                    result.append(text[i])
+                elif c == '"':
+                    in_string = False
+                i += 1
+            elif c == '"':
+                in_string = True
+                result.append(c)
+                i += 1
+            elif c == "/" and i + 1 < len(text):
+                if text[i + 1] == "/":
+                    # Single-line comment: skip to end of line
+                    i += 2
+                    while i < len(text) and text[i] != "\n":
+                        i += 1
+                elif text[i + 1] == "*":
+                    # Block comment: skip to */
+                    i += 2
+                    while i + 1 < len(text) and not (text[i] == "*" and text[i + 1] == "/"):
+                        i += 1
+                    i += 2  # Skip past */
+                else:
+                    result.append(c)
+                    i += 1
+            else:
+                result.append(c)
+                i += 1
+        return "".join(result)
+
+    @classmethod
+    def _substitute_variables(cls, data: dict) -> dict:
+        """Recursively substitute {env:VAR} and {file:path} in config values."""
+
+        def _sub(value):
+            if isinstance(value, str):
+                # {env:VAR_NAME} -> os.environ.get(VAR_NAME, "")
+                def env_replace(m):
+                    return os.environ.get(m.group(1), "")
+
+                value = re.sub(r"\{env:([^}]+)\}", env_replace, value)
+
+                # {file:path} -> contents of file
+                def file_replace(m):
+                    try:
+                        return Path(m.group(1)).expanduser().read_text().strip()
+                    except OSError:
+                        return ""
+
+                value = re.sub(r"\{file:([^}]+)\}", file_replace, value)
+                return value
+            elif isinstance(value, dict):
+                return {k: _sub(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [_sub(v) for v in value]
+            return value
+
+        return _sub(data)
 
     # ===== Skills System Support =====
 
@@ -371,7 +459,8 @@ class ConfigManager:
         if global_agents_file.exists():
             try:
                 with open(global_agents_file) as f:
-                    data = json.load(f)
+                    raw = f.read()
+                    data = json.loads(self._strip_json_comments(raw))
                     for agent in data.get("agents", []):
                         if agent.get("name"):
                             agent["_source"] = "user-global"
@@ -393,7 +482,8 @@ class ConfigManager:
             if project_agents_file.exists():
                 try:
                     with open(project_agents_file) as f:
-                        data = json.load(f)
+                        raw = f.read()
+                        data = json.loads(self._strip_json_comments(raw))
                         for agent in data.get("agents", []):
                             if agent.get("name"):
                                 agent["_source"] = "project"
