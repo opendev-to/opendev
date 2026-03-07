@@ -24,6 +24,11 @@ class CostTracker:
         self.total_cost_usd: float = 0.0
         self.call_count: int = 0
 
+    # Anthropic charges higher rates for prompts over 200K tokens.
+    # pricing_input_over_200k is typically 1.5x the base rate.
+    _OVER_200K_THRESHOLD = 200_000
+    _OVER_200K_MULTIPLIER = 1.5
+
     def record_usage(
         self,
         usage: dict,
@@ -33,6 +38,8 @@ class CostTracker:
 
         Args:
             usage: Usage dict with prompt_tokens, completion_tokens keys.
+                May also include cache_creation_input_tokens and
+                cache_read_input_tokens for Anthropic prompt caching.
             model_info: ModelInfo with pricing_input/pricing_output ($ per 1M tokens).
                 If None, tokens are tracked but cost is not computed.
 
@@ -41,6 +48,7 @@ class CostTracker:
         """
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
+        cache_read_tokens = usage.get("cache_read_input_tokens", 0)
 
         self.total_input_tokens += prompt_tokens
         self.total_output_tokens += completion_tokens
@@ -48,10 +56,24 @@ class CostTracker:
 
         incremental_cost = 0.0
         if model_info and (model_info.pricing_input or model_info.pricing_output):
-            incremental_cost = (
-                (prompt_tokens / 1_000_000) * model_info.pricing_input
-                + (completion_tokens / 1_000_000) * model_info.pricing_output
-            )
+            # J2: Handle tiered pricing for inputs over 200K tokens
+            input_price = model_info.pricing_input
+            if prompt_tokens > self._OVER_200K_THRESHOLD:
+                base_cost = (self._OVER_200K_THRESHOLD / 1_000_000) * input_price
+                over_cost = (
+                    (prompt_tokens - self._OVER_200K_THRESHOLD) / 1_000_000
+                ) * (input_price * self._OVER_200K_MULTIPLIER)
+                input_cost = base_cost + over_cost
+            else:
+                input_cost = (prompt_tokens / 1_000_000) * input_price
+
+            # Cache read tokens are typically 10% of input price
+            cache_cost = 0.0
+            if cache_read_tokens > 0:
+                cache_cost = (cache_read_tokens / 1_000_000) * (input_price * 0.1)
+
+            output_cost = (completion_tokens / 1_000_000) * model_info.pricing_output
+            incremental_cost = input_cost + output_cost + cache_cost
             self.total_cost_usd += incremental_cost
 
         logger.debug(

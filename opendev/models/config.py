@@ -99,6 +99,17 @@ class PlaybookConfig(BaseModel):
     cache_file: Optional[str] = None  # Path to embedding cache file (None = session-based default)
 
 
+class ModelVariant(BaseModel):
+    """A named model configuration variant."""
+
+    name: str
+    model: str
+    provider: str
+    temperature: float = 0.6
+    max_tokens: int = 16384
+    description: str = ""
+
+
 class AppConfig(BaseModel):
     """Application configuration."""
 
@@ -163,6 +174,12 @@ class AppConfig(BaseModel):
     plan_mode_plan_agent_count: int = 1
     plan_mode_explore_variant: str = "enabled"  # "enabled" or "disabled"
 
+    # Custom instructions (accumulated across config levels)
+    instructions: Optional[str] = None
+
+    # Model variants
+    model_variants: dict[str, ModelVariant] = Field(default_factory=dict)
+
     # Paths - using APP_DIR_NAME constant for consistency
     opendev_dir: str = f"~/{APP_DIR_NAME}"
     session_dir: str = f"~/{APP_DIR_NAME}/sessions"
@@ -173,7 +190,16 @@ class AppConfig(BaseModel):
     @classmethod
     def validate_provider(cls, v: str) -> str:
         """Validate model provider."""
-        supported = ["fireworks", "anthropic", "openai"]
+        supported = [
+            "fireworks",
+            "anthropic",
+            "openai",
+            "azure",
+            "groq",
+            "mistral",
+            "deepinfra",
+            "openrouter",
+        ]
         if v not in supported:
             raise ValueError(
                 f"Unsupported provider '{v}'. Supported providers: {', '.join(supported)}"
@@ -187,12 +213,18 @@ class AppConfig(BaseModel):
         if self.api_key:
             return self.api_key
 
-        if self.model_provider == "fireworks":
-            key = os.getenv("FIREWORKS_API_KEY")
-        elif self.model_provider == "anthropic":
-            key = os.getenv("ANTHROPIC_API_KEY")
-        else:
-            key = os.getenv("OPENAI_API_KEY")
+        provider_env_vars = {
+            "fireworks": "FIREWORKS_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "azure": "AZURE_OPENAI_API_KEY",
+            "groq": "GROQ_API_KEY",
+            "mistral": "MISTRAL_API_KEY",
+            "deepinfra": "DEEPINFRA_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
+        }
+        env_var = provider_env_vars.get(self.model_provider, "OPENAI_API_KEY")
+        key = os.getenv(env_var)
 
         if not key:
             raise ValueError(
@@ -330,3 +362,21 @@ class AppConfig(BaseModel):
             True if all models from this provider support all capabilities
         """
         return provider_id in ["openai", "anthropic"]
+
+    def get_variant(self, name: str) -> ModelVariant | None:
+        """Get a named model variant configuration."""
+        return self.model_variants.get(name)
+
+    def apply_variant(self, name: str) -> bool:
+        """Apply a named model variant to the current config.
+
+        Returns True if variant was found and applied.
+        """
+        variant = self.model_variants.get(name)
+        if not variant:
+            return False
+        self.model = variant.model
+        self.model_provider = variant.provider
+        self.temperature = variant.temperature
+        self.max_tokens = variant.max_tokens
+        return True

@@ -88,7 +88,7 @@ def build_temperature_param(model_id: str, temperature: float) -> dict[str, floa
 def resolve_api_config(config: AppConfig) -> Tuple[str, dict[str, str]]:
     """Return the API URL and headers according to the configured provider.
 
-    Note: This is used for OpenAI-compatible providers (Fireworks, OpenAI).
+    Note: This is used for OpenAI-compatible providers (Fireworks, OpenAI, Groq, etc.).
     Anthropic uses a different client (AnthropicAdapter).
     """
     api_key = config.get_api_key()
@@ -97,13 +97,39 @@ def resolve_api_config(config: AppConfig) -> Tuple[str, dict[str, str]]:
         "Authorization": f"Bearer {api_key}",
     }
 
-    if config.model_provider == "fireworks":
+    provider = config.model_provider
+
+    if provider == "fireworks":
         api_url = "https://api.fireworks.ai/inference/v1/chat/completions"
-    elif config.model_provider == "openai":
+    elif provider == "openai":
         api_url = "https://api.openai.com/v1/chat/completions"
-    elif config.model_provider == "anthropic":
+    elif provider == "anthropic":
         # Anthropic will use AnthropicAdapter, but provide URL for reference
         api_url = "https://api.anthropic.com/v1/messages"
+    elif provider == "azure":
+        if not config.api_base_url:
+            raise ValueError(
+                "Azure OpenAI requires api_base_url in config "
+                "(e.g. https://your-resource.openai.azure.com)"
+            )
+        deployment = config.model
+        api_url = (
+            f"{config.api_base_url.rstrip('/')}/openai/deployments/{deployment}"
+            f"/chat/completions?api-version=2024-10-21"
+        )
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": api_key,
+        }
+    elif provider == "groq":
+        api_url = "https://api.groq.com/openai/v1/chat/completions"
+    elif provider == "mistral":
+        api_url = "https://api.mistral.ai/v1/chat/completions"
+    elif provider == "deepinfra":
+        api_url = "https://api.deepinfra.com/v1/openai/chat/completions"
+    elif provider == "openrouter":
+        api_url = "https://openrouter.ai/api/v1/chat/completions"
+        headers["HTTP-Referer"] = "https://opendev.ai"
     else:
         api_url = f"{config.api_base_url}/chat/completions"
 
@@ -116,7 +142,8 @@ def create_http_client(config: AppConfig) -> "ProviderAdapter":
     Returns:
         OpenAIResponsesAdapter for OpenAI (all models use /v1/responses)
         AnthropicAdapter for Anthropic
-        AgentHttpClient for other OpenAI-compatible APIs (Fireworks, etc.)
+        AgentHttpClient for other OpenAI-compatible APIs
+            (Fireworks, Azure, Groq, Mistral, DeepInfra, OpenRouter)
     """
     if config.model_provider == "anthropic":
         from .anthropic_adapter import AnthropicAdapter
@@ -142,13 +169,14 @@ def create_http_client_for_provider(provider_id: str, config: AppConfig) -> "Pro
     For example, Normal could use Fireworks while Thinking uses OpenAI o1.
 
     Args:
-        provider_id: Provider ID ("openai", "anthropic", "fireworks")
+        provider_id: Provider ID (e.g. "openai", "anthropic", "fireworks", "azure",
+            "groq", "mistral", "deepinfra", "openrouter")
         config: AppConfig for getting API keys
 
     Returns:
         OpenAIResponsesAdapter for OpenAI (all models use /v1/responses)
         AnthropicAdapter for Anthropic
-        AgentHttpClient for other OpenAI-compatible APIs (Fireworks, etc.)
+        AgentHttpClient for other OpenAI-compatible APIs
 
     Raises:
         ValueError: If provider is unknown or API key is missing
@@ -169,20 +197,68 @@ def create_http_client_for_provider(provider_id: str, config: AppConfig) -> "Pro
         from .anthropic_adapter import AnthropicAdapter
 
         return AnthropicAdapter(api_key)
-    elif provider_id == "fireworks":
-        api_key = os.getenv("FIREWORKS_API_KEY")
-        api_url = "https://api.fireworks.ai/inference/v1/chat/completions"
-    else:
+
+    # OpenAI-compatible providers: resolve env var, URL, and headers
+    provider_configs = {
+        "fireworks": {
+            "env_var": "FIREWORKS_API_KEY",
+            "url": "https://api.fireworks.ai/inference/v1/chat/completions",
+        },
+        "groq": {
+            "env_var": "GROQ_API_KEY",
+            "url": "https://api.groq.com/openai/v1/chat/completions",
+        },
+        "mistral": {
+            "env_var": "MISTRAL_API_KEY",
+            "url": "https://api.mistral.ai/v1/chat/completions",
+        },
+        "deepinfra": {
+            "env_var": "DEEPINFRA_API_KEY",
+            "url": "https://api.deepinfra.com/v1/openai/chat/completions",
+        },
+        "openrouter": {
+            "env_var": "OPENROUTER_API_KEY",
+            "url": "https://openrouter.ai/api/v1/chat/completions",
+        },
+    }
+
+    if provider_id == "azure":
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("AZURE_OPENAI_API_KEY environment variable not set")
+        if not config.api_base_url:
+            raise ValueError(
+                "Azure OpenAI requires api_base_url in config "
+                "(e.g. https://your-resource.openai.azure.com)"
+            )
+        deployment = config.model
+        api_url = (
+            f"{config.api_base_url.rstrip('/')}/openai/deployments/{deployment}"
+            f"/chat/completions?api-version=2024-10-21"
+        )
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": api_key,
+        }
+        from .http_client import AgentHttpClient
+
+        return AgentHttpClient(api_url, headers)
+
+    if provider_id not in provider_configs:
         raise ValueError(f"Unknown provider: {provider_id}")
 
+    pcfg = provider_configs[provider_id]
+    api_key = os.getenv(pcfg["env_var"])
     if not api_key:
-        raise ValueError(f"{provider_id.upper()}_API_KEY environment variable not set")
+        raise ValueError(f"{pcfg['env_var']} environment variable not set")
 
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
+    if provider_id == "openrouter":
+        headers["HTTP-Referer"] = "https://opendev.ai"
 
     from .http_client import AgentHttpClient
 
-    return AgentHttpClient(api_url, headers)
+    return AgentHttpClient(pcfg["url"], headers)
