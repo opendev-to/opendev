@@ -15,6 +15,18 @@ from typing import Callable, Optional
 logger = logging.getLogger(__name__)
 
 
+def set_terminal_title(title: str) -> None:
+    """Set the terminal title via ANSI escape sequence."""
+    sys.stdout.write(f"\033]0;{title}\007")
+    sys.stdout.flush()
+
+
+def reset_terminal_title() -> None:
+    """Reset terminal title to default."""
+    sys.stdout.write("\033]0;\007")
+    sys.stdout.flush()
+
+
 def _reset_terminal_mouse_mode() -> None:
     """Send escape sequences to disable mouse tracking.
 
@@ -279,6 +291,7 @@ class TextualRunner:
                         reminder_msg = ChatMessage(
                             role=Role.USER,
                             content=f"<system-reminder>\n{reminder}\n</system-reminder>",
+                            metadata={"display_hidden": True},
                         )
                         self.session_manager.add_message(reminder_msg, auto_save_interval=0)
 
@@ -419,13 +432,22 @@ class TextualRunner:
                 self._history_hydrator._ledger = self.app._display_ledger
 
             self._history_hydrator.start_async_hydration(self.app)
-            # Restore context usage from session metadata (for resumed sessions)
+            # Restore context usage and cost from session metadata (for resumed sessions)
             if self._is_resumed_session and hasattr(self.app, "status_bar"):
                 session = self.session_manager.get_current_session()
                 if session:
                     saved_pct = session.metadata.get("context_usage_pct")
                     if saved_pct is not None:
                         self.app.status_bar.set_context_usage(saved_pct)
+                    cost_data = session.metadata.get("cost_tracking")
+                    if cost_data:
+                        saved_cost = cost_data.get("total_cost_usd", 0.0)
+                        if saved_cost > 0:
+                            self.app.status_bar.set_session_cost(saved_cost)
+                    # Update terminal title with session name
+                    session_title = session.metadata.get("title")
+                    if session_title:
+                        set_terminal_title(f"OpenDev - {session_title}")
             # Sync status bar to Auto if --dangerously-skip-permissions (after mount)
             if self._dangerously_skip_permissions and hasattr(self.app, "status_bar"):
                 self.app.status_bar.set_autonomy("Auto")
@@ -697,6 +719,11 @@ class TextualRunner:
 
             new_messages = session.messages[previous_count:]
 
+            # Update terminal title if session title was set (e.g., by topic detector)
+            session_title = session.metadata.get("title")
+            if session_title:
+                set_terminal_title(f"OpenDev - {session_title}")
+
             # After PLAN mode query, check if response contains a plan to store
             if self.repl.mode_manager.current_mode == OperationMode.PLAN:
                 self._store_plan_from_response(new_messages)
@@ -909,6 +936,14 @@ Work through each implementation step in order. Mark each todo item as 'in_progr
     def run(self) -> None:
         """Launch the Textual application and background consumer."""
 
+        # Set terminal title based on session
+        session = self.session_manager.get_current_session()
+        session_title = (session.metadata.get("title") if session else None)
+        if session_title:
+            set_terminal_title(f"OpenDev - {session_title}")
+        else:
+            set_terminal_title("OpenDev")
+
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._run_app())
@@ -920,6 +955,7 @@ Work through each implementation step in order. Mark each todo item as 'in_progr
             set_debug_logger(None)
 
             _reset_terminal_mouse_mode()  # Ensure mouse mode is disabled
+            reset_terminal_title()  # Restore default terminal title
             self.repl._cleanup()
             with contextlib.suppress(RuntimeError):
                 self._loop.run_until_complete(self._loop.shutdown_asyncgens())

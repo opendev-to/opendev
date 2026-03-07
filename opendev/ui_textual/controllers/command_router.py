@@ -119,6 +119,21 @@ class CommandRouter:
                 await self._handle_undo(conversation)
             return True
 
+        if cmd == "/status":
+            await self._handle_status()
+            return True
+
+        if cmd == "/prompts":
+            if conversation is not None:
+                await self._handle_mcp_prompts(conversation)
+            return True
+
+        # MCP prompt commands: /{server}:{prompt} [args...]
+        if ":" in cmd and cmd.startswith("/"):
+            handled = await self._handle_mcp_prompt_command(cmd, parts[1:], conversation)
+            if handled:
+                return True
+
         return False
 
     def _render_help(self, conversation) -> None:
@@ -138,6 +153,9 @@ class CommandRouter:
         conversation.add_system_message("  /kill <id> - Kill a background task")
         conversation.add_system_message("  /permissions - View/clear persistent permission rules")
         conversation.add_system_message("  /undo - Undo the last agent action")
+        conversation.add_system_message("  /status - Show integration status and health")
+        conversation.add_system_message("  /prompts - List available MCP prompts")
+        conversation.add_system_message("  /{server}:{prompt} - Execute an MCP prompt")
         conversation.add_system_message("  /quit - Exit application")
         conversation.add_system_message("")
         conversation.add_system_message("Multi-line Input:")
@@ -306,6 +324,155 @@ class CommandRouter:
             conversation.add_system_message(f"Reverted: {result}")
         else:
             conversation.add_system_message("Nothing to undo (no snapshots recorded).")
+
+    def _get_mcp_manager(self):
+        """Get the MCP manager from the app's runner/repl chain."""
+        runner = getattr(self.app, "runner", None)
+        repl = getattr(runner, "repl", None) if runner else None
+        return getattr(repl, "mcp_manager", None) if repl else None
+
+    async def _handle_mcp_prompts(self, conversation) -> None:
+        """List all available MCP prompts from connected servers."""
+        mcp_manager = self._get_mcp_manager()
+        if mcp_manager is None:
+            conversation.add_system_message("MCP manager not available.")
+            return
+
+        try:
+            prompts = mcp_manager.list_prompts_sync()
+        except Exception as e:
+            conversation.add_system_message(f"Error listing MCP prompts: {e}")
+            return
+
+        if not prompts:
+            conversation.add_system_message(
+                "No MCP prompts available. Ensure MCP servers are connected."
+            )
+            return
+
+        conversation.add_system_message("Available MCP prompts:")
+        for p in prompts:
+            args_str = ""
+            if p["arguments"]:
+                args_str = f" (args: {', '.join(p['arguments'])})"
+            desc = f" - {p['description']}" if p["description"] else ""
+            conversation.add_system_message(f"  {p['command']}{args_str}{desc}")
+
+    async def _handle_status(self) -> None:
+        """Show the status dialog with integration health and session info."""
+        from opendev.ui_textual.screens.status_dialog import StatusDialog
+
+        # Gather model info
+        model_info: dict[str, str] = {}
+        status_bar = getattr(self.app, "status_bar", None)
+        if status_bar is not None:
+            model_info["Model"] = getattr(status_bar, "model", "unknown")
+            model_info["Mode"] = getattr(status_bar, "mode", "unknown").capitalize()
+            model_info["Autonomy"] = getattr(status_bar, "autonomy", "unknown")
+            model_info["Thinking"] = getattr(status_bar, "thinking_level", "unknown")
+
+        # Gather MCP server info
+        mcp_servers: list[dict] = []
+        mcp_manager = self._get_mcp_manager()
+        if mcp_manager and hasattr(mcp_manager, "list_servers"):
+            for server_name in mcp_manager.list_servers():
+                connected = mcp_manager.is_connected(server_name)
+                tools = mcp_manager.get_server_tools(server_name) if connected else []
+                mcp_servers.append({
+                    "name": server_name,
+                    "status": "connected" if connected else "disconnected",
+                    "tool_count": len(tools),
+                })
+
+        # Gather session info
+        session_info: dict[str, str] = {}
+        runner = getattr(self.app, "_runner", None)
+        session_mgr = getattr(runner, "session_manager", None) if runner else None
+        if session_mgr is not None:
+            session_id = getattr(session_mgr, "current_session_id", None)
+            if session_id:
+                session_info["Session ID"] = str(session_id)
+
+        # Gather context info
+        context_info: dict[str, str] = {}
+        if status_bar is not None:
+            ctx_pct = getattr(status_bar, "context_usage_pct", 0.0)
+            context_left = max(0.0, 100.0 - ctx_pct)
+            context_info["Context remaining"] = f"{context_left:.1f}%"
+            cost = getattr(status_bar, "session_cost", 0.0)
+            if cost > 0:
+                if cost < 0.01:
+                    context_info["Session cost"] = f"${cost:.4f}"
+                else:
+                    context_info["Session cost"] = f"${cost:.2f}"
+
+        dialog = StatusDialog(
+            model_info=model_info,
+            mcp_servers=mcp_servers,
+            session_info=session_info,
+            context_info=context_info,
+        )
+        self.app.push_screen(dialog)
+
+    async def _handle_mcp_prompt_command(
+        self, cmd: str, args: list[str], conversation
+    ) -> bool:
+        """Handle a /{server}:{prompt} command by fetching and displaying the prompt.
+
+        Returns:
+            True if this was a valid MCP prompt command, False otherwise.
+        """
+        # Parse /{server}:{prompt}
+        without_slash = cmd[1:]  # remove leading /
+        colon_pos = without_slash.find(":")
+        if colon_pos <= 0:
+            return False
+
+        server_name = without_slash[:colon_pos]
+        prompt_name = without_slash[colon_pos + 1:]
+        if not prompt_name:
+            return False
+
+        mcp_manager = self._get_mcp_manager()
+        if mcp_manager is None:
+            if conversation is not None:
+                conversation.add_system_message("MCP manager not available.")
+            return True
+
+        if not mcp_manager.is_connected(server_name):
+            if conversation is not None:
+                conversation.add_system_message(
+                    f"MCP server '{server_name}' is not connected."
+                )
+            return True
+
+        # Parse arguments as key=value pairs
+        arguments: dict[str, str] = {}
+        for arg in args:
+            if "=" in arg:
+                key, _, value = arg.partition("=")
+                arguments[key] = value
+            else:
+                # Positional args not supported; treat as first unnamed arg
+                arguments[arg] = ""
+
+        try:
+            result = mcp_manager.get_prompt_sync(server_name, prompt_name, arguments)
+        except Exception as e:
+            if conversation is not None:
+                conversation.add_system_message(f"Error fetching prompt: {e}")
+            return True
+
+        if conversation is not None:
+            if result:
+                conversation.add_system_message(f"Prompt [{server_name}:{prompt_name}]:")
+                conversation.add_system_message(result)
+            else:
+                conversation.add_system_message(
+                    f"Prompt '{prompt_name}' not found on server '{server_name}'."
+                )
+
+        return True
 
 
 __all__ = ["CommandRouter"]

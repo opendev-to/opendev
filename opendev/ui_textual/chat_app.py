@@ -14,6 +14,7 @@ from textual.widgets import Header, Rule, Static
 from opendev.ui_textual.widgets import AnimatedWelcomePanel, ConversationLog, ProgressBar
 from opendev.ui_textual.widgets.chat_text_area import ChatTextArea
 from opendev.ui_textual.widgets.status_bar import StatusBar
+from opendev.ui_textual.widgets.debug_panel import DebugPanel
 from opendev.ui_textual.widgets.todo_panel import TodoPanel
 from opendev.ui_textual.components import TipsManager
 from opendev.ui_textual.controllers.approval_prompt_controller import ApprovalPromptController
@@ -58,6 +59,8 @@ class SWECLIChatApp(App):
         Binding("ctrl+down", "focus_input", "Focus Input", show=False),
         Binding("shift+tab", "cycle_mode", "Switch Mode"),
         Binding("ctrl+shift+a", "cycle_autonomy", "Autonomy", show=False),
+        Binding("ctrl+d", "toggle_debug_panel", "Debug", show=False),
+        Binding("ctrl+g", "show_subagent_picker", "Subagents", show=False),
     ]
 
     def __init__(
@@ -185,6 +188,9 @@ class SWECLIChatApp(App):
 
             # Progress bar (above status bar, hidden by default)
             yield ProgressBar(id="progress-bar")
+
+            # Debug panel (toggle with Ctrl+D, hidden by default)
+            yield DebugPanel(id="debug-panel")
 
             # Status bar
             yield StatusBar(model=self.model, working_dir=self.working_dir, id="status-bar")
@@ -664,10 +670,6 @@ class SWECLIChatApp(App):
         # Collapse subagent display immediately (before spinner stop)
         if hasattr(self, "conversation") and hasattr(self.conversation, "interrupt_cleanup"):
             self.conversation.interrupt_cleanup()
-        # Mark interrupt shown on ui_callback so Phase 2 callbacks are suppressed
-        runner = getattr(self, "_runner", None)
-        if runner and hasattr(runner, "_ui_callback"):
-            runner._ui_callback.mark_interrupt_shown()
         # Stop all spinners immediately (renders red bullets)
         if hasattr(self, "spinner_service"):
             self.spinner_service.stop_all(immediate=True)
@@ -676,7 +678,10 @@ class SWECLIChatApp(App):
             self._stop_local_spinner()
         # Write the interrupt message directly on the UI thread (guarantees it
         # appears even if the executor thread is stuck being killed)
-        if hasattr(self, "conversation"):
+        if not getattr(self, "_interrupt_message_written", False) and hasattr(
+            self, "conversation"
+        ):
+            self._interrupt_message_written = True
             from opendev.ui_textual.utils.interrupt_utils import (
                 strip_trailing_blanks,
                 create_interrupt_text,
@@ -875,6 +880,14 @@ class SWECLIChatApp(App):
         except Exception:  # pragma: no cover - defensive
             pass
 
+    def action_toggle_debug_panel(self) -> None:
+        """Toggle debug overlay panel (Ctrl+D)."""
+        try:
+            panel = self.query_one("#debug-panel", DebugPanel)
+            panel.toggle()
+        except Exception:  # pragma: no cover - defensive
+            pass
+
     def action_toggle_thinking(self) -> None:
         """Cycle thinking level (Ctrl+Shift+T).
 
@@ -932,6 +945,115 @@ class SWECLIChatApp(App):
         if hasattr(self.conversation, "has_collapsible_output"):
             if self.conversation.has_collapsible_output():
                 self.conversation.toggle_output_expansion()
+
+
+    def action_show_subagent_picker(self) -> None:
+        """Show picker for subagent sessions (Ctrl+G).
+
+        Reads subagent_sessions from the current session and displays a picker.
+        When a subagent is selected, opens a read-only detail view of its conversation.
+        """
+        runner = getattr(self, "_runner", None)
+        if runner is None:
+            return
+
+        session_manager = getattr(runner, "session_manager", None)
+        if session_manager is None:
+            return
+
+        session = session_manager.get_current_session()
+        if session is None:
+            return
+
+        subagent_map = getattr(session, "subagent_sessions", {})
+        if not subagent_map:
+            self.conversation.add_system_message(
+                "No subagent sessions recorded in the current session."
+            )
+            return
+
+        # Build picker entries
+        entries: list[dict] = []
+        for tool_call_id, child_session_id in subagent_map.items():
+            # Try to load child session metadata for title
+            title = f"Subagent {child_session_id[:8]}"
+            try:
+                child_session = session_manager.load_session(child_session_id)
+                child_title = child_session.metadata.get("title")
+                if child_title:
+                    title = child_title
+                msg_count = len(child_session.messages)
+            except Exception:
+                msg_count = 0
+
+            entries.append({
+                "id": child_session_id,
+                "title": title,
+                "tool_call_id": tool_call_id,
+                "message_count": msg_count,
+            })
+
+        if not entries:
+            self.conversation.add_system_message("No subagent sessions found.")
+            return
+
+        from opendev.ui_textual.screens.subagent_detail import SubagentDetailScreen
+
+        if len(entries) == 1:
+            # Single subagent — open directly
+            self._open_subagent_detail(session_manager, entries[0])
+        else:
+            # Multiple subagents — show picker
+            from opendev.ui_textual.screens.session_picker import SessionPicker
+
+            picker_data = [
+                {
+                    "id": e["id"],
+                    "title": e["title"],
+                    "date": "",
+                    "message_count": e["message_count"],
+                    "files": 0,
+                    "additions": 0,
+                    "deletions": 0,
+                }
+                for e in entries
+            ]
+
+            def on_picker_result(selected_id: str | None) -> None:
+                if selected_id is None:
+                    return
+                entry = next((e for e in entries if e["id"] == selected_id), None)
+                if entry:
+                    self._open_subagent_detail(session_manager, entry)
+
+            self.push_screen(SessionPicker(picker_data), on_picker_result)
+
+    def _open_subagent_detail(self, session_manager: Any, entry: dict) -> None:
+        """Load and display a subagent session in a detail overlay.
+
+        Args:
+            session_manager: SessionManager instance for loading sessions
+            entry: Dict with 'id' and 'title' for the subagent session
+        """
+        from opendev.ui_textual.screens.subagent_detail import SubagentDetailScreen
+
+        child_session_id = entry["id"]
+        title = entry["title"]
+
+        try:
+            child_session = session_manager.load_session(child_session_id)
+            messages = child_session.messages
+        except Exception:
+            # Try loading just the transcript
+            try:
+                messages = session_manager.load_transcript(child_session_id)
+            except Exception:
+                self.conversation.add_system_message(
+                    f"Could not load subagent session {child_session_id[:8]}."
+                )
+                return
+
+        self.push_screen(SubagentDetailScreen(child_session_id, messages, title))
 
 
 def create_chat_app(
