@@ -128,6 +128,7 @@ class ToolRegistry:
             "update_todo": self._update_todo,
             "complete_todo": self._complete_todo,
             "list_todos": lambda args, ctx=None: self.todo_handler.list_todos(),
+            "clear_todos": lambda args, ctx=None: self.todo_handler.clear_todos(),
             # Symbol tools (LSP-based)
             "find_symbol": lambda args: handle_find_symbol(args),
             "find_referencing_symbols": lambda args: handle_find_referencing_symbols(args),
@@ -294,6 +295,11 @@ class ToolRegistry:
             tool_call_id=tool_call_id,  # Pass for parent context tracking
         )
 
+        # Save subagent conversation as a child session for navigation (Ctrl+G)
+        self._save_subagent_session(
+            result, subagent_type, tool_call_id, context,
+        )
+
         # Format output for consistency
         if result.get("success"):
             content = result.get("content", "")
@@ -318,6 +324,76 @@ class ToolRegistry:
                 "output": None,
                 "interrupted": result.get("interrupted", False),  # Propagate interrupt flag
             }
+
+    def _save_subagent_session(
+        self,
+        result: dict[str, Any],
+        subagent_type: str,
+        tool_call_id: Union[str, None],
+        context: Any,
+    ) -> None:
+        """Save subagent conversation as a child session and record mapping.
+
+        Creates a new session from the subagent's messages and stores a
+        tool_call_id -> child_session_id mapping in the parent session's
+        subagent_sessions field for later navigation (Ctrl+G).
+
+        Args:
+            result: Result dict from execute_subagent (contains 'messages')
+            subagent_type: Name of the subagent type
+            tool_call_id: Tool call ID from the parent context
+            context: Tool execution context with session_manager
+        """
+        if tool_call_id is None:
+            return
+
+        subagent_messages = result.get("messages")
+        if not subagent_messages:
+            return
+
+        session_manager = getattr(context, "session_manager", None) if context else None
+        if session_manager is None:
+            return
+
+        parent_session = session_manager.get_current_session()
+        if parent_session is None:
+            return
+
+        try:
+            from opendev.models.message import ChatMessage, Role
+            from opendev.models.session import Session
+
+            # Create a child session for the subagent conversation
+            child_session = Session(
+                working_directory=parent_session.working_directory,
+                parent_id=parent_session.id,
+                metadata={"title": f"Subagent: {subagent_type}"},
+            )
+
+            # Convert raw message dicts to ChatMessage objects
+            valid_roles = {r.value for r in Role}
+            for msg in subagent_messages:
+                if isinstance(msg, dict):
+                    role_str = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    # Skip system and tool messages (prompt and tool results)
+                    if role_str not in valid_roles or role_str == "system":
+                        continue
+                    child_session.add_message(
+                        ChatMessage(role=Role(role_str), content=str(content) if content else "")
+                    )
+
+            # Save child session
+            session_manager.save_session(child_session)
+
+            # Record mapping in parent session
+            if not hasattr(parent_session, "subagent_sessions"):
+                parent_session.subagent_sessions = {}
+            parent_session.subagent_sessions[tool_call_id] = child_session.id
+            session_manager.save_session(parent_session)
+        except Exception:
+            # Non-critical — don't break subagent execution if session save fails
+            logger.debug("Failed to save subagent session", exc_info=True)
 
     def _get_subagent_output(
         self, arguments: dict[str, Any], context: Any = None
@@ -682,6 +758,10 @@ class ToolRegistry:
             result: The present_plan result dict to augment with todo count.
         """
         from opendev.core.agents.components.response.plan_parser import parse_plan
+
+        # Ensure content has delimiters (safety net)
+        if "---BEGIN PLAN---" not in plan_content:
+            plan_content = f"---BEGIN PLAN---\n{plan_content}\n---END PLAN---"
 
         parsed = parse_plan(plan_content)
         if parsed and parsed.steps:
