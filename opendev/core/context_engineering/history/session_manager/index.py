@@ -144,6 +144,55 @@ class IndexMixin:
         entries.append(new_entry)
         self._write_index(entries)
 
+    def _update_index_entry_in_dir(self, directory: Path, session: Session) -> None:
+        """Upsert a session entry in the index of a specific directory.
+
+        Used when a session's working_directory resolves to a different
+        project directory than self.session_dir.
+        """
+        from opendev.core.paths import SESSIONS_INDEX_FILE_NAME
+
+        index_path = directory / SESSIONS_INDEX_FILE_NAME
+        new_entry = self._session_to_index_entry(session)
+
+        # Read existing index or create a new one
+        try:
+            if index_path.exists():
+                with open(index_path) as f:
+                    data = json.load(f)
+                if (
+                    not isinstance(data, dict)
+                    or data.get("version") != _INDEX_VERSION
+                    or not isinstance(data.get("entries"), list)
+                ):
+                    data = {"version": _INDEX_VERSION, "entries": []}
+            else:
+                data = {"version": _INDEX_VERSION, "entries": []}
+        except (json.JSONDecodeError, OSError):
+            data = {"version": _INDEX_VERSION, "entries": []}
+
+        entries = data["entries"]
+
+        # Replace existing or append
+        for i, entry in enumerate(entries):
+            if entry.get("sessionId") == session.id:
+                entries[i] = new_entry
+                break
+        else:
+            entries.append(new_entry)
+
+        data["entries"] = entries
+
+        # Atomic write
+        fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".tmp", prefix=".idx-")
+        try:
+            with os.fdopen(fd, "w") as tmp:
+                json.dump(data, tmp, indent=2, default=str)
+            Path(tmp_path).replace(index_path)
+        except Exception:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+
     def _remove_index_entry(self, session_id: str) -> None:
         """Remove a single session entry from the index."""
         index = self._read_index()

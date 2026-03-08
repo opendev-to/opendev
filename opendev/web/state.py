@@ -126,9 +126,11 @@ class WebState:
         return True
 
     def list_sessions(self, owner_id: str) -> List[Dict[str, Any]]:
-        """List all sessions owned by the specified user."""
+        """List all sessions owned by the specified user across all workspaces."""
         sessions = []
-        for session_meta in self.session_manager.list_sessions(owner_id=owner_id):
+        for session_meta in self.session_manager.list_all_sessions():
+            if session_meta.owner_id != owner_id:
+                continue
             sessions.append(
                 {
                     "id": session_meta.id,

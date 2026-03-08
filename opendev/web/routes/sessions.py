@@ -63,10 +63,10 @@ async def create_session(
         )
         print("[DEBUG] Session created")
 
-        # Note: Session will be auto-saved when first message is added
-        # Empty sessions are not saved to disk to avoid cluttering the session list
-
         session = state.session_manager.get_current_session()
+
+        # Force-save so the session file exists on disk for WebSocket lookups
+        state.session_manager.save_session(force=True)
         print(f"[DEBUG] Got current session: {session.id}")
 
         # Initialize plan file path for plan mode
@@ -514,47 +514,6 @@ async def get_session_file_changes(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-        session = state.session_manager.get_current_session()
-
-        if original_session_id:
-            state.resume_session(original_session_id, owner_id=str(user.id))
-
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-
-        # Get file changes summary and list
-        summary = session.get_file_changes_summary()
-        changes = []
-
-        for change in session.file_changes:
-            changes.append({
-                "id": change.id,
-                "type": change.type.value,
-                "file_path": change.file_path,
-                "old_path": change.old_path,
-                "timestamp": change.timestamp.isoformat(),
-                "lines_added": change.lines_added,
-                "lines_removed": change.lines_removed,
-                "description": change.description,
-                "icon": change.get_file_icon(),
-                "color": change.get_status_color(),
-                "summary": change.get_change_summary()
-            })
-
-        # Sort by timestamp (newest first)
-        changes.sort(key=lambda x: x["timestamp"], reverse=True)
-
-        return {
-            "session_id": session_id,
-            "summary": summary,
-            "changes": changes
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get file changes: {str(e)}")
-
 
 @router.get("/files")
 async def list_files(query: str = "") -> Dict[str, Any]:
@@ -714,19 +673,15 @@ async def get_session_model_overlay(
     session_id: str,
     user=Depends(require_authenticated_user),
 ) -> Dict[str, Any]:
-
-        try:
-            session = state.session_manager.get_session_by_id(session_id, owner_id=str(user.id))
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-
-        state.session_manager.delete_session(session_id)
-
-        return {"status": "success", "message": f"Session {session_id} deleted"}
+    try:
+        state = get_state()
+        session = state.session_manager.get_session_by_id(session_id, owner_id=str(user.id))
 
         overlay = session.metadata.get("session_model") or {}
         return overlay
 
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     except HTTPException:
         raise
     except Exception as e:
@@ -797,7 +752,7 @@ async def update_session_model(
 
 @router.delete("/{session_id}/model")
 async def delete_session_model(session_id: str, user=Depends(require_authenticated_user)) -> Dict[str, str]:
-
+    try:
         state = get_state()
 
         current = state.session_manager.get_current_session()

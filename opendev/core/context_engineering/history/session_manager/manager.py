@@ -39,6 +39,7 @@ class SessionManager(IndexMixin, PersistenceMixin, ListingMixin):
         If neither argument is given, falls back to
         ``~/.opendev/projects/-unknown-/``.
         """
+        self._explicit_session_dir = session_dir is not None
         if session_dir is not None:
             self.session_dir = Path(session_dir).expanduser()
         elif working_dir is not None:

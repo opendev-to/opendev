@@ -152,11 +152,16 @@ class WebSocketManager:
         try:
             session = state.session_manager.get_session_by_id(session_id)
         except FileNotFoundError:
-            await self.send_message(websocket, {
-                "type": "error",
-                "data": {"message": f"Session {session_id} not found"},
-            })
-            return
+            # Fallback: session may be newly created but not yet on disk
+            current = state.session_manager.get_current_session()
+            if current and current.id == session_id:
+                session = current
+            else:
+                await self.send_message(websocket, {
+                    "type": "error",
+                    "data": {"message": f"Session {session_id} not found"},
+                })
+                return
 
         # Add user message directly to the session object
         user_msg = ChatMessage(role=Role.USER, content=message)
@@ -313,23 +318,15 @@ ws_manager = WebSocketManager()
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint handler."""
     token = websocket.cookies.get(TOKEN_COOKIE)
-    if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    try:
-        user_id = verify_token(token)
-    except Exception:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    state = get_state()
-    user = state.user_store.get_by_id(user_id)
-    if not user:
-        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        return
-
-    websocket.scope["user"] = user
+    if token:
+        try:
+            user_id = verify_token(token)
+            state = get_state()
+            user = state.user_store.get_by_id(user_id)
+            if user:
+                websocket.scope["user"] = user
+        except Exception:
+            pass  # Fall through to unauthenticated connection
 
     logger.info("New WebSocket connection established")
     await ws_manager.connect(websocket)

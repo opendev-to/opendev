@@ -130,7 +130,23 @@ class PersistenceMixin:
 
         raise FileNotFoundError(f"Session {session_id} not found")
 
-    def save_session(self, session: Optional[Session] = None, use_jsonl: bool = True) -> None:
+    def _resolve_session_dir(self, session: Session) -> Path:
+        """Get the correct project-scoped storage directory for a session."""
+        if not getattr(self, "_explicit_session_dir", False) and session.working_directory:
+            from opendev.core.paths import get_paths
+
+            paths = get_paths()
+            target = paths.project_sessions_dir(Path(session.working_directory))
+            target.mkdir(parents=True, exist_ok=True)
+            return target
+        return self.session_dir
+
+    def save_session(
+        self,
+        session: Optional[Session] = None,
+        use_jsonl: bool = True,
+        force: bool = False,
+    ) -> None:
         """Save session to disk.
 
         Only saves sessions that have at least one message to avoid
@@ -143,17 +159,19 @@ class PersistenceMixin:
         Args:
             session: Session to save (defaults to current session)
             use_jsonl: Use JSONL format for messages (default True for multi-channel)
+            force: If True, save even if the session has no messages
         """
         session = session or self.current_session
         if not session:
             return
 
-        # Only save sessions with at least one message
-        if len(session.messages) == 0:
+        # Only save sessions with at least one message (unless forced)
+        if not force and len(session.messages) == 0:
             return
 
-        session_file = self.session_dir / f"{session.id}.json"
-        jsonl_file = self.session_dir / f"{session.id}.jsonl"
+        target_dir = self._resolve_session_dir(session)
+        session_file = target_dir / f"{session.id}.json"
+        jsonl_file = target_dir / f"{session.id}.jsonl"
 
         # Auto-generate title before writing (single write)
         if not session.metadata.get("title"):
@@ -191,7 +209,10 @@ class PersistenceMixin:
                     json.dump(session.model_dump(), f, indent=2, default=str)
 
         # Update the sessions index
-        self._update_index_entry(session)
+        if target_dir != self.session_dir:
+            self._update_index_entry_in_dir(target_dir, session)
+        else:
+            self._update_index_entry(session)
 
     def add_message(self, message: ChatMessage, auto_save_interval: int = 5) -> None:
         """Add a message to the current session and auto-save if needed.
