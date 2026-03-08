@@ -43,7 +43,7 @@ export function InputBox() {
   }, [mentionQuery, showFileMention]);
 
   const handleSend = () => {
-    if (!input.trim() || isLoading || !isConnected || !hasActiveSession) return;
+    if (!input.trim() || !isConnected || !hasActiveSession) return;
 
     sendMessage(input.trim());
     setInput('');
@@ -163,32 +163,37 @@ export function InputBox() {
                   ? "Select a session to start chatting..."
                   : !isConnected
                   ? "Disconnected..."
+                  : isLoading
+                  ? "Type to queue a message..."
                   : "Type your message... (use @ to mention files)"
               }
-              disabled={!isConnected || isLoading || !hasActiveSession}
+              disabled={!isConnected || !hasActiveSession}
               className="flex-1 bg-transparent text-text-000 placeholder-text-500 rounded-md px-3 py-2 resize-none border-0 focus:outline-none focus:ring-0 disabled:opacity-50 disabled:cursor-not-allowed"
               rows={2}
             />
-            <button
-              onClick={isLoading ? handleStop : handleSend}
-              disabled={!isLoading && (!input.trim() || !isConnected || !hasActiveSession)}
-              className={`px-4 py-2 rounded-lg transition-colors font-medium self-end ${
-                isLoading
-                  ? 'bg-danger-100 hover:bg-danger-000 text-white'
-                  : 'bg-accent-main-100 hover:bg-accent-main-200 text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-bg-300 disabled:text-text-500'
-              }`}
-              title={isLoading ? 'Stop (Esc)' : 'Send (Enter)'}
-            >
-              {isLoading ? (
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <rect x="6" y="6" width="12" height="12" rx="1" />
-                </svg>
-              ) : (
+            <div className="flex gap-1.5 self-end">
+              {isLoading && (
+                <button
+                  onClick={handleStop}
+                  className="px-3 py-2 rounded-lg transition-colors font-medium bg-danger-100 hover:bg-danger-000 text-white"
+                  title="Stop (Esc)"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                  </svg>
+                </button>
+              )}
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || !isConnected || !hasActiveSession}
+                className="px-4 py-2 rounded-lg transition-colors font-medium bg-accent-main-100 hover:bg-accent-main-200 text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-bg-300 disabled:text-text-500"
+                title="Send (Enter)"
+              >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
                 </svg>
-              )}
-            </button>
+              </button>
+            </div>
           </div>
         </div>
 

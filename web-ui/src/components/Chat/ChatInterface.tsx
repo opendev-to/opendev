@@ -1,5 +1,6 @@
 import { useChatStore } from '../../stores/chat';
 import { MessageList } from './MessageList';
+import { QueueBar } from './QueueBar';
 import { InputBox } from './InputBox';
 import { LandingPage } from './LandingPage';
 
@@ -23,6 +24,7 @@ export function ChatInterface() {
       )}
 
       <MessageList />
+      <QueueBar />
       <InputBox />
     </div>
   );

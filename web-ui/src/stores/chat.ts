@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import type { Message, ApprovalRequest, StatusInfo, AskUserRequest, PlanApprovalRequest, PerSessionState } from '../types';
+import type { Message, ApprovalRequest, StatusInfo, AskUserRequest, PlanApprovalRequest, PerSessionState, ToolCallInfo } from '../types';
 import { apiClient } from '../api/client';
 import { wsClient } from '../api/websocket';
+import { useToastStore } from './toast';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -12,6 +13,8 @@ const DEFAULT_SESSION: PerSessionState = {
   pendingApproval: null,
   pendingAskUser: null,
   pendingPlanApproval: null,
+  progressMessage: null,
+  queuedMessages: [],
 };
 
 function getSessionState(states: Record<string, PerSessionState>, id: string): PerSessionState {
@@ -33,10 +36,61 @@ function patchSession(
   };
 }
 
+/** Recursively expand tool calls (including nested) into flat message list. */
+function expandToolCalls(
+  toolCalls: ToolCallInfo[],
+  timestamp: string | undefined,
+  depth: number = 0,
+): Message[] {
+  const messages: Message[] = [];
+  for (const tc of toolCalls) {
+    const toolResult = tc.error
+      ? { success: false, error: tc.error }
+      : tc.result ?? '';
+    messages.push({
+      role: 'tool_call',
+      content: `Calling ${tc.name}`,
+      tool_call_id: tc.id,
+      tool_name: tc.name,
+      tool_args: tc.parameters,
+      tool_args_display: undefined,
+      tool_result: toolResult,
+      tool_summary: tc.result_summary || null,
+      tool_success: !tc.error,
+      tool_error: tc.error || null,
+      timestamp,
+      depth: depth > 0 ? depth : undefined,
+    });
+    // Recurse into nested tool calls
+    if (tc.nested_tool_calls && tc.nested_tool_calls.length > 0) {
+      messages.push(...expandToolCalls(tc.nested_tool_calls, timestamp, depth + 1));
+    }
+  }
+  return messages;
+}
+
 /** Expand raw API messages (with tool_calls arrays) into flat message list. */
 function expandMessages(rawMessages: Message[]): Message[] {
   const expanded: Message[] = [];
   for (const msg of rawMessages) {
+    // Emit thinking traces before content (matches TUI hydration order)
+    if (msg.thinking_trace && msg.thinking_trace.trim()) {
+      expanded.push({
+        role: 'thinking',
+        content: msg.thinking_trace,
+        metadata: { level: 'Medium' },
+        timestamp: msg.timestamp,
+      });
+    }
+    if (msg.reasoning_content && msg.reasoning_content.trim()) {
+      expanded.push({
+        role: 'thinking',
+        content: msg.reasoning_content,
+        metadata: { level: 'Medium' },
+        timestamp: msg.timestamp,
+      });
+    }
+
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       if (msg.content && msg.content.trim()) {
         expanded.push({
@@ -45,24 +99,7 @@ function expandMessages(rawMessages: Message[]): Message[] {
           timestamp: msg.timestamp,
         });
       }
-      for (const tc of msg.tool_calls) {
-        const toolResult = tc.error
-          ? { success: false, error: tc.error }
-          : tc.result ?? '';
-        expanded.push({
-          role: 'tool_call',
-          content: `Calling ${tc.name}`,
-          tool_call_id: tc.id,
-          tool_name: tc.name,
-          tool_args: tc.parameters,
-          tool_args_display: undefined,
-          tool_result: toolResult,
-          tool_summary: tc.result_summary || null,
-          tool_success: !tc.error,
-          tool_error: tc.error || null,
-          timestamp: msg.timestamp,
-        });
-      }
+      expanded.push(...expandToolCalls(msg.tool_calls, msg.timestamp));
     } else {
       if (msg.content && msg.content.trim()) {
         expanded.push({
@@ -192,6 +229,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const sessionId = get().currentSessionId;
     if (!sessionId) return;
 
+    const sessionState = getSessionState(get().sessionStates, sessionId);
+    const isQueuing = sessionState.isLoading;
+
     const userMessage: Message = {
       role: 'user',
       content,
@@ -203,6 +243,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: [...prev.messages, userMessage],
         isLoading: true,
         error: null,
+        queuedMessages: isQueuing
+          ? [...prev.queuedMessages, content]
+          : prev.queuedMessages,
       })),
     }));
 
@@ -363,12 +406,28 @@ function resolveSessionId(data: any): string | null {
   return data?.session_id || useChatStore.getState().currentSessionId;
 }
 
+let connectionStableTimer: number | null = null;
+let wasEverStable = false;
+
 wsClient.on('connected', () => {
   useChatStore.getState().setConnected(true);
+  if (wasEverStable) {
+    useToastStore.getState().addToast('Reconnected to server', 'success');
+  }
+  connectionStableTimer = window.setTimeout(() => {
+    wasEverStable = true;
+  }, 2000);
 });
 
 wsClient.on('disconnected', () => {
   useChatStore.getState().setConnected(false);
+  if (connectionStableTimer) {
+    clearTimeout(connectionStableTimer);
+    connectionStableTimer = null;
+  }
+  if (wasEverStable) {
+    useToastStore.getState().addToast('Disconnected from server', 'warning');
+  }
 });
 
 wsClient.on('user_message', () => {
@@ -415,7 +474,7 @@ wsClient.on('message_complete', (message) => {
   if (!sid) return;
   console.log('[Frontend] Received message_complete');
   useChatStore.setState(state => ({
-    ...patchSession(state, sid, { isLoading: false }),
+    ...patchSession(state, sid, { isLoading: false, queuedMessages: [] }),
   }));
 });
 
@@ -428,6 +487,7 @@ wsClient.on('error', (message) => {
       isLoading: false,
     }),
   }));
+  useToastStore.getState().addToast(message.data.message || 'An error occurred', 'error');
 });
 
 wsClient.on('approval_required', (message) => {
@@ -634,4 +694,77 @@ wsClient.on('task_completed', (message) => {
   const sid = resolveSessionId(message.data);
   if (!sid) return;
   console.log('[Frontend] Task completed:', message.data.summary);
+});
+
+// ─── Progress Events ─────────────────────────────────────────────────────────
+
+wsClient.on('progress', (message) => {
+  const sid = resolveSessionId(message.data);
+  if (!sid) return;
+  const { status, message: progressMsg } = message.data;
+
+  if (status === 'complete') {
+    useChatStore.setState(state => ({
+      ...patchSession(state, sid, { progressMessage: null }),
+    }));
+  } else {
+    useChatStore.setState(state => ({
+      ...patchSession(state, sid, { progressMessage: progressMsg || 'Working...' }),
+    }));
+  }
+});
+
+// ─── Nested Tool Events ──────────────────────────────────────────────────────
+
+wsClient.on('nested_tool_call', (message) => {
+  const sid = resolveSessionId(message.data);
+  if (!sid) return;
+  const { tool_name, arguments: args, depth, parent } = message.data;
+
+  const nestedMsg: Message = {
+    role: 'tool_call',
+    content: `Calling ${tool_name}`,
+    tool_name,
+    tool_args: args || {},
+    tool_call_id: `nested-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    depth: depth || 1,
+    parent_tool_call_id: parent,
+    timestamp: new Date().toISOString(),
+  };
+
+  useChatStore.setState(state => {
+    const sessionState = getSessionState(state.sessionStates, sid);
+    return patchSession(state, sid, { messages: [...sessionState.messages, nestedMsg] });
+  });
+});
+
+wsClient.on('nested_tool_result', (message) => {
+  const sid = resolveSessionId(message.data);
+  if (!sid) return;
+  const { tool_name, success, summary, depth } = message.data;
+
+  useChatStore.setState(state => {
+    const sessionState = getSessionState(state.sessionStates, sid);
+    const msgs = sessionState.messages;
+
+    // Find the last matching nested tool_call without a result
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (
+        msgs[i].role === 'tool_call' &&
+        msgs[i].tool_name === tool_name &&
+        msgs[i].depth === depth &&
+        !msgs[i].tool_result
+      ) {
+        const updated = [...msgs];
+        updated[i] = {
+          ...msgs[i],
+          tool_result: { success, output: summary },
+          tool_summary: summary || (success ? 'Completed' : 'Failed'),
+          tool_success: success,
+        };
+        return patchSession(state, sid, { messages: updated });
+      }
+    }
+    return {};
+  });
 });

@@ -7,6 +7,7 @@ export interface ToolCallInfo {
   error?: string | null;
   result_summary?: string | null;
   approved?: boolean | null;
+  nested_tool_calls?: ToolCallInfo[] | null;
 }
 
 // Message types
@@ -24,6 +25,10 @@ export interface Message {
   tool_error?: string | null;
   tool_calls?: ToolCallInfo[];
   metadata?: Record<string, any>;
+  depth?: number;
+  parent_tool_call_id?: string;
+  thinking_trace?: string | null;
+  reasoning_content?: string | null;
 }
 
 // Session types
@@ -64,7 +69,7 @@ export interface Provider {
 
 // WebSocket event types
 export interface WSMessage {
-  type: 'user_message' | 'message_start' | 'message_chunk' | 'message_complete' | 'tool_call' | 'tool_result' | 'approval_required' | 'approval_resolved' | 'error' | 'pong' | 'mcp_status_update' | 'mcp_servers_update' | 'connected' | 'disconnected' | 'thinking_block' | 'status_update' | 'ask_user_required' | 'ask_user_resolved' | 'session_activity' | 'plan_approval_required' | 'plan_approval_resolved' | 'plan_content' | 'subagent_start' | 'subagent_complete' | 'parallel_agents_start' | 'parallel_agents_done' | 'task_completed';
+  type: 'user_message' | 'message_start' | 'message_chunk' | 'message_complete' | 'tool_call' | 'tool_result' | 'approval_required' | 'approval_resolved' | 'error' | 'pong' | 'mcp_status_update' | 'mcp_servers_update' | 'connected' | 'disconnected' | 'thinking_block' | 'status_update' | 'ask_user_required' | 'ask_user_resolved' | 'session_activity' | 'plan_approval_required' | 'plan_approval_resolved' | 'plan_content' | 'subagent_start' | 'subagent_complete' | 'parallel_agents_start' | 'parallel_agents_done' | 'task_completed' | 'progress' | 'nested_tool_call' | 'nested_tool_result';
   data: any;
 }
 
@@ -92,6 +97,8 @@ export interface StatusInfo {
   model_provider?: string;
   working_dir?: string;
   git_branch?: string | null;
+  session_cost?: number;
+  context_usage_pct?: number;
 }
 
 // Ask-user question types
@@ -126,4 +133,6 @@ export interface PerSessionState {
   pendingApproval: ApprovalRequest | null;
   pendingAskUser: AskUserRequest | null;
   pendingPlanApproval: PlanApprovalRequest | null;
+  progressMessage: string | null;
+  queuedMessages: string[];
 }
