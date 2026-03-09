@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import webbrowser
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Thread
 from typing import Optional, TYPE_CHECKING
@@ -31,6 +33,19 @@ if TYPE_CHECKING:
     from opendev.core.context_engineering.mcp.manager import MCPManager
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Capture event loop and ws_manager on startup for bridge mode."""
+    state = get_state()
+    if state._event_loop is None:
+        state._event_loop = asyncio.get_event_loop()
+    from opendev.web.websocket import ws_manager as _global_ws_manager
+
+    if state.ws_manager is None:
+        state.ws_manager = _global_ws_manager
+    yield
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -41,6 +56,7 @@ def create_app() -> FastAPI:
         title="OpenDev Web UI",
         description="Web interface for OpenDev AI coding assistant",
         version="0.1.0",
+        lifespan=lifespan,
     )
 
     # CORS middleware for development
@@ -62,20 +78,6 @@ def create_app() -> FastAPI:
 
     # WebSocket endpoint
     app.add_websocket_route("/ws", websocket_endpoint)
-
-    # Capture event loop and ws_manager on startup for bridge mode
-    @app.on_event("startup")
-    async def _capture_event_loop():
-        import asyncio
-
-        state = get_state()
-        if state._event_loop is None:
-            state._event_loop = asyncio.get_event_loop()
-        # Also store the global ws_manager so bridge can access it before any WS connects
-        from opendev.web.websocket import ws_manager as _global_ws_manager
-
-        if state.ws_manager is None:
-            state.ws_manager = _global_ws_manager
 
     # Health check
     @app.get("/api/health")
