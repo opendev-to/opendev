@@ -31,6 +31,12 @@ Work is organized into concurrent sessions composed of specialized sub-agents. E
   <img src="figures/top.png" alt="OpenDev Compound AI Architecture" width="700"/>
 </p>
 
+OpenDev's **Web UI** lets you manage multiple concurrent sessions, monitor agent activity in real time, and kick off tasks remotely — even from your phone.
+
+<p align="center">
+  <img src="figures/web_ui.png" alt="OpenDev Web UI" width="800"/>
+</p>
+
 ---
 
 ### Why OpenDev?
@@ -122,6 +128,16 @@ cd web-ui && npm run build
 ### Contributing
 
 If you're interested in contributing to OpenDev, please open an issue or submit a pull request.
+
+---
+
+### How OpenDev Compares
+
+- **vs. Claude Code / Codex CLI / Gemini CLI:** Closed-source tools that lock you into a single provider. OpenDev is fully open source and lets you mix models from any provider, independently bound per workflow (execution, thinking, critique, compaction, vision).
+- **vs. OpenCode:** OpenCode is a great open-source coding agent with TUI, Web UI, and LSP support. However, its architecture is not modular enough to support per-workflow model binding, concurrent multi-agent sessions, or compound AI orchestration.
+- **vs. OpenClaw:** OpenDev and OpenClaw share similar concepts around autonomous AI agents. The key difference is focus: OpenDev is purpose-built for the software development lifecycle, with context engineering, structured agent workflows, and deep code understanding.
+
+📋 See the [Roadmap](./ROADMAP.md) for what's shipped, in progress, and planned.
 
 ---
 
