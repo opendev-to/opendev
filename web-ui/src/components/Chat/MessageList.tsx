@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useChatStore } from '../../stores/chat';
 import { ToolCallMessage } from './ToolCallMessage';
@@ -14,9 +14,17 @@ export function MessageList() {
     const sid = state.currentSessionId;
     return sid ? state.sessionStates[sid]?.isLoading ?? false : false;
   });
+  const progressMessage = useChatStore(state => {
+    const sid = state.currentSessionId;
+    return sid ? state.sessionStates[sid]?.progressMessage ?? null : null;
+  });
   const thinkingLevel = useChatStore(state => state.thinkingLevel);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll state
+  const [userHasScrolled, setUserHasScrolled] = useState(false);
+  const isNearBottomRef = useRef(true);
 
   // Spinner animation state
   const [spinnerIndex, setSpinnerIndex] = useState(0);
@@ -26,9 +34,29 @@ export function MessageList() {
   // Braille halo animation for welcome screen
   const [brailleOffset, setBrailleOffset] = useState(0);
 
+  // Smart auto-scroll: track user scroll position
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const nearBottom = distanceFromBottom < 50;
+
+    isNearBottomRef.current = nearBottom;
+
+    if (nearBottom) {
+      setUserHasScrolled(false);
+    } else {
+      setUserHasScrolled(true);
+    }
+  }, []);
+
+  // Auto-scroll on new messages (only if user hasn't scrolled up)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (!userHasScrolled) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, userHasScrolled, progressMessage]);
 
   // Animate spinner when loading
   useEffect(() => {
@@ -129,12 +157,19 @@ export function MessageList() {
   }
 
   return (
-    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto bg-bg-100">
+    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto bg-bg-100" onScroll={handleScroll}>
       <div className="max-w-5xl mx-auto py-6 px-4 md:px-8 space-y-4">
         {messages.map((message, index) => {
+          // Nested tool calls get indentation
+          const depthMargin = message.depth ? `ml-${Math.min(message.depth * 6, 24)}` : '';
+
           // Render tool calls with special component
           if (message.role === 'tool_call') {
-            return <ToolCallMessage key={index} message={message} />;
+            return (
+              <div key={index} className={depthMargin} style={message.depth ? { marginLeft: `${message.depth * 1.5}rem` } : undefined}>
+                <ToolCallMessage message={message} />
+              </div>
+            );
           }
 
           // Render thinking blocks (only when thinking level is not Off)
@@ -209,7 +244,21 @@ export function MessageList() {
           );
         })}
 
-        {isLoading && (
+        {/* Progress indicator */}
+        {progressMessage && (
+          <div className="bg-bg-000 border border-border-300/15 rounded-lg px-4 py-3 animate-fade-in">
+            <div className="flex items-center gap-3">
+              <span className={`text-base font-medium ${SPINNER_COLORS[colorIndex]} transition-colors duration-100`}>
+                {SPINNER_FRAMES[spinnerIndex]}
+              </span>
+              <span className="text-sm text-text-300 font-medium">
+                {progressMessage}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {isLoading && !progressMessage && (
           <div className="bg-bg-000 border border-border-300/15 rounded-lg px-4 py-3 animate-fade-in">
             <div className="flex items-center gap-3">
               <span className={`text-base font-medium ${SPINNER_COLORS[colorIndex]} transition-colors duration-100`}>

@@ -440,6 +440,11 @@ Examples:
                 get_debug_logger().log("session_end", "runner")
                 _set_dl(None)
 
+            # Don't persist non-interactive sessions — they clutter the session picker
+            session = session_manager.get_current_session()
+            if session:
+                session_manager.delete_session(session.id)
+
             return
 
         resume_session_id = None

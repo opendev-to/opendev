@@ -18,11 +18,7 @@ export function AppNavBar() {
         <div className="flex items-center gap-6">
           {/* Brand/Logo */}
           <Link to="/chat" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center">
-              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-              </svg>
-            </div>
+            <img src="/icon_blue.png" alt="OpenDev" className="w-7 h-7 rounded-lg shadow-sm" />
             <span className="text-base font-semibold text-gray-900">OpenDev</span>
           </Link>
 

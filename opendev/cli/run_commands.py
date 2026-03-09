@@ -47,7 +47,7 @@ def _handle_run_command(args) -> None:
                 from opendev.core.auth.user_store import UserStore
 
                 paths = get_paths(working_dir)
-                user_store = UserStore(paths.data_dir)
+                user_store = UserStore(paths.global_dir)
 
                 # Get port and host from args
                 preferred_port = getattr(args, "ui_port", 8080)

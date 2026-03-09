@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { PanelLeft } from 'lucide-react';
+import { PanelLeft, Command } from 'lucide-react';
 import { useChatStore } from '../../stores/chat';
 import { apiClient } from '../../api/client';
 
@@ -21,7 +21,22 @@ const THINKING_STYLES: Record<string, string> = {
   'High':          'bg-yellow-500/10 text-yellow-600 border-yellow-500/20 hover:bg-yellow-500/15',
 } as const;
 
-export function TopBar() {
+function formatCost(cost: number): string {
+  return cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(2)}`;
+}
+
+function getContextColor(pct: number): string {
+  const remaining = 100 - pct;
+  if (remaining < 25) return 'bg-red-500/10 text-red-600 border-red-500/20';
+  if (remaining < 50) return 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20';
+  return 'bg-emerald-500/10 text-emerald-700 border-emerald-500/20';
+}
+
+interface TopBarProps {
+  onOpenCommandPalette?: () => void;
+}
+
+export function TopBar({ onOpenCommandPalette }: TopBarProps) {
   const status = useChatStore(state => state.status);
   const isConnected = useChatStore(state => state.isConnected);
   const thinkingLevel = useChatStore(state => state.thinkingLevel);
@@ -68,11 +83,15 @@ export function TopBar() {
         e.preventDefault();
         toggleSidebar();
       }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        onOpenCommandPalette?.();
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cycleThinkingLevel, cycleAutonomy, toggleSidebar]);
+  }, [cycleThinkingLevel, cycleAutonomy, toggleSidebar, onOpenCommandPalette]);
 
   const getProjectName = (path: string) => {
     if (!path) return '';
@@ -95,11 +114,7 @@ export function TopBar() {
         </button>
 
         {/* Logo */}
-        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500 flex items-center justify-center shadow-sm flex-shrink-0">
-          <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-          </svg>
-        </div>
+        <img src="/icon_blue.png" alt="OpenDev" className="w-7 h-7 rounded-lg shadow-sm flex-shrink-0" />
 
         <div className="flex items-baseline gap-1.5">
           <span className="text-sm font-bold tracking-tight text-gray-900">OPENDEV</span>
@@ -113,6 +128,26 @@ export function TopBar() {
       {/* ── Center-Right: Status Pills ── */}
       {status && (
         <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Cost pill — only shown when agent has run */}
+          {status.session_cost != null && status.session_cost > 0 && (
+            <span
+              className={`${pillBase} cursor-default bg-bg-200 text-text-300 border-border-300/30`}
+              title={`Session cost: ${formatCost(status.session_cost)}`}
+            >
+              {formatCost(status.session_cost)}
+            </span>
+          )}
+
+          {/* Context usage pill — only shown when available */}
+          {status.context_usage_pct != null && (
+            <span
+              className={`${pillBase} cursor-default ${getContextColor(status.context_usage_pct)}`}
+              title={`Context window: ${Math.round(status.context_usage_pct)}% used, ${Math.round(100 - status.context_usage_pct)}% remaining`}
+            >
+              Ctx: {Math.round(status.context_usage_pct)}%
+            </span>
+          )}
+
           {/* Mode pill */}
           <button
             onClick={toggleMode}
@@ -143,6 +178,15 @@ export function TopBar() {
             title="Controls how much the AI reasons before responding. Click to cycle (Ctrl+Shift+T)"
           >
             Think: {thinkingLevel}
+          </button>
+
+          {/* Command palette button */}
+          <button
+            onClick={onOpenCommandPalette}
+            className={`${pillBase} bg-bg-200 text-text-400 border-border-300/30 hover:bg-bg-300`}
+            title="Command palette (Ctrl/Cmd+K)"
+          >
+            <Command className="w-3 h-3" />
           </button>
 
           {/* Connection pill */}

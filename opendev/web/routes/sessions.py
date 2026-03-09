@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from opendev.web.state import get_state
-from opendev.web.routes.chat import MessageResponse, ToolCallInfo
+from opendev.web.routes.chat import MessageResponse, ToolCallInfo, tool_call_to_info
 from opendev.web.dependencies.auth import require_authenticated_user
 
 router = APIRouter(
@@ -238,20 +238,11 @@ async def get_session_messages(
                     if hasattr(msg, "timestamp") and msg.timestamp
                     else None
                 ),
-                tool_calls=[
-                    ToolCallInfo(
-                        id=tc.id,
-                        name=tc.name,
-                        parameters=tc.parameters,
-                        result=tc.result,
-                        error=tc.error,
-                        result_summary=tc.result_summary,
-                        approved=tc.approved,
-                    )
-                    for tc in msg.tool_calls
-                ]
+                tool_calls=[tool_call_to_info(tc) for tc in msg.tool_calls]
                 if msg.tool_calls
                 else None,
+                thinking_trace=msg.thinking_trace,
+                reasoning_content=msg.reasoning_content,
             )
             for msg in visible_messages
         ]

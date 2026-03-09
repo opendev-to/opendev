@@ -338,7 +338,7 @@ export function SessionsSidebar() {
                 toggleSidebar();
                 setTimeout(() => setIsNewSessionOpen(true), 100);
               }}
-              className="w-10 h-10 rounded-lg flex items-center justify-center bg-gradient-to-br from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white shadow-md hover:shadow-lg"
+              className="w-10 h-10 rounded-lg flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-md hover:shadow-lg"
               title="Start Conversation"
             >
               <PlusIcon className="w-5 h-5" />
@@ -362,7 +362,7 @@ export function SessionsSidebar() {
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
             <button
               onClick={handleNewWorkspace}
-              className="flex-1 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white text-sm font-medium rounded-lg shadow-sm hover:shadow-md flex items-center justify-center gap-2 transition-all"
+              className="flex-1 px-3 py-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white text-sm font-medium rounded-lg shadow-sm hover:shadow-md flex items-center justify-center gap-2 transition-all"
             >
               <PlusIcon className="w-4 h-4" />
               <span>New Chat</span>

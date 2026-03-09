@@ -80,37 +80,25 @@ class AgentExecutor:
                 session,
             )
 
-            # Add assistant response to the session object directly
+            # Reconstruct and persist all assistant steps (tool calls + final response)
             logger.info(
-                f"Agent response: success={response.get('success')}, has_content={bool(response.get('content'))}"
+                f"Agent response: success={response.get('success')}, "
+                f"has_content={bool(response.get('content'))}"
             )
             if response and response.get("success"):
-                assistant_content = response.get("content", "")
-                raw_assistant_content = assistant_content
-                history = response.get("messages") or []
-                for msg in reversed(history):
-                    if msg.get("role") == "assistant":
-                        raw_assistant_content = msg.get("content", raw_assistant_content)
-                        break
-
-                # Extract metadata from agent response for session persistence
+                web_ui_callback = response.pop("_web_ui_callback", None)
                 thinking_trace = response.get("thinking_trace")
                 reasoning_content = response.get("reasoning_content")
                 token_usage = response.get("usage")
 
-                metadata = {}
-                if raw_assistant_content is not None:
-                    metadata["raw_content"] = raw_assistant_content
-
-                assistant_msg = ChatMessage(
-                    role=Role.ASSISTANT,
-                    content=assistant_content,
-                    metadata=metadata,
-                    thinking_trace=thinking_trace,
-                    reasoning_content=reasoning_content,
-                    token_usage=token_usage,
+                self._reconstruct_and_persist_messages(
+                    session,
+                    response,
+                    thinking_trace,
+                    reasoning_content,
+                    token_usage,
+                    web_ui_callback,
                 )
-                session.add_message(assistant_msg)
 
             # Save session to persist messages immediately
             self.state.session_manager.save_session(session)
@@ -273,9 +261,15 @@ class AgentExecutor:
             session_id=session_id,
         )
 
+        # Instantiate CostTracker for this execution
+        from opendev.core.runtime.cost_tracker import CostTracker
+
+        cost_tracker = CostTracker()
+
         # Get agent and replace its tool registry with wrapped version
         agent = runtime_suite.agents.normal
         agent.tool_registry = wrapped_registry
+        agent._cost_tracker = cost_tracker
         # Pass the state to the agent for interrupt checking
         agent.web_state = self.state
         # Wire injection queue so mid-execution user messages reach the agent loop
@@ -352,12 +346,117 @@ class AgentExecutor:
             else:
                 logger.warning("Agent returned success=False, not broadcasting message_chunk")
 
-            # Include thinking_trace in the returned result for session persistence
+            # Include thinking_trace and callback in the returned result for persistence
             result["thinking_trace"] = thinking_trace
+            result["_web_ui_callback"] = web_ui_callback
             return result
 
         except Exception as e:
             return {"success": False, "error": str(e), "content": f"Error: {str(e)}"}
+
+    def _reconstruct_and_persist_messages(
+        self,
+        session: Any,
+        result: Dict[str, Any],
+        thinking_trace: Optional[str],
+        reasoning_content: Optional[str],
+        token_usage: Optional[Dict[str, Any]],
+        web_ui_callback: Any,
+    ) -> None:
+        """Parse run_sync message history and persist all assistant steps with tool calls."""
+        import json
+        from opendev.models.message import ToolCall as ToolCallModel
+        from opendev.core.utils.tool_result_summarizer import summarize_tool_result
+
+        api_messages = result.get("messages", [])
+        original_content = result.get("content", "")
+        is_first_assistant = True
+
+        for i, msg in enumerate(api_messages):
+            if msg.get("role") != "assistant":
+                continue
+
+            content = msg.get("content") or ""
+            raw_tool_calls = msg.get("tool_calls")
+
+            if not raw_tool_calls:
+                # Final assistant message (no tool calls) — persist with metadata
+                assistant_msg = ChatMessage(
+                    role=Role.ASSISTANT,
+                    content=content,
+                    thinking_trace=thinking_trace if is_first_assistant else None,
+                    reasoning_content=reasoning_content if is_first_assistant else None,
+                    token_usage=token_usage,
+                )
+                session.add_message(assistant_msg)
+                is_first_assistant = False
+                continue
+
+            # Assistant message WITH tool_calls — reconstruct ToolCall objects
+            tool_call_objects = []
+            for tc in raw_tool_calls:
+                tc_id = tc["id"]
+                tool_name = tc["function"]["name"]
+                try:
+                    tool_args = json.loads(tc["function"]["arguments"])
+                except (json.JSONDecodeError, TypeError):
+                    tool_args = {"raw": tc["function"].get("arguments", "")}
+
+                # Find matching tool result in subsequent messages
+                tool_result_str = None
+                for j in range(i + 1, len(api_messages)):
+                    if (
+                        api_messages[j].get("role") == "tool"
+                        and api_messages[j].get("tool_call_id") == tc_id
+                    ):
+                        tool_result_str = api_messages[j].get("content", "")
+                        break
+
+                # Detect errors (run_loop prefixes errors with "Error")
+                is_error = bool(tool_result_str and tool_result_str.startswith("Error"))
+                tool_error = tool_result_str if is_error else None
+                tool_output = None if is_error else tool_result_str
+
+                # Get nested calls for subagent tools
+                nested_calls = []
+                if tool_name == "spawn_subagent" and web_ui_callback:
+                    nested_calls = web_ui_callback.get_and_clear_nested_calls()
+
+                tool_call_objects.append(
+                    ToolCallModel(
+                        id=tc_id,
+                        name=tool_name,
+                        parameters=tool_args,
+                        result=tool_result_str,
+                        result_summary=summarize_tool_result(
+                            tool_name, tool_output, tool_error
+                        ),
+                        error=tool_error,
+                        approved=True,
+                        nested_tool_calls=nested_calls,
+                    )
+                )
+
+            assistant_msg = ChatMessage(
+                role=Role.ASSISTANT,
+                content=content,
+                tool_calls=tool_call_objects,
+                thinking_trace=thinking_trace if is_first_assistant else None,
+                reasoning_content=reasoning_content if is_first_assistant else None,
+            )
+            session.add_message(assistant_msg)
+            is_first_assistant = False
+
+        # Fallback: if no assistant messages were found but we have content, save it
+        if is_first_assistant and original_content:
+            assistant_msg = ChatMessage(
+                role=Role.ASSISTANT,
+                content=original_content,
+                thinking_trace=thinking_trace,
+                reasoning_content=reasoning_content,
+                token_usage=token_usage,
+            )
+            session.add_message(assistant_msg)
 
     def _run_thinking_phase(
         self,

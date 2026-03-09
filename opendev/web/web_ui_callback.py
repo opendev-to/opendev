@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
+from opendev.models.message import ToolCall
 from opendev.ui_textual.callback_interface import BaseUICallback
 from opendev.web.logging_config import logger
 
@@ -34,6 +35,7 @@ class WebUICallback(BaseUICallback):
         self.loop = loop
         self.session_id = session_id
         self.state = state
+        self._pending_nested_calls: list[ToolCall] = []
 
     # ------------------------------------------------------------------
     # Plan approval (used by PresentPlanTool via registry)
@@ -208,7 +210,7 @@ class WebUICallback(BaseUICallback):
     # Context usage
     # ------------------------------------------------------------------
 
-    def on_context_update(self, usage_pct: float) -> None:
+    def on_context_usage(self, usage_pct: float) -> None:
         """Broadcast updated context usage percentage to the frontend."""
         self._broadcast({
             "type": "status_update",
@@ -219,8 +221,170 @@ class WebUICallback(BaseUICallback):
         })
 
     # ------------------------------------------------------------------
-    # Interrupt
+    # Thinking lifecycle
     # ------------------------------------------------------------------
+
+    def on_thinking_start(self) -> None:
+        """Broadcast that the agent has started thinking."""
+        self._broadcast({
+            "type": "status_update",
+            "data": {"thinking_active": True, "session_id": self.session_id},
+        })
+
+    def on_thinking_complete(self) -> None:
+        """Broadcast that the agent has finished thinking."""
+        self._broadcast({
+            "type": "status_update",
+            "data": {"thinking_active": False, "session_id": self.session_id},
+        })
+
+    def on_thinking(self, content: str) -> None:
+        """Broadcast thinking content as a thinking_block."""
+        if not content or not content.strip():
+            return
+        self._broadcast({
+            "type": "thinking_block",
+            "data": {
+                "content": content.strip(),
+                "level": "Medium",
+                "session_id": self.session_id,
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # Progress indicators
+    # ------------------------------------------------------------------
+
+    def on_progress_start(self, message: str) -> None:
+        """Broadcast progress start event."""
+        self._broadcast({
+            "type": "progress",
+            "data": {
+                "status": "start",
+                "message": message,
+                "session_id": self.session_id,
+            },
+        })
+
+    def on_progress_update(self, message: str) -> None:
+        """Broadcast progress update event."""
+        self._broadcast({
+            "type": "progress",
+            "data": {
+                "status": "update",
+                "message": message,
+                "session_id": self.session_id,
+            },
+        })
+
+    def on_progress_complete(self, message: str = "", success: bool = True) -> None:
+        """Broadcast progress complete event."""
+        self._broadcast({
+            "type": "progress",
+            "data": {
+                "status": "complete",
+                "message": message,
+                "success": success,
+                "session_id": self.session_id,
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # Nested tool calls (subagent tools)
+    # ------------------------------------------------------------------
+
+    def on_nested_tool_call(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        depth: int = 1,
+        parent: str = "",
+    ) -> None:
+        """Broadcast nested tool call from a subagent."""
+        self._broadcast({
+            "type": "nested_tool_call",
+            "data": {
+                "tool_name": tool_name,
+                "arguments": tool_args,
+                "depth": depth,
+                "parent": parent,
+                "session_id": self.session_id,
+            },
+        })
+
+    def on_nested_tool_result(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        result: Any,
+        depth: int = 1,
+        parent: str = "",
+    ) -> None:
+        """Broadcast nested tool result from a subagent."""
+        # Summarize result to avoid sending huge payloads
+        summary = ""
+        if isinstance(result, dict):
+            summary = result.get("output", str(result))[:200]
+        elif isinstance(result, str):
+            summary = result[:200]
+        else:
+            summary = str(result)[:200]
+
+        self._broadcast({
+            "type": "nested_tool_result",
+            "data": {
+                "tool_name": tool_name,
+                "depth": depth,
+                "parent": parent,
+                "success": not (isinstance(result, dict) and result.get("success") is False),
+                "summary": summary,
+                "session_id": self.session_id,
+            },
+        })
+
+        # Collect for session persistence (mirrors TUI tool_display.py:508)
+        self._pending_nested_calls.append(
+            ToolCall(
+                id=f"nested_{len(self._pending_nested_calls)}",
+                name=tool_name,
+                parameters=tool_args,
+                result=result,
+            )
+        )
+
+    def get_and_clear_nested_calls(self) -> list[ToolCall]:
+        """Return collected nested calls and clear the buffer.
+
+        Called by SessionPersistenceMixin after spawn_subagent completes
+        to attach nested calls to the ToolCall.
+        """
+        calls = self._pending_nested_calls
+        self._pending_nested_calls = []
+        return calls
+
+    # ------------------------------------------------------------------
+    # Assistant message
+    # ------------------------------------------------------------------
+
+    def on_assistant_message(self, content: str) -> None:
+        """Broadcast assistant message content as a message_chunk."""
+        if not content:
+            return
+        self._broadcast({
+            "type": "message_chunk",
+            "data": {
+                "content": content,
+                "session_id": self.session_id,
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # Debug
+    # ------------------------------------------------------------------
+
+    def on_debug(self, message: str, prefix: str = "DEBUG") -> None:
+        """Log debug messages (not broadcast to frontend)."""
+        logger.debug(f"[{prefix}] {message}")
 
     # ------------------------------------------------------------------
     # Thinking / Critique
