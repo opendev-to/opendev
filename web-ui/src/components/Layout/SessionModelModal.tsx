@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { apiClient } from '../../api/client';
 import { ModelSlot } from '../Settings/ModelSlot';
 import type { Provider } from '../Settings/ModelSlot';
+import { useToastStore } from '../../stores/toast';
 
 interface SessionModelModalProps {
   sessionId: string | null;
@@ -14,8 +15,8 @@ export function SessionModelModal({ sessionId, sessionLabel, onClose }: SessionM
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
   const [hasExistingOverlay, setHasExistingOverlay] = useState(false);
+  const addToast = useToastStore(state => state.addToast);
 
   // Model slots
   const [normalProvider, setNormalProvider] = useState('');
@@ -39,7 +40,6 @@ export function SessionModelModal({ sessionId, sessionLabel, onClose }: SessionM
     if (!sessionId) return;
     try {
       setLoading(true);
-      setSaveSuccess(false);
       const [providersData, configData, overlayData] = await Promise.all([
         apiClient.listProviders(),
         apiClient.getConfig(),
@@ -73,7 +73,6 @@ export function SessionModelModal({ sessionId, sessionLabel, onClose }: SessionM
     if (!sessionId) return;
     try {
       setSaving(true);
-      setSaveSuccess(false);
 
       await apiClient.updateSessionModel(sessionId, {
         model_provider: normalProvider || null,
@@ -89,11 +88,11 @@ export function SessionModelModal({ sessionId, sessionLabel, onClose }: SessionM
       });
 
       setHasExistingOverlay(true);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
+      addToast('Session model updated', 'success');
+      onClose();
     } catch (error) {
       console.error('Failed to save session model:', error);
-      alert('Failed to save session model');
+      addToast('Failed to save session model', 'error');
     } finally {
       setSaving(false);
     }
@@ -119,11 +118,11 @@ export function SessionModelModal({ sessionId, sessionLabel, onClose }: SessionM
       setVisionProvider(configData.model_vlm_provider || '');
       setVisionModel(configData.model_vlm || '');
 
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
+      addToast('Session model cleared', 'success');
+      onClose();
     } catch (error) {
       console.error('Failed to clear session model:', error);
-      alert('Failed to clear session model');
+      addToast('Failed to clear session model', 'error');
     } finally {
       setSaving(false);
     }
@@ -176,15 +175,6 @@ export function SessionModelModal({ sessionId, sessionLabel, onClose }: SessionM
             </div>
           ) : (
             <>
-              {saveSuccess && (
-                <div className="flex items-center gap-2 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-green-800">
-                  <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span className="text-sm font-medium">Session model updated!</span>
-                </div>
-              )}
-
               <ModelSlot
                 title="Normal Model"
                 description="Standard coding tasks"

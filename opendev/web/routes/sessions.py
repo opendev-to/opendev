@@ -35,6 +35,19 @@ class CreateSessionRequest(BaseModel):
     workspace: str
 
 
+@router.get("/bridge-info")
+async def get_bridge_info() -> Dict[str, Any]:
+    """Return bridge mode status and the TUI session ID (if active)."""
+    state = get_state()
+    if not state.is_bridge_mode:
+        return {"bridge_mode": False, "session_id": None}
+    session = state.session_manager.get_current_session()
+    return {
+        "bridge_mode": True,
+        "session_id": session.id if session else None,
+    }
+
+
 @router.post("/create")
 async def create_session(
     request: CreateSessionRequest,
@@ -52,22 +65,18 @@ async def create_session(
         HTTPException: If creation fails
     """
     try:
-        print(f"[DEBUG] Creating session with workspace: {request.workspace}")
         state = get_state()
-        print(f"[DEBUG] Got state: {state}")
 
         # Create new session with specified workspace, owned by the current user
         state.session_manager.create_session(
             working_directory=request.workspace,
             owner_id=str(user.id),
         )
-        print("[DEBUG] Session created")
 
         session = state.session_manager.get_current_session()
 
         # Force-save so the session file exists on disk for WebSocket lookups
         state.session_manager.save_session(force=True)
-        print(f"[DEBUG] Got current session: {session.id}")
 
         # Initialize plan file path for plan mode
         from opendev.core.paths import get_paths
@@ -91,9 +100,6 @@ async def create_session(
         }
 
     except Exception as e:
-        print(f"[ERROR] Failed to create session: {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -149,7 +155,6 @@ async def resume_session(
         HTTPException: If session not found or resume fails
     """
     try:
-        print(f"[DEBUG] Resuming session {session_id}")
         state = get_state()
 
         # Check if this is the current session (newly created but not yet saved)
@@ -157,39 +162,29 @@ async def resume_session(
         if current and current.id == session_id:
             if current.owner_id != str(user.id):
                 raise HTTPException(status_code=403, detail="Forbidden")
-            print(f"[DEBUG] Session {session_id} is already the current session (not yet saved)")
             return {"status": "success", "message": f"Session {session_id} already active"}
 
         # Try to load from disk with ownership enforcement
         success = state.resume_session(session_id, owner_id=str(user.id))
 
         if not success:
-            print(f"[DEBUG] Session {session_id} not found or not owned by user")
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
-        # Verify session was loaded
+        # Verify session was loaded and initialize plan file path
         current = state.session_manager.get_current_session()
         if current:
-            print(f"[DEBUG] Session {session_id} loaded with {len(current.messages)} messages")
-
-            # Initialize plan file path for plan mode
             from opendev.core.paths import get_paths
 
             plans_dir = get_paths().global_dir / "plans"
             plans_dir.mkdir(parents=True, exist_ok=True)
             plan_file_path = plans_dir / f"{current.id}.md"
             state.mode_manager.set_plan_file_path(str(plan_file_path))
-        else:
-            print(f"[DEBUG] WARNING: Session loaded but current_session is None")
 
         return {"status": "success", "message": f"Resumed session {session_id}"}
 
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[ERROR] Failed to resume session: {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -305,14 +300,15 @@ async def export_session(session_id: str, user=Depends(require_authenticated_use
     try:
         state = get_state()
 
-        original_session_id = state.get_current_session_id()
-        if not state.resume_session(session_id, owner_id=str(user.id)):
-            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-
-        session = state.session_manager.get_current_session()
-
-        if original_session_id:
-            state.resume_session(original_session_id, owner_id=str(user.id))
+        try:
+            session = state.session_manager.get_session_by_id(session_id, owner_id=str(user.id))
+        except FileNotFoundError:
+            # Might be the current session not yet saved to disk
+            current = state.session_manager.get_current_session()
+            if current and current.id == session_id:
+                session = current
+            else:
+                raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
         return {
             "id": session.id,
@@ -330,6 +326,8 @@ async def export_session(session_id: str, user=Depends(require_authenticated_use
             "token_usage": session.token_usage,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -744,6 +742,8 @@ async def update_session_model(
 @router.delete("/{session_id}/model")
 async def delete_session_model(session_id: str, user=Depends(require_authenticated_user)) -> Dict[str, str]:
     try:
+        from opendev.core.runtime.session_model import clear_session_model
+
         state = get_state()
 
         current = state.session_manager.get_current_session()

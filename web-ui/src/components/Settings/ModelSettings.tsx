@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { apiClient } from '../../api/client';
 import { ModelSlot } from './ModelSlot';
 import type { Provider } from './ModelSlot';
+import { useToastStore } from '../../stores/toast';
 
 interface Config {
   model_provider: string;
@@ -22,7 +23,7 @@ export function ModelSettings() {
   const [_config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  const addToast = useToastStore(state => state.addToast);
 
   // Normal model
   const [normalProvider, setNormalProvider] = useState<string>('');
@@ -95,7 +96,6 @@ export function ModelSettings() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      setSaveSuccess(false);
 
       await apiClient.updateConfig({
         model_provider: normalProvider,
@@ -120,16 +120,10 @@ export function ModelSettings() {
         }
       }));
 
-      // Show success feedback
-      setSaveSuccess(true);
-
-      // Hide success message after 3 seconds
-      setTimeout(() => {
-        setSaveSuccess(false);
-      }, 3000);
+      addToast('Settings saved successfully', 'success');
     } catch (error) {
       console.error('Failed to save settings:', error);
-      alert('Failed to save settings');
+      addToast('Failed to save settings', 'error');
     } finally {
       setSaving(false);
     }
@@ -148,16 +142,6 @@ export function ModelSettings() {
 
   return (
     <div className="space-y-6">
-      {/* Success Message */}
-      {saveSuccess && (
-        <div className="flex items-center gap-2 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-green-800 animate-fade-in">
-          <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-          <span className="text-sm font-medium">Settings saved successfully!</span>
-        </div>
-      )}
-
       {/* Header Info */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <div className="flex items-start gap-3">
@@ -293,7 +277,7 @@ export function ModelSettings() {
       </div>
 
       {/* Save Button */}
-      <div className="pt-4 border-t border-gray-200 space-y-3">
+      <div className="pt-4 border-t border-gray-200">
         <button
           onClick={handleSave}
           disabled={saving}
@@ -308,16 +292,6 @@ export function ModelSettings() {
             'Save Changes'
           )}
         </button>
-
-        {/* Success Message */}
-        {saveSuccess && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-green-800 animate-fade-in">
-            <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            <span className="text-sm font-medium">Settings saved successfully!</span>
-          </div>
-        )}
       </div>
     </div>
   );
