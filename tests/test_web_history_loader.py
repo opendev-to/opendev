@@ -4,7 +4,11 @@ import pytest
 from datetime import datetime
 
 from opendev.models.message import ChatMessage, Role, ToolCall
-from opendev.web.routes.chat import ToolCallInfo, MessageResponse, tool_call_to_info
+from opendev.models.api import (
+    MessageResponse,
+    ToolCallResponse as ToolCallInfo,
+    tool_call_to_response as tool_call_to_info,
+)
 
 
 class TestToolCallToInfo:

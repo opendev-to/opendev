@@ -15,8 +15,6 @@ make check        # Run format + lint + typecheck in sequence
 make test         # Run all tests
 make test-cov     # Run tests with coverage report
 make build-ui     # Build the web UI frontend
-make run          # Start interactive TUI
-make run-ui       # Start web UI
 ```
 
 For cases not covered by `make`, the raw commands are:

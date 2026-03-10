@@ -36,6 +36,8 @@ class ThinkingMixin:
         agent,
         ui_callback=None,
         tool_registry=None,
+        original_task: Optional[str] = None,
+        plan_approved: bool = False,
     ) -> Optional[str]:
         """Make a SEPARATE LLM call to get thinking trace.
 

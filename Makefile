@@ -1,4 +1,4 @@
-.PHONY: help install format lint typecheck test test-file test-cov check build-ui run run-ui
+.PHONY: help install install-ui format lint typecheck test test-file test-cov check build-ui
 
 PYTHON_DIRS = opendev/ tests/
 LINE_LENGTH = 100
@@ -12,9 +12,8 @@ help:
 	@echo "  make check        Run format + lint + typecheck"
 	@echo "  make test         Run all tests"
 	@echo "  make test-cov     Run tests with coverage"
+	@echo "  make install-ui   Install web UI npm dependencies"
 	@echo "  make build-ui     Build web UI frontend"
-	@echo "  make run          Start interactive TUI"
-	@echo "  make run-ui       Start web UI"
 
 install:
 	uv venv && uv pip install -e ".[dev]"
@@ -40,11 +39,8 @@ test-cov:
 test-file:
 	uv run pytest $(FILE)
 
-build-ui:
+install-ui:
+	cd web-ui && npm ci
+
+build-ui: install-ui
 	cd web-ui && npm run build
-
-run:
-	opendev
-
-run-ui:
-	opendev run ui

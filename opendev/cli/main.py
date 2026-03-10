@@ -96,6 +96,9 @@ def _pick_session_interactively(working_dir: "Path") -> "str | None":
 def main() -> None:
     """Main entry point for OpenDev CLI."""
     import sys
+    from dotenv import load_dotenv
+
+    load_dotenv()
 
     parser = argparse.ArgumentParser(
         prog="swecli",

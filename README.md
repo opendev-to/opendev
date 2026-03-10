@@ -136,11 +136,12 @@ A `Makefile` provides shortcuts for all common tasks:
 make check        # Format (Black) + lint (Ruff) + type-check (mypy)
 make test         # Run all tests
 make test-cov     # Run tests with coverage report
-make build-ui     # Build the Web UI frontend
-make run          # Start interactive TUI
-make run-ui       # Start web UI
+make install-ui   # Install Web UI npm dependencies
+make build-ui     # Install dependencies and build the Web UI frontend
 make help         # List all available targets
 ```
+
+> **Web UI:** `make build-ui` automatically runs `npm ci` before building, so you don't need to run `make install-ui` separately unless you only want to install dependencies without building.
 
 ### Contributing
 
