@@ -214,9 +214,8 @@ class ResultRenderingMixin:
         header = Text()
         header.append(indent)
         header.append("⏺ ", style=GREEN_BRIGHT)
-        header.append("Edit(", style=CYAN)
-        header.append(file_path, style=PRIMARY)
-        header.append(f") at line {start_line}", style=CYAN)
+        header.append("Edit", style=PRIMARY)
+        header.append(f"({file_path}) at line {start_line}", style=GREY)
         self.log.write(header, scroll_end=True, animate=False, wrappable=False)
 
         # Summary line

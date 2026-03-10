@@ -8,7 +8,7 @@ from typing import Any, Mapping, Tuple
 
 from rich.text import Text
 
-from opendev.ui_textual.style_tokens import GREY
+from opendev.ui_textual.style_tokens import GREY, PRIMARY
 
 # Canonical set of argument keys that hold file/directory paths.
 # Shared between TUI ToolDisplayService and Web WebSocketToolBroadcaster.
@@ -243,7 +243,7 @@ def build_tool_call_text(tool_name: str, tool_args: Mapping[str, Any]) -> Text:
         params_part = params_part[:-1]  # Remove closing parenthesis
 
         # Strip trailing space from tool_part to avoid double space
-        text = Text(tool_part.rstrip())
+        text = Text(tool_part.rstrip(), style=PRIMARY)
         if params_part:
             text.append(f" ({params_part})", style=GREY)
         return text

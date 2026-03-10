@@ -51,7 +51,9 @@ from opendev.ui_textual.widgets.conversation.tool_renderer.parallel_agent import
 from opendev.ui_textual.widgets.conversation.tool_renderer.nested_tool import NestedToolMixin
 from opendev.ui_textual.widgets.conversation.tool_renderer.bash_output import BashOutputMixin
 from opendev.ui_textual.widgets.conversation.tool_renderer.collapsible import CollapsibleMixin
-from opendev.ui_textual.widgets.conversation.tool_renderer.result_rendering import ResultRenderingMixin
+from opendev.ui_textual.widgets.conversation.tool_renderer.result_rendering import (
+    ResultRenderingMixin,
+)
 
 
 class DefaultToolRenderer(
@@ -865,9 +867,8 @@ class DefaultToolRenderer(
         # Header: ⏺ Edit(file.py) at line N
         header = Text()
         header.append("⏺ ", style=GREEN_BRIGHT)
-        header.append("Edit(", style=CYAN)
-        header.append(file_path, style=PRIMARY)
-        header.append(f") at line {start_line}", style=CYAN)
+        header.append("Edit", style=PRIMARY)
+        header.append(f"({file_path}) at line {start_line}", style=GREY)
         self.log.write(header, wrappable=False)
 
         # Summary: ⎿  Updated file.py (N additions, M removals)
@@ -935,7 +936,7 @@ class DefaultToolRenderer(
             is_addition = len(line) > 4 and line[4] == "+"
             is_deletion = len(line) > 4 and line[4] == "-"
             if is_addition:
-                formatted.append(line, style=GREEN_BRIGHT)
+                formatted.append(line, style=SUCCESS)
             elif is_deletion:
                 formatted.append(line, style=ERROR)
             else:

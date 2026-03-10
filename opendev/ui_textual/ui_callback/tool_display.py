@@ -197,14 +197,8 @@ class CallbackToolDisplayMixin:
                     # Extract failure reason from result
                     failure_reason = ""
                     if not success and isinstance(result, dict):
-                        failure_reason = (
-                            result.get("error")
-                            or result.get("content")
-                            or ""
-                        )
-                    self.on_single_agent_complete(
-                        agent_key, success, failure_reason=failure_reason
-                    )
+                        failure_reason = result.get("error") or result.get("content") or ""
+                    self.on_single_agent_complete(agent_key, success, failure_reason=failure_reason)
                     self._in_parallel_agent_group = False
                     self._current_single_agent_id = None
 
@@ -312,12 +306,16 @@ class CallbackToolDisplayMixin:
                     svc = self._app.spinner_service
                     if spinner_id in svc._spinner_displays:
                         from rich.text import Text as RichText
-                        from opendev.ui_textual.style_tokens import CYAN as _CYAN, PRIMARY as _PRIMARY
+                        from opendev.ui_textual.style_tokens import (
+                            GREY as _GREY,
+                            PRIMARY as _PRIMARY,
+                        )
 
                         new_display = RichText()
-                        new_display.append("Edit(", style=_CYAN)
-                        new_display.append(file_path, style=_PRIMARY)
-                        new_display.append(f") at line {first['start_line']}", style=_CYAN)
+                        new_display.append("Edit", style=_PRIMARY)
+                        new_display.append(
+                            f"({file_path}) at line {first['start_line']}", style=_GREY
+                        )
                         svc._spinner_displays[spinner_id] = new_display
 
                     svc.stop(spinner_id, success, first_summary)
@@ -352,9 +350,16 @@ class CallbackToolDisplayMixin:
                         hunk["entries"],
                     )
 
-                if [first_summary] and self.chat_app and hasattr(self.chat_app, "record_tool_summary"):
+                if (
+                    [first_summary]
+                    and self.chat_app
+                    and hasattr(self.chat_app, "record_tool_summary")
+                ):
                     self._run_on_ui(
-                        self.chat_app.record_tool_summary, tool_name, normalized_args, [first_summary]
+                        self.chat_app.record_tool_summary,
+                        tool_name,
+                        normalized_args,
+                        [first_summary],
                     )
 
                 # Auto-refresh todo panel (edit_file won't trigger, but keep pattern)
@@ -636,9 +641,7 @@ class CallbackToolDisplayMixin:
                     if first["removals"]:
                         parts.append(_plural_h(first["removals"], "removal"))
                     summary = f"Updated {file_path} ({', '.join(parts)})"
-                    self._run_on_ui(
-                        self.conversation.add_nested_tool_sub_results, [summary], depth
-                    )
+                    self._run_on_ui(self.conversation.add_nested_tool_sub_results, [summary], depth)
 
                     # Build partial diff for first hunk only
                     from opendev.ui_textual.formatters_internal.utils import DiffParser
