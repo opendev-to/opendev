@@ -311,6 +311,7 @@ class ToolRegistry:
             mode_manager=context.mode_manager if context else None,
             approval_manager=context.approval_manager if context else None,
             undo_manager=context.undo_manager if context else None,
+            session_manager=context.session_manager if context else None,
         )
 
         # Get ui_callback from context for nested tool call display

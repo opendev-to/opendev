@@ -169,6 +169,20 @@ class ToolProcessingMixin:
         all_reads = all(tc["function"]["name"] in self.READ_OPERATIONS for tc in tool_calls)
         ctx.consecutive_reads = ctx.consecutive_reads + 1 if all_reads else 0
 
+        # Explore-first enforcement: block excessive exploration reads
+        if not ctx.has_explored and all_reads and ctx.consecutive_reads >= 3:
+            # Block execution — tell agent to use Code-Explorer instead
+            for tc in tool_calls:
+                append_nudge(
+                    ctx.messages,
+                    get_reminder("explore_delegate_nudge"),
+                    role="tool",
+                    tool_call_id=tc["id"],
+                )
+            ctx.consecutive_reads = 0
+            ctx.skip_next_thinking = True
+            return LoopAction.CONTINUE
+
         # Explore-first enforcement: block task subagent spawns until Code-Explorer has run
         EXPLORE_EXEMPT_SUBAGENTS = {"Code-Explorer", "ask-user"}
         if not ctx.has_explored:

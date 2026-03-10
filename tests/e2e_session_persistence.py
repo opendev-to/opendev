@@ -131,9 +131,10 @@ def test_full_session_persistence_round_trip():
         mock_config.auto_save_interval = 1
 
         executor = ReactExecutor(
-            console=Console(force_terminal=True),
             session_manager=session_manager,
             config=mock_config,
+            mode_manager=MagicMock(),
+            console=Console(force_terminal=True),
             llm_caller=MagicMock(),
             tool_executor=MagicMock(),
         )
@@ -198,9 +199,10 @@ def test_full_session_persistence_round_trip():
 
         # Create new ReactExecutor (simulates app restart)
         new_executor = ReactExecutor(
-            console=Console(force_terminal=True),
             session_manager=new_session_manager,
             config=mock_config,
+            mode_manager=MagicMock(),
+            console=Console(force_terminal=True),
             llm_caller=MagicMock(),
             tool_executor=MagicMock(),
         )
@@ -280,9 +282,10 @@ def test_backward_compatibility():
         mock_config.auto_save_interval = 1
 
         executor = ReactExecutor(
-            console=Console(force_terminal=True),
             session_manager=session_manager,
             config=mock_config,
+            mode_manager=MagicMock(),
+            console=Console(force_terminal=True),
             llm_caller=MagicMock(),
             tool_executor=MagicMock(),
         )

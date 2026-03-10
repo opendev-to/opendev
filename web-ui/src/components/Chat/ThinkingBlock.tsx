@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 interface ThinkingBlockProps {
   content: string;
   level?: string;
+  isActive?: boolean;
 }
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -11,7 +12,7 @@ const LEVEL_COLORS: Record<string, string> = {
   High: 'bg-purple-500/15 text-purple-400',
 };
 
-export function ThinkingBlock({ content, level }: ThinkingBlockProps) {
+export function ThinkingBlock({ content, level, isActive }: ThinkingBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState(0);
@@ -19,9 +20,6 @@ export function ThinkingBlock({ content, level }: ThinkingBlockProps) {
   const isCritique = content.startsWith('[Critique]');
   const accentColor = isCritique ? 'border-l-amber-500/70' : 'border-l-indigo-500/70';
   const levelBadge = level && LEVEL_COLORS[level] ? level : null;
-
-  // Preview: first 2 lines
-  const previewLines = content.split('\n').slice(0, 2).join(' ').substring(0, 160);
 
   useEffect(() => {
     if (contentRef.current) {
@@ -35,7 +33,7 @@ export function ThinkingBlock({ content, level }: ThinkingBlockProps) {
         {/* Header */}
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-bg-200/50 transition-colors cursor-pointer"
+          className={`w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-bg-200/50 transition-colors cursor-pointer ${isActive ? 'thinking-shimmer' : ''}`}
         >
           {/* Brain icon */}
           <svg
@@ -76,29 +74,26 @@ export function ThinkingBlock({ content, level }: ThinkingBlockProps) {
           </svg>
         </button>
 
-        {/* Collapsed preview */}
-        {!isExpanded && (
-          <div className="px-3 pb-2 relative">
-            <p className="text-xs text-text-500 font-mono line-clamp-2 leading-relaxed">
-              {previewLines}
-            </p>
-            <div className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-bg-100/50 to-transparent pointer-events-none" />
+        {/* Content — always rendered, clipped when collapsed */}
+        <div className="relative">
+          <div
+            className="overflow-hidden transition-all duration-300 ease-in-out"
+            style={{
+              maxHeight: isExpanded ? `${contentHeight + 24}px` : '48px',
+            }}
+          >
+            <div ref={contentRef} className="px-3 pb-3">
+              <pre className="text-xs text-text-300 whitespace-pre-wrap font-mono leading-relaxed">
+                {content}
+              </pre>
+            </div>
           </div>
-        )}
-
-        {/* Expanded content with smooth transition */}
-        <div
-          className="overflow-hidden transition-all duration-300 ease-in-out"
-          style={{
-            maxHeight: isExpanded ? `${contentHeight + 24}px` : '0px',
-            opacity: isExpanded ? 1 : 0,
-          }}
-        >
-          <div ref={contentRef} className="px-3 pb-3">
-            <pre className="text-xs text-text-300 whitespace-pre-wrap font-mono leading-relaxed">
-              {content}
-            </pre>
-          </div>
+          {/* Gradient fade when collapsed */}
+          <div
+            className={`absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-bg-100/80 to-transparent pointer-events-none transition-opacity duration-300 ${
+              isExpanded ? 'opacity-0' : 'opacity-100'
+            }`}
+          />
         </div>
       </div>
     </div>

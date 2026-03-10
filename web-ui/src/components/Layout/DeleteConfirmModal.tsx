@@ -21,7 +21,7 @@ export function DeleteConfirmModal({ isOpen, workspacePath, onConfirm, onCancel 
 
   const modalContent = (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-scale-in">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
           <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">

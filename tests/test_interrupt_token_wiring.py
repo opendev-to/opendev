@@ -43,7 +43,7 @@ class TestFix1TokenWiredToInterruptManager:
         tool_executor = Mock()
         tool_executor.record_tool_learnings = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         return executor
 
     def _make_ui_callback_with_manager(self):

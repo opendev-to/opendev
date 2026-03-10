@@ -30,9 +30,10 @@ class TestThinkingPhaseArchitecture:
         mock_session_manager.current_session = None
 
         executor = ReactExecutor(
-            console=MagicMock(),
             session_manager=mock_session_manager,
             config=MagicMock(),
+            mode_manager=MagicMock(),
+            console=MagicMock(),
             llm_caller=MagicMock(),
             tool_executor=MagicMock(),
         )
@@ -85,9 +86,10 @@ class TestThinkingPhaseArchitecture:
         mock_session_manager.current_session = None
 
         executor = ReactExecutor(
-            console=MagicMock(),
             session_manager=mock_session_manager,
             config=MagicMock(),
+            mode_manager=MagicMock(),
+            console=MagicMock(),
             llm_caller=MagicMock(),
             tool_executor=MagicMock(),
         )
@@ -112,9 +114,10 @@ class TestThinkingPhaseArchitecture:
         mock_session_manager.current_session = None
 
         executor = ReactExecutor(
-            console=MagicMock(),
             session_manager=mock_session_manager,
             config=MagicMock(),
+            mode_manager=MagicMock(),
+            console=MagicMock(),
             llm_caller=MagicMock(),
             tool_executor=MagicMock(),
         )

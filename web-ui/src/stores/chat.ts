@@ -430,8 +430,24 @@ wsClient.on('disconnected', () => {
   }
 });
 
-wsClient.on('user_message', () => {
-  // Message already added optimistically by sendMessage
+wsClient.on('user_message', (message) => {
+  const sid = resolveSessionId(message.data);
+  if (!sid) return;
+  const content = message.data.content;
+  const sessionState = getSessionState(useChatStore.getState().sessionStates, sid);
+  const msgs = sessionState.messages;
+  // Dedup: skip if last user message already has this content (optimistic add from sendMessage)
+  const lastUserMsg = [...msgs].reverse().find(m => m.role === 'user');
+  if (lastUserMsg && lastUserMsg.content === content) return;
+  useChatStore.setState(state => ({
+    ...patchSession(state, sid, prev => ({
+      messages: [...prev.messages, {
+        role: 'user' as const,
+        content,
+        timestamp: new Date().toISOString(),
+      }],
+    })),
+  }));
 });
 
 wsClient.on('message_start', (message) => {

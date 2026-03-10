@@ -204,10 +204,12 @@ class WebSocketManager:
             }
         })
 
-        # Execute query with agent in background task
+        # Execute query with agent using shared executor (singleton on state)
         from opendev.web.agent_executor import AgentExecutor
 
-        executor = AgentExecutor(state)
+        if not hasattr(state, "_agent_executor") or state._agent_executor is None:
+            state._agent_executor = AgentExecutor(state)
+        executor = state._agent_executor
         asyncio.create_task(
             executor.execute_query(message, self, session_id=session_id, session=session)
         )

@@ -195,7 +195,7 @@ class TestScenario1AgentThinking:
         llm_caller = Mock()
         tool_executor = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
 
         assert executor._active_interrupt_token is None
 
@@ -219,7 +219,7 @@ class TestScenario1AgentThinking:
         llm_caller = Mock()
         tool_executor = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         executor._active_interrupt_token = InterruptToken()
 
         result = executor.request_interrupt()
@@ -237,7 +237,7 @@ class TestScenario1AgentThinking:
         llm_caller = Mock()
         tool_executor = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         token = InterruptToken()
         executor._active_interrupt_token = token
 

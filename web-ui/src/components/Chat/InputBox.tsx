@@ -175,7 +175,7 @@ export function InputBox() {
               {isLoading && (
                 <button
                   onClick={handleStop}
-                  className="px-3 py-2 rounded-lg transition-colors font-medium bg-danger-100 hover:bg-danger-000 text-white"
+                  className="px-3 py-2 rounded-lg transition-colors font-medium bg-danger-100 hover:bg-danger-000 text-white hover-scale"
                   title="Stop (Esc)"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -186,7 +186,7 @@ export function InputBox() {
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || !isConnected || !hasActiveSession}
-                className="px-4 py-2 rounded-lg transition-colors font-medium bg-accent-main-100 hover:bg-accent-main-200 text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-bg-300 disabled:text-text-500"
+                className="px-4 py-2 rounded-lg transition-colors font-medium bg-accent-main-100 hover:bg-accent-main-200 text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-bg-300 disabled:text-text-500 hover-scale"
                 title="Send (Enter)"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">

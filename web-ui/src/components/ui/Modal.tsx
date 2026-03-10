@@ -35,7 +35,7 @@ export function Modal({ isOpen, onClose, title, children, className = '' }: Moda
       onClick={onClose}
     >
       <div
-        className={`relative bg-white rounded-lg shadow-xl w-full max-w-md m-4 ${className}`}
+        className={`relative bg-white rounded-lg shadow-xl w-full max-w-md m-4 animate-scale-in ${className}`}
         onClick={(e) => e.stopPropagation()} // Prevent closing modal when clicking inside
       >
         {/* Header */}

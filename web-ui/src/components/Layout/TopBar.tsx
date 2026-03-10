@@ -99,7 +99,7 @@ export function TopBar({ onOpenCommandPalette }: TopBarProps) {
     return parts[parts.length - 1] || path;
   };
 
-  const pillBase = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium cursor-pointer transition-colors select-none';
+  const pillBase = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium cursor-pointer transition-colors select-none hover-scale-pill';
 
   return (
     <header className="h-12 flex-shrink-0 sticky top-0 z-40 flex items-center gap-3 px-4 bg-bg-000 border-b border-gray-200">
@@ -107,7 +107,7 @@ export function TopBar({ onOpenCommandPalette }: TopBarProps) {
       <div className="flex items-center gap-3 flex-shrink-0">
         <button
           onClick={toggleSidebar}
-          className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-gray-200/50 transition-colors"
+          className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-gray-200/50 transition-colors hover-lift"
           title={sidebarCollapsed ? 'Expand sidebar (Ctrl/Cmd+B)' : 'Collapse sidebar (Ctrl/Cmd+B)'}
         >
           <PanelLeft className="w-5 h-5 text-gray-600" />

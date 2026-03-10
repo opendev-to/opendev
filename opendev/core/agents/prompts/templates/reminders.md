@@ -1,13 +1,19 @@
 --- thinking_analysis_prompt ---
-Analyze the context and provide your reasoning for the next step.
+The user's original request: {original_task}
+
+Analyze the full context and provide your reasoning for the next step. Keep the user's complete original request in mind — if it has multiple parts, ensure you are working toward ALL parts, not just the first.
+
+IMPORTANT: If your next step involves reading or searching multiple files to understand code structure, architecture, or patterns, you MUST delegate to Code-Explorer rather than doing it yourself. Only use direct read_file/search for known, specific targets (1-2 files).
 
 --- thinking_analysis_prompt_with_todos ---
-Analyze the context and provide your reasoning for the next step.
+The user's original request: {original_task}
 
 Current todos ({done_count}/{total_count} done):
 {todo_status}
 
-You MUST continue working on the next incomplete todo. Do not summarize or finish until all todos are done.
+Analyze the context and provide your reasoning for the next step. You MUST continue working on the next incomplete todo. Do not summarize or finish until all todos are done.
+
+IMPORTANT: If your next step involves reading or searching multiple files to understand code structure, architecture, or patterns, you MUST delegate to Code-Explorer rather than doing it yourself. Only use direct read_file/search for known, specific targets (1-2 files).
 
 --- thinking_trace_reminder ---
 <thinking_trace>
@@ -124,5 +130,14 @@ Planner subagent to revise it.
 --- explore_first_nudge ---
 Before proceeding with this subagent, you should first explore the codebase using Code-Explorer to build context about the relevant code areas. Spawn Code-Explorer first to understand the existing code structure, then re-spawn this subagent with the enriched context.
 
---- completion_summary_nudge ---
-The task appears complete. Briefly state the outcome.
+--- explore_delegate_nudge ---
+You have been reading files individually to explore the codebase. For multi-file exploration, you MUST delegate to Code-Explorer instead of reading files one-by-one.
+
+Spawn a Code-Explorer subagent now with a clear question about what you need to understand. Code-Explorer is purpose-built for codebase exploration and will be more thorough and efficient.
+
+--- implicit_completion_nudge ---
+Before finishing, verify you have fully addressed the user's complete request:
+
+{original_task}
+
+If there are remaining parts you haven't addressed yet, continue working — use tools to make progress. If everything is truly done, call task_complete with a brief summary of what was accomplished.

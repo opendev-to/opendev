@@ -19,7 +19,7 @@ class TestReactExecutorInjection:
         llm_caller = MagicMock()
         tool_executor = MagicMock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=MagicMock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         return executor, session_manager
 
     def test_inject_user_message_enqueues(self):
@@ -395,7 +395,7 @@ class TestDeferredDisplay:
         llm_caller = MagicMock()
         tool_executor = MagicMock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=MagicMock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         return executor, session_manager
 
     def _make_processor(self):

@@ -86,3 +86,17 @@ def get_reminder(reminder_name: str, /, **kwargs: str) -> str:
         f"Unknown reminder: {reminder_name!r}. "
         f"Not found in reminders.md sections or as {template_file}"
     )
+
+
+def append_nudge(
+    messages: list,
+    content: str,
+    role: str = "user",
+    **extra,
+) -> None:
+    """Append an internal nudge message, tagged for filtering.
+
+    All nudge messages are tagged with ``_nudge=True`` so they can be
+    excluded from the thinking phase (which clones all messages).
+    """
+    messages.append({"role": role, "content": content, "_nudge": True, **extra})

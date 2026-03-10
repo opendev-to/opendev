@@ -77,7 +77,7 @@ export function CommandPalette({ isOpen, onClose, onOpenStatus }: CommandPalette
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]" onClick={onClose}>
       <div className="absolute inset-0 bg-black/30" />
       <div
-        className="relative w-full max-w-lg bg-bg-000 border border-border-300/30 rounded-xl shadow-2xl overflow-hidden"
+        className="relative w-full max-w-lg bg-bg-000 border border-border-300/30 rounded-xl shadow-2xl overflow-hidden animate-scale-in"
         onClick={e => e.stopPropagation()}
       >
         <input

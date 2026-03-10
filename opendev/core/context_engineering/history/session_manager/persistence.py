@@ -87,7 +87,9 @@ class PersistenceMixin:
                                 messages.append(ChatMessage(**msg_data))
                             except Exception:
                                 continue
-                data["messages"] = messages
+                from opendev.models.message_validator import filter_and_repair_messages
+
+                data["messages"] = filter_and_repair_messages(messages)
                 return Session(**data)
 
         # Fall back to legacy JSON format
@@ -224,7 +226,9 @@ class PersistenceMixin:
         if not self.current_session:
             raise ValueError("No active session")
 
-        self.current_session.add_message(message)
+        added = self.current_session.add_message(message)
+        if not added:
+            return
         self.turn_count += 1
 
         # Auto-save (only when interval is positive)
@@ -245,6 +249,19 @@ class PersistenceMixin:
         Example:
             manager.append_message_to_transcript(session.id, ChatMessage(...))
         """
+        from opendev.models.message_validator import validate_message
+
+        verdict = validate_message(message)
+        if not verdict.is_valid:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Rejected transcript append (role=%s): %s",
+                message.role.value,
+                verdict.reason,
+            )
+            return
+
         jsonl_file = self.session_dir / f"{session_id}.jsonl"
 
         # Acquire exclusive lock for cross-process safety
@@ -289,4 +306,6 @@ class PersistenceMixin:
                         # Skip corrupted lines
                         continue
 
-        return messages
+        from opendev.models.message_validator import filter_and_repair_messages
+
+        return filter_and_repair_messages(messages)

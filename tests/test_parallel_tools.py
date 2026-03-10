@@ -58,7 +58,7 @@ class TestParallelismDecision:
         llm_caller = MagicMock()
         tool_executor = MagicMock()
         tool_executor.mode_manager = MagicMock()
-        return ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        return ReactExecutor(session_manager, config, mode_manager=tool_executor.mode_manager, console=console, llm_caller=llm_caller, tool_executor=tool_executor)
 
     @pytest.fixture
     def ctx(self):
@@ -169,7 +169,7 @@ class TestSilentParallelExecution:
         llm_caller = MagicMock()
         tool_executor = MagicMock()
         tool_executor.mode_manager = MagicMock()
-        return ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        return ReactExecutor(session_manager, config, mode_manager=tool_executor.mode_manager, console=console, llm_caller=llm_caller, tool_executor=tool_executor)
 
     @pytest.fixture
     def ctx(self):

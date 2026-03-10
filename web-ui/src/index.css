@@ -69,7 +69,7 @@
 
 /* Smooth transitions */
 * {
-  transition-property: background-color, border-color, color, fill, stroke;
+  transition-property: background-color, border-color, color, fill, stroke, transform, box-shadow;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
 }
@@ -83,7 +83,7 @@ code {
 }
 
 pre code {
-  @apply bg-transparent px-0 py-0 border-0;
+  @apply !bg-transparent !px-0 !py-0 !border-0;
 }
 
 pre {
@@ -184,4 +184,67 @@ pre {
   background: hsl(var(--bg-200));
   color: hsl(var(--text-100));
   border: 1px solid hsl(var(--border-300) / 0.2);
+}
+
+/* Skeleton shimmer for loading placeholders */
+.skeleton-shimmer {
+  background: linear-gradient(90deg, hsl(var(--bg-200)) 25%, hsl(var(--bg-300)) 50%, hsl(var(--bg-200)) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Thinking block header shimmer while active */
+.thinking-shimmer {
+  background: linear-gradient(90deg, transparent 25%, hsl(var(--accent-secondary-100) / 0.08) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2.5s ease-in-out infinite;
+}
+
+/* Animated link underline (slides in from left) */
+.link-underline { position: relative; text-decoration: none !important; }
+.link-underline::after {
+  content: ''; position: absolute; bottom: -1px; left: 0;
+  width: 0%; height: 1px; background: currentColor;
+  transition: width 0.25s ease;
+}
+.link-underline:hover::after { width: 100%; }
+
+/* Micro-lift on hover */
+.hover-lift:hover { transform: translateY(-1px); }
+
+/* Button scale on hover */
+.hover-scale:hover { transform: scale(1.02); box-shadow: 0 2px 8px hsl(var(--border-100) / 0.1); }
+
+/* Pill scale on hover */
+.hover-scale-pill:hover { transform: scale(1.03); }
+
+/* Delete button red glow */
+.delete-glow:hover {
+  box-shadow: 0 0 8px hsl(0 58.6% 34.1% / 0.25);
+  transform: scale(1.08);
+}
+
+/* Pulsing dot loading indicator */
+.pulse-dots { display: inline-flex; gap: 4px; align-items: center; }
+.pulse-dots span {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: hsl(var(--accent-main-100));
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.pulse-dots span:nth-child(2) { animation-delay: 0.2s; }
+.pulse-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+/* Tool call executing state — pulsing blue left border */
+.tool-executing {
+  border-left: 3px solid hsl(var(--accent-secondary-100));
+  animation: shimmer 2s ease-in-out infinite;
+  background: linear-gradient(90deg, hsl(var(--accent-secondary-100) / 0.03) 0%, transparent 30%);
+  background-size: 200% 100%;
+}
+
+/* Code block hover lift */
+.code-hover pre { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.code-hover pre:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px hsl(var(--border-100) / 0.08);
 }

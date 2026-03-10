@@ -139,7 +139,12 @@ class QueryProcessor:
 
         self._cost_tracker = CostTracker()
         self._react_executor = ReactExecutor(
-            console, session_manager, config, self._llm_caller, self._tool_executor,
+            session_manager=session_manager,
+            config=config,
+            mode_manager=self._tool_executor.mode_manager,
+            console=console,
+            llm_caller=self._llm_caller,
+            tool_executor=self._tool_executor,
             cost_tracker=self._cost_tracker,
         )
 

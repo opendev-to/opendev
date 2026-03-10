@@ -96,7 +96,7 @@ class TestFix4OnInterruptInFinally:
         llm_caller.call_llm_with_progress = fake_llm_call
         tool_executor = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         executor_ref.append(executor)
         # Prevent compaction from interfering with the test
         executor._compactor = Mock()

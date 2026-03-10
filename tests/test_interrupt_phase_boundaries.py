@@ -42,7 +42,7 @@ class TestFixACheckInterrupt:
         tool_executor = Mock()
         tool_executor.record_tool_learnings = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         return executor
 
     def test_check_interrupt_raises_when_token_signaled(self):
@@ -152,7 +152,7 @@ class TestFixACheckInterrupt:
         token = InterruptToken()
         executor._active_interrupt_token = token
 
-        def fake_thinking(messages, agent, ui_callback=None):
+        def fake_thinking(messages, agent, ui_callback=None, tool_registry=None):
             # Simulate: thinking completes, then ESC arrives
             token.request()
             return "Some thinking trace"
@@ -270,7 +270,7 @@ class TestInterruptIntegrationEdgeCases:
         tool_executor = Mock()
         tool_executor.record_tool_learnings = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         return executor
 
     def test_on_interrupt_called_exactly_once_through_full_execute(self):
@@ -344,7 +344,7 @@ class TestInterruptIntegrationEdgeCases:
                 token.request()
             elif phase == "post-thinking":
                 # Signal during thinking
-                def fake_thinking(messages, agent, ui_callback=None):
+                def fake_thinking(messages, agent, ui_callback=None, tool_registry=None):
                     token.request()
                     return "trace"
 
@@ -388,7 +388,7 @@ class TestInterruptIntegrationEdgeCases:
         token = InterruptToken()
         executor._active_interrupt_token = token
 
-        def fake_thinking(messages, agent, ui_callback=None):
+        def fake_thinking(messages, agent, ui_callback=None, tool_registry=None):
             token.request()  # Signal during thinking
             return "A thinking trace"
 

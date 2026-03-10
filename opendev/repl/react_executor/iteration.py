@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 from opendev.models.message import ChatMessage, Role
 from opendev.core.context_engineering.memory import AgentResponse
 from opendev.core.agents.prompts import get_reminder
+from opendev.core.agents.prompts.reminders import append_nudge
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +94,30 @@ class IterationMixin:
                 ctx.ui_callback.on_interrupt()
             return LoopAction.BREAK
 
+    def _call_action_llm(self, agent, messages, task_monitor, thinking_visible):
+        """Call LLM for action phase. Uses llm_caller if available (TUI spinner), otherwise direct.
+
+        Returns:
+            Tuple of (response_dict, latency_ms)
+        """
+        if self._llm_caller:
+            return self._llm_caller.call_llm_with_progress(
+                agent, messages, task_monitor, thinking_visible=thinking_visible
+            )
+        import time
+
+        start = time.monotonic()
+        response = agent.call_llm(messages, task_monitor=task_monitor, thinking_visible=thinking_visible)
+        latency = int((time.monotonic() - start) * 1000)
+        return response, latency
+
     def _run_iteration_inner(self, ctx) -> "LoopAction":
         """Inner implementation of _run_iteration (wrapped by interrupt handler)."""
         from opendev.core.runtime.monitoring import TaskMonitor
+
+        # Notify UI that a new iteration is starting (thinking phase)
+        if ctx.ui_callback and hasattr(ctx.ui_callback, "on_thinking_start"):
+            ctx.ui_callback.on_thinking_start()
 
         # Debug logging
         if ctx.ui_callback and hasattr(ctx.ui_callback, "on_debug"):
@@ -126,7 +148,11 @@ class IterationMixin:
 
         # THINKING PHASE: Get thinking trace BEFORE action (when thinking mode is ON)
         # Skip thinking phase after subagent completion - main agent decides directly
-        if thinking_visible and not subagent_just_completed:
+        # Skip thinking if previous iteration set skip_next_thinking (e.g., explore-first block)
+        should_skip_thinking = ctx.skip_next_thinking
+        ctx.skip_next_thinking = False
+
+        if thinking_visible and not subagent_just_completed and not should_skip_thinking:
             thinking_trace = self._get_thinking_trace(
                 ctx.messages, ctx.agent, ctx.ui_callback, tool_registry=ctx.tool_registry
             )
@@ -190,11 +216,14 @@ class IterationMixin:
         task_monitor = TaskMonitor()
         if self._active_interrupt_token:
             task_monitor.set_interrupt_token(self._active_interrupt_token)
-        from opendev.ui_textual.debug_logger import debug_log
+        try:
+            from opendev.ui_textual.debug_logger import debug_log
+        except ImportError:
+            debug_log = lambda *a, **kw: None  # noqa: E731
 
         debug_log(
             "ReactExecutor",
-            f"Calling call_llm_with_progress, _llm_caller={id(self._llm_caller)}, task_monitor={task_monitor}",
+            f"Calling _call_action_llm, _llm_caller={id(self._llm_caller) if self._llm_caller else None}, task_monitor={task_monitor}",
         )
         _session_debug().log(
             "llm_call_start",
@@ -203,11 +232,11 @@ class IterationMixin:
             message_count=len(ctx.messages),
             thinking_visible=thinking_visible,
         )
-        response, latency_ms = self._llm_caller.call_llm_with_progress(
+        response, latency_ms = self._call_action_llm(
             ctx.agent, ctx.messages, task_monitor, thinking_visible=thinking_visible
         )
         debug_log(
-            "ReactExecutor", f"call_llm_with_progress returned, success={response.get('success')}"
+            "ReactExecutor", f"_call_action_llm returned, success={response.get('success')}"
         )
         self._last_latency_ms = latency_ms
         _session_debug().log(
@@ -319,12 +348,13 @@ class IterationMixin:
 
             if ctx.ui_callback and hasattr(ctx.ui_callback, "on_interrupt"):
                 ctx.ui_callback.on_interrupt()
-            elif not ctx.ui_callback:
+            elif not ctx.ui_callback and self.console:
                 self.console.print(
                     "  ⎿  [bold red]Interrupted · What should I do instead?[/bold red]"
                 )
         else:
-            self.console.print(f"[red]Error: {error_text}[/red]")
+            if self.console:
+                self.console.print(f"[red]Error: {error_text}[/red]")
             # Include tracked metadata when persisting error
             fallback = ChatMessage(
                 role=Role.ASSISTANT,
@@ -370,7 +400,7 @@ class IterationMixin:
 
     def _record_agent_response(self, content: str, tool_calls: Optional[list]):
         """Record agent response for ACE learning."""
-        if hasattr(self._tool_executor, "set_last_agent_response"):
+        if self._tool_executor and hasattr(self._tool_executor, "set_last_agent_response"):
             self._tool_executor.set_last_agent_response(
                 str(AgentResponse(content=content, tool_calls=tool_calls or []))
             )
@@ -410,7 +440,7 @@ class IterationMixin:
             if content:
                 ctx.messages.append({"role": "assistant", "content": raw_content or content})
                 self._display_message(content, ctx.ui_callback)
-            ctx.messages.append({"role": "user", "content": nudge})
+            append_nudge(ctx.messages, nudge)
             return LoopAction.CONTINUE
 
         # Check injection queue before accepting implicit completion
@@ -423,9 +453,7 @@ class IterationMixin:
         # Nudge once for empty completion summary
         if not content and not ctx.completion_nudge_sent:
             ctx.completion_nudge_sent = True
-            ctx.messages.append(
-                {"role": "user", "content": get_reminder("completion_summary_nudge")}
-            )
+            append_nudge(ctx.messages, get_reminder("completion_summary_nudge"))
             return LoopAction.CONTINUE
 
         # Accept completion (with or without content)
@@ -463,7 +491,7 @@ class IterationMixin:
                 if content:
                     ctx.messages.append({"role": "assistant", "content": raw_content or content})
                     self._display_message(content, ctx.ui_callback)
-                ctx.messages.append({"role": "user", "content": nudge})
+                append_nudge(ctx.messages, nudge)
                 ctx.consecutive_no_tool_calls = 0
                 return LoopAction.CONTINUE
 
@@ -479,23 +507,13 @@ class IterationMixin:
             ctx.messages.append({"role": "assistant", "content": raw_content or content})
             self._display_message(content, ctx.ui_callback)
 
-        ctx.messages.append(
-            {
-                "role": "user",
-                "content": get_reminder("failed_tool_nudge"),
-            }
-        )
+        append_nudge(ctx.messages, get_reminder("failed_tool_nudge"))
         return LoopAction.CONTINUE
 
     def _should_nudge_agent(self, consecutive_reads: int, messages: list) -> bool:
         """Check if agent should be nudged to conclude."""
         if consecutive_reads >= 5:
             # Silently nudge the agent
-            messages.append(
-                {
-                    "role": "user",
-                    "content": get_reminder("consecutive_reads_nudge"),
-                }
-            )
+            append_nudge(messages, get_reminder("consecutive_reads_nudge"))
             return True
         return False

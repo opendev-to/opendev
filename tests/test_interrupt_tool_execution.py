@@ -104,7 +104,7 @@ class TestFix6TokenCheckBetweenTools:
         llm_caller = Mock()
         tool_executor = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
 
         # Set up an already-signaled token
         token = InterruptToken()
@@ -185,7 +185,7 @@ class TestFixCParallelToolsGuard:
         llm_caller = Mock()
         tool_executor = Mock()
 
-        executor = ReactExecutor(console, session_manager, config, llm_caller, tool_executor)
+        executor = ReactExecutor(session_manager, config, mode_manager=Mock(), console=console, llm_caller=llm_caller, tool_executor=tool_executor)
         return executor
 
     def test_parallel_tools_skip_all_when_interrupted(self):

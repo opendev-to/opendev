@@ -20,9 +20,10 @@ def test_thinking_trace_passes_full_history():
     print("=" * 60)
 
     executor = ReactExecutor(
-        console=MagicMock(),
         session_manager=MagicMock(),
         config=MagicMock(),
+        mode_manager=MagicMock(),
+        console=MagicMock(),
         llm_caller=MagicMock(),
         tool_executor=MagicMock(),
     )
@@ -99,9 +100,10 @@ def test_build_messages_with_system_prompt():
     print("=" * 60)
 
     executor = ReactExecutor(
-        console=MagicMock(),
         session_manager=MagicMock(),
         config=MagicMock(),
+        mode_manager=MagicMock(),
+        console=MagicMock(),
         llm_caller=MagicMock(),
         tool_executor=MagicMock(),
     )

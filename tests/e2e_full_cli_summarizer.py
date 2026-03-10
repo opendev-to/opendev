@@ -49,9 +49,10 @@ def test_full_flow_with_real_api():
 
     # Create ReactExecutor with mocked deps but real LLM caller
     executor = ReactExecutor(
-        console=Console(),
         session_manager=MagicMock(),
         config=MagicMock(),
+        mode_manager=MagicMock(),
+        console=Console(),
         llm_caller=MagicMock(),
         tool_executor=MagicMock(),
     )

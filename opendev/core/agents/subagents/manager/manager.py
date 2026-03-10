@@ -66,6 +66,7 @@ class SubAgentDeps:
     mode_manager: Any
     approval_manager: Any
     undo_manager: Any
+    session_manager: Any = None
 
 
 class SubAgentManager(RegistrationMixin, DockerMixin, ExecutionMixin):

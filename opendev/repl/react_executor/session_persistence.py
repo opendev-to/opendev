@@ -126,7 +126,7 @@ class SessionPersistenceMixin:
 
         _debug_log("[PERSIST] Completed")
 
-        if tool_call_objects:
+        if tool_call_objects and self._tool_executor:
             outcome = "error" if any(tc.error for tc in tool_call_objects) else "success"
             self._tool_executor.record_tool_learnings(
                 ctx.query, tool_call_objects, outcome, ctx.agent

@@ -1,6 +1,7 @@
 """Session management models."""
 
 import json
+import logging
 import re as _re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
@@ -10,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from opendev.models.message import ChatMessage
 from opendev.models.file_change import FileChange, FileChangeType
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from opendev.core.context_engineering.memory import Playbook
@@ -145,10 +148,21 @@ class Session(BaseModel):
         slug = slug[:50].rstrip("-")
         return slug or self.id[:8]
 
-    def add_message(self, message: ChatMessage) -> None:
-        """Add a message to the session."""
+    def add_message(self, message: ChatMessage) -> bool:
+        """Add a message to the session after validation.
+
+        Returns:
+            True if the message was added, False if rejected.
+        """
+        from opendev.models.message_validator import validate_message
+
+        verdict = validate_message(message)
+        if not verdict.is_valid:
+            logger.warning("Rejected message (role=%s): %s", message.role.value, verdict.reason)
+            return False
         self.messages.append(message)
         self.updated_at = datetime.now()
+        return True
 
     def add_file_change(self, file_change: FileChange) -> None:
         """Add a file change to the session."""

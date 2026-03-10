@@ -32,9 +32,9 @@ def _pick_session_interactively(working_dir: "Path") -> "str | None":
     else:
         sm = SessionManager(working_dir=working_dir)
 
-    sessions = sm.list_sessions()
+    sessions = sm.list_all_sessions()
     if not sessions:
-        console.print("[yellow]No sessions found for this directory.[/yellow]")
+        console.print("[yellow]No sessions found.[/yellow]")
         return None
 
     def _relative_time(dt: datetime) -> str:
@@ -455,7 +455,7 @@ Examples:
                 return
         elif args.resume:
             # --resume <ID> → validate the session exists
-            sessions = session_manager.list_sessions()
+            sessions = session_manager.list_all_sessions()
             if not any(s.id == args.resume for s in sessions):
                 console.print(f"[yellow]Session '{args.resume}' not found.[/yellow]")
                 resume_session_id = _pick_session_interactively(working_dir)

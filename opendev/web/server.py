@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -43,6 +44,12 @@ async def lifespan(app: FastAPI):
 
     if state.ws_manager is None:
         state.ws_manager = _global_ws_manager
+
+    # Signal that the server is ready (event loop + ws_manager are set)
+    ready_event = getattr(app.state, "_ready_event", None)
+    if ready_event is not None:
+        ready_event.set()
+
     yield
 
 
@@ -258,6 +265,7 @@ def start_server(
     port: int = 8080,
     open_browser: bool = True,
     background: bool = False,
+    ready_event: Optional[threading.Event] = None,
 ) -> Thread:
     """Start the web server in a background thread.
 
@@ -290,6 +298,10 @@ def start_server(
 
     # Create app
     app = create_app()
+
+    # Attach ready event so lifespan handler can signal it
+    if ready_event is not None:
+        app.state._ready_event = ready_event
 
     # Open browser after a short delay
     if open_browser:

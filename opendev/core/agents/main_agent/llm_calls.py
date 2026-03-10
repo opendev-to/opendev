@@ -6,6 +6,16 @@ from typing import Any, Optional
 class LlmCallsMixin:
     """Mixin for LLM call methods."""
 
+    @staticmethod
+    def _clean_messages(messages: list[dict]) -> list[dict]:
+        """Strip internal ``_``-prefixed keys from messages before API calls."""
+        return [
+            {k: v for k, v in msg.items() if not k.startswith("_")}
+            if any(k.startswith("_") for k in msg)
+            else msg
+            for msg in messages
+        ]
+
     def call_thinking_llm(
         self,
         messages: list[dict],
@@ -34,7 +44,7 @@ class LlmCallsMixin:
         # NO tools - pure reasoning
         payload = {
             "model": model_id,
-            "messages": messages,
+            "messages": self._clean_messages(messages),
             **http_client.build_temperature_param(model_id, self.config.temperature),
             **http_client.build_max_tokens_param(model_id, self.config.max_tokens),
         }
@@ -177,7 +187,7 @@ class LlmCallsMixin:
 
         payload = {
             "model": model_id,
-            "messages": messages,
+            "messages": self._clean_messages(messages),
             "tools": tool_schemas,
             "tool_choice": tool_choice,
             **http_client.build_temperature_param(model_id, self.config.temperature),

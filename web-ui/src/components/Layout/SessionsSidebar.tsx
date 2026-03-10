@@ -288,7 +288,7 @@ export function SessionsSidebar() {
       }}
     >
       {showCollapsedContent ? (
-        <div className="min-w-[64px] flex flex-col h-full">
+        <div className="min-w-[64px] flex flex-col h-full animate-content-fade">
           {/* Collapsed Workspace Icons */}
           <div className="flex-1 overflow-y-auto py-3 space-y-2 flex flex-col items-center">
             {workspaces.slice(0, 5).map((workspace) => {
@@ -357,7 +357,7 @@ export function SessionsSidebar() {
           </div>
         </div>
       ) : (
-        <div className="min-w-[320px] flex flex-col h-full">
+        <div className="min-w-[320px] flex flex-col h-full animate-content-fade">
           {/* Compact New Chat Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
             <button
@@ -377,9 +377,10 @@ export function SessionsSidebar() {
           {/* Workspaces List */}
           <div className="flex-1 overflow-y-auto px-4 py-3">
             {isLoading ? (
-              <div className="flex flex-col items-center justify-center py-12 px-4">
-                <div className="w-8 h-8 border-2 border-gray-200 border-t-amber-500 rounded-full animate-spin mb-3" />
-                <p className="text-sm text-gray-500">Loading workspaces...</p>
+              <div className="space-y-3 px-0 py-3">
+                <div className="skeleton-shimmer h-16 rounded-xl" />
+                <div className="skeleton-shimmer h-16 rounded-xl" />
+                <div className="skeleton-shimmer h-16 rounded-xl" />
               </div>
             ) : workspaces.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
@@ -394,7 +395,7 @@ export function SessionsSidebar() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3 animate-fade-in">
                 {workspaces.map((workspace) => {
                   const isExpanded = expandedWorkspaces.has(workspace.path);
                   const hasActiveSession = workspace.sessions.some(s => s.id === currentSessionId);
@@ -453,7 +454,7 @@ export function SessionsSidebar() {
                           e.stopPropagation();
                           handleDeleteWorkspace(workspace, e);
                         }}
-                        className="absolute top-3.5 right-3 w-7 h-7 rounded-md flex items-center justify-center hover:bg-red-100 text-gray-400 hover:text-red-600 bg-white shadow-sm z-10"
+                        className="absolute top-3.5 right-3 w-7 h-7 rounded-md flex items-center justify-center hover:bg-red-100 text-gray-400 hover:text-red-600 bg-white shadow-sm z-10 delete-glow"
                         title="Delete workspace"
                       >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -461,8 +462,14 @@ export function SessionsSidebar() {
                         </svg>
                       </button>
 
-                      {/* Sessions List (Expanded) */}
-                      {isExpanded && (
+                      {/* Sessions List (Animated expand/collapse) */}
+                      <div
+                        className="overflow-hidden transition-all duration-300"
+                        style={{
+                          maxHeight: isExpanded ? '1000px' : '0px',
+                          opacity: isExpanded ? 1 : 0,
+                        }}
+                      >
                         <div className="px-4 pb-3 space-y-1.5 border-t border-gray-100 pt-2">
                           {/* Add New Session Button */}
                           <button
@@ -489,8 +496,8 @@ export function SessionsSidebar() {
                                   onClick={(e) => handleSessionClick(session, e)}
                                   className={`w-full px-4 py-3 pr-10 rounded-lg text-left cursor-pointer ${
                                     isActiveSession
-                                      ? 'bg-amber-50 border-l-4 border-l-amber-500'
-                                      : 'bg-white border border-gray-200 hover:border-amber-300 hover:bg-amber-50/30'
+                                      ? 'bg-amber-50 border-l-4 animate-border-breathe'
+                                      : 'bg-white border border-gray-200 hover:border-amber-300 hover:bg-amber-50/30 hover:scale-[1.01] hover:shadow-sm transition-all duration-200'
                                   }`}
                                 >
                                   <div className="flex items-center gap-1.5">
@@ -543,7 +550,7 @@ export function SessionsSidebar() {
                                   {/* Delete Session Button */}
                                   <button
                                     onClick={(e) => handleDeleteSession(session.id, e)}
-                                    className="w-6 h-6 rounded flex items-center justify-center hover:bg-red-100 text-gray-400 hover:text-red-600"
+                                    className="w-6 h-6 rounded flex items-center justify-center hover:bg-red-100 text-gray-400 hover:text-red-600 delete-glow"
                                     title="Delete session"
                                   >
                                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -555,7 +562,7 @@ export function SessionsSidebar() {
                             );
                           })}
                         </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
@@ -609,7 +616,7 @@ export function SessionsSidebar() {
           onClick={() => setDeleteSessionId(null)}
         >
           <div
-            className="bg-white p-6 rounded-xl min-w-[400px] shadow-2xl"
+            className="bg-white p-6 rounded-xl min-w-[400px] shadow-2xl animate-scale-in"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-gray-900 mb-3">

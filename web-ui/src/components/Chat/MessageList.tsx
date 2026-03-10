@@ -217,20 +217,22 @@ export function MessageList() {
                     <div className="flex-1 prose prose-sm max-w-none code-hover">
                       <ReactMarkdown
                         components={{
-                          code({ node, className, children, ...props }) {
-                            const isInline = (props as any)?.inline;
-                            const languageMatch = /language-(\w+)/.exec(className || '');
-                            const language = languageMatch ? languageMatch[1] : null;
-                            return isInline ? (
+                          pre({ children }) {
+                            return (
+                              <pre className="rounded-lg p-3 overflow-x-auto my-2 bg-bg-300 border border-border-300/15">
+                                {children}
+                              </pre>
+                            );
+                          },
+                          code({ className, children, ...props }) {
+                            const language = /language-(\w+)/.exec(className || '')?.[1];
+                            if (language) {
+                              return <code className="text-text-000 text-sm font-mono" data-language={language} {...props}>{children}</code>;
+                            }
+                            return (
                               <code className="text-sm px-1.5 py-0.5 rounded font-mono bg-bg-200 text-text-100 border border-border-300/20" {...props}>
                                 {children}
                               </code>
-                            ) : (
-                              <pre className="rounded-lg p-3 overflow-x-auto my-2 bg-bg-300 border border-border-300/15">
-                                <code className="text-text-000 text-sm" data-language={language} {...props}>
-                                  {children}
-                                </code>
-                              </pre>
                             );
                           },
                           p({ children }) {

@@ -57,9 +57,9 @@ class ThinkingMixin:
             # Build thinking-specific system prompt
             thinking_system_prompt = agent.build_system_prompt(thinking_visible=True)
 
-            # Clone messages with swapped system prompt
+            # Clone messages with swapped system prompt (exclude nudges)
             thinking_messages = self._build_messages_with_system_prompt(
-                messages, thinking_system_prompt
+                messages, thinking_system_prompt, exclude_nudges=True
             )
 
             # Build analysis prompt — todo-aware when todos exist
@@ -95,7 +95,10 @@ class ThinkingMixin:
                 task_monitor.set_interrupt_token(self._active_interrupt_token)
             # Track task monitor for interrupt support
             self._current_task_monitor = task_monitor
-            from opendev.ui_textual.debug_logger import debug_log
+            try:
+                from opendev.ui_textual.debug_logger import debug_log
+            except ImportError:
+                debug_log = lambda *a, **kw: None  # noqa: E731
 
             debug_log("ReactExecutor", f"Thinking phase: SET _current_task_monitor={task_monitor}")
             try:
@@ -228,9 +231,9 @@ class ThinkingMixin:
             # Build refinement system prompt
             refinement_system = agent.build_system_prompt(thinking_visible=True)
 
-            # Clone messages with swapped system prompt
+            # Clone messages with swapped system prompt (exclude nudges)
             refinement_messages = self._build_messages_with_system_prompt(
-                messages, refinement_system
+                messages, refinement_system, exclude_nudges=True
             )
 
             # Append refinement user message with trace + critique

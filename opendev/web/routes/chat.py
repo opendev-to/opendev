@@ -121,11 +121,9 @@ async def get_messages() -> List[MessageResponse]:
         # Return empty list if no session exists
         session = state.session_manager.get_current_session()
         if not session:
-            print("[DEBUG] No current session found")
             return []
 
         messages = state.get_messages()
-        print(f"[DEBUG] Loaded {len(messages)} messages from session {session.id}")
 
         return [
             MessageResponse(
@@ -140,9 +138,6 @@ async def get_messages() -> List[MessageResponse]:
         ]
 
     except Exception as e:
-        print(f"[ERROR] Failed to get messages: {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -190,7 +185,14 @@ async def interrupt_task() -> Dict[str, str]:
     """
     try:
         state = get_state()
+        # Signal interrupt via state flag (legacy fallback)
         state.request_interrupt()
+        # Also signal via ReactExecutor's interrupt token (primary mechanism)
+        agent_executor = getattr(state, "_agent_executor", None)
+        if agent_executor:
+            # Interrupt all running sessions
+            for sid in list(agent_executor._current_react_executors.keys()):
+                agent_executor.interrupt_session(sid)
 
         return {"status": "success", "message": "Interrupt requested"}
 

@@ -200,6 +200,13 @@ class APIClient {
     return response.json();
   }
 
+  // Bridge mode
+  async getBridgeInfo(): Promise<{ bridge_mode: boolean; session_id: string | null }> {
+    const response = await fetch(`${API_BASE}/sessions/bridge-info`);
+    if (!response.ok) return { bridge_mode: false, session_id: null };
+    return response.json();
+  }
+
   // Health check
   async health(): Promise<{ status: string; service: string }> {
     const response = await fetch(`${API_BASE}/health`);

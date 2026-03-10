@@ -54,22 +54,18 @@ class TestBridgeModeRouting:
     @pytest.mark.asyncio
     async def test_non_bridge_mode_uses_agent_executor(self, ws_manager, mock_websocket):
         """When NOT in bridge mode, query should proceed to AgentExecutor."""
+        mock_executor_instance = MagicMock()
+        mock_executor_instance.execute_query = AsyncMock()
+
         mock_state = MagicMock()
         mock_state.is_bridge_mode = False
         mock_state.get_current_session_id.return_value = "sess123"
         mock_state.is_session_running.return_value = False
         mock_state.session_manager.get_session_by_id.return_value = MagicMock()
+        # Provide the singleton agent executor on state
+        mock_state._agent_executor = mock_executor_instance
 
-        mock_executor_instance = MagicMock()
-        mock_executor_instance.execute_query = AsyncMock()
-
-        with (
-            patch("opendev.web.websocket.get_state", return_value=mock_state),
-            patch(
-                "opendev.web.agent_executor.AgentExecutor",
-                return_value=mock_executor_instance,
-            ),
-        ):
+        with patch("opendev.web.websocket.get_state", return_value=mock_state):
             ws_manager.broadcast = AsyncMock()
             data = {
                 "type": "query",

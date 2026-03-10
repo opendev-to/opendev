@@ -776,11 +776,12 @@ class TestReactExecutorReasoningDisplay:
         mock_tool_executor = MagicMock()
 
         executor = ReactExecutor(
-            mock_console,
             mock_session_manager,
             mock_config,
-            mock_llm_caller,
-            mock_tool_executor
+            mode_manager=MagicMock(),
+            console=mock_console,
+            llm_caller=mock_llm_caller,
+            tool_executor=mock_tool_executor
         )
 
         response = {
@@ -806,11 +807,12 @@ class TestReactExecutorReasoningDisplay:
         mock_tool_executor = MagicMock()
 
         executor = ReactExecutor(
-            mock_console,
             mock_session_manager,
             mock_config,
-            mock_llm_caller,
-            mock_tool_executor
+            mode_manager=MagicMock(),
+            console=mock_console,
+            llm_caller=mock_llm_caller,
+            tool_executor=mock_tool_executor
         )
 
         response = {
