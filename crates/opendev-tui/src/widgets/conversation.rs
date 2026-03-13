@@ -287,6 +287,27 @@ impl<'a> ConversationWidget<'a> {
                         }
                     }
                 }
+                DisplayRole::Thinking => {
+                    for (i, content_line) in content.lines().enumerate() {
+                        let prefix = if i == 0 {
+                            format!("  {} ", style_tokens::THINKING_ICON)
+                        } else {
+                            "    ".to_string()
+                        };
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                prefix,
+                                Style::default().fg(style_tokens::THINKING_BG),
+                            ),
+                            Span::styled(
+                                content_line.to_string(),
+                                Style::default()
+                                    .fg(style_tokens::THINKING_BG)
+                                    .add_modifier(Modifier::ITALIC),
+                            ),
+                        ]));
+                    }
+                }
             }
 
             // Tool call summary with color coding

@@ -24,7 +24,7 @@ pub use doom_loop::{DoomLoopAction, DoomLoopDetector};
 pub use llm_calls::LlmCaller;
 pub use main_agent::MainAgent;
 pub use prompts::{PromptComposer, PromptSection};
-pub use react_loop::{ReactLoop, TurnResult};
+pub use react_loop::{ReactLoop, ReactLoopConfig, TurnResult};
 pub use response::ResponseCleaner;
 pub use skills::{LoadedSkill, SkillLoader, SkillMetadata, SkillSource};
 pub use subagents::{

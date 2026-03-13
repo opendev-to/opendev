@@ -22,6 +22,7 @@ fn make_loop() -> ReactLoop {
         max_iterations: Some(10),
         max_nudge_attempts: 3,
         max_todo_nudges: 4,
+        ..Default::default()
     })
 }
 

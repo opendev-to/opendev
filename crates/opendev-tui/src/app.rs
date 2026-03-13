@@ -55,25 +55,8 @@ impl std::fmt::Display for AutonomyLevel {
     }
 }
 
-/// Thinking level — mirrors Python `StatusBar.thinking_level`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThinkingLevel {
-    Off,
-    Low,
-    Medium,
-    High,
-}
-
-impl std::fmt::Display for ThinkingLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Off => write!(f, "Off"),
-            Self::Low => write!(f, "Low"),
-            Self::Medium => write!(f, "Medium"),
-            Self::High => write!(f, "High"),
-        }
-    }
-}
+/// Re-export ThinkingLevel from opendev-runtime for convenience.
+pub use opendev_runtime::ThinkingLevel;
 
 /// Persistent application state shared across renders.
 #[derive(Debug, Clone)]
@@ -156,6 +139,7 @@ pub enum DisplayRole {
     User,
     Assistant,
     System,
+    Thinking,
 }
 
 /// Tool call display info.
@@ -382,7 +366,7 @@ impl App {
                     layout::Constraint::Length(subagent_height),   // subagent display
                     layout::Constraint::Length(tool_height),       // tool display
                     layout::Constraint::Length(progress_height),   // task progress
-                    layout::Constraint::Length(3),                 // input
+                    layout::Constraint::Length(2),                 // input
                     layout::Constraint::Length(2),                 // status bar
                 ]
                 .as_ref(),
@@ -549,6 +533,22 @@ impl App {
                 self.state.messages.push(DisplayMessage {
                     role: DisplayRole::System,
                     content: format!("Error: {err}"),
+                    tool_call: None,
+                });
+            }
+
+            // Thinking events
+            AppEvent::ThinkingTrace(content) => {
+                self.state.messages.push(DisplayMessage {
+                    role: DisplayRole::Thinking,
+                    content: format!("Thinking: {content}"),
+                    tool_call: None,
+                });
+            }
+            AppEvent::CritiqueTrace(content) => {
+                self.state.messages.push(DisplayMessage {
+                    role: DisplayRole::Thinking,
+                    content: format!("Critique: {content}"),
                     tool_call: None,
                 });
             }

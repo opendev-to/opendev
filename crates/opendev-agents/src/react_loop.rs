@@ -13,6 +13,7 @@ use crate::llm_calls::LlmCaller;
 use crate::response::ResponseCleaner;
 use crate::traits::{AgentError, AgentResult, LlmResponse, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
+use opendev_runtime::ThinkingLevel;
 use opendev_tools_core::{ToolContext, ToolRegistry};
 
 /// Tools that are safe for parallel execution (read-only, no side effects).
@@ -31,6 +32,14 @@ pub static PARALLELIZABLE_TOOLS: &[&str] = &[
     "find_symbol",
     "find_referencing_symbols",
 ];
+
+/// System prompt for the critique phase.
+const CRITIQUE_SYSTEM_PROMPT: &str = "\
+You are a self-critique assistant. Analyze the provided thinking trace for:\n\
+- Logical errors or unsupported assumptions\n\
+- Missing edge cases or failure modes\n\
+- Unnecessary complexity or better alternatives\n\
+Be concise and actionable. Focus on the most impactful issues.";
 
 /// Extended readonly set for thinking-skip heuristic.
 /// Matches Python's `IterationMixin._READONLY_TOOLS`.
@@ -89,6 +98,8 @@ pub struct ReactLoopConfig {
     pub max_nudge_attempts: usize,
     /// Maximum todo completion nudges before allowing completion anyway.
     pub max_todo_nudges: usize,
+    /// Thinking level — controls whether thinking/critique phases run.
+    pub thinking_level: ThinkingLevel,
 }
 
 impl Default for ReactLoopConfig {
@@ -97,6 +108,7 @@ impl Default for ReactLoopConfig {
             max_iterations: None, // Unlimited by default (matches Python)
             max_nudge_attempts: 3,
             max_todo_nudges: 4,
+            thinking_level: ThinkingLevel::Medium,
         }
     }
 }
@@ -440,6 +452,69 @@ impl ReactLoop {
                 }
             }
 
+            // Thinking phase (before action)
+            let skip_thinking = self.should_skip_thinking(messages);
+            if self.config.thinking_level.is_enabled() && !skip_thinking {
+                let thinking_payload = caller.build_thinking_payload(messages);
+                debug!(iteration, "Running thinking phase");
+
+                match http_client.post_json(&thinking_payload, None).await {
+                    Ok(thinking_result) if thinking_result.success => {
+                        if let Some(ref body) = thinking_result.body {
+                            let thinking_resp = caller.parse_thinking_response(body);
+                            if let Some(ref trace) = thinking_resp.content {
+                                if let Some(cb) = event_callback {
+                                    cb.on_thinking(trace);
+                                }
+
+                                // Critique phase (High level only)
+                                if self.config.thinking_level.use_critique() {
+                                    let critique_payload = caller.build_critique_payload(
+                                        trace,
+                                        CRITIQUE_SYSTEM_PROMPT,
+                                    );
+                                    if let Ok(critique_result) =
+                                        http_client.post_json(&critique_payload, None).await
+                                    {
+                                        if critique_result.success {
+                                            if let Some(ref cbody) = critique_result.body {
+                                                let critique_resp =
+                                                    caller.parse_critique_response(cbody);
+                                                if let Some(ref critique_text) =
+                                                    critique_resp.content
+                                                {
+                                                    if let Some(cb) = event_callback {
+                                                        cb.on_critique(critique_text);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Inject thinking trace as context for the action call
+                                messages.push(serde_json::json!({
+                                    "role": "user",
+                                    "content": format!(
+                                        "<thinking_trace>\n{}\n</thinking_trace>\n\n\
+                                         Use this reasoning to inform your next action. \
+                                         Do not repeat the reasoning — act on it.",
+                                        trace
+                                    ),
+                                    "_thinking": true
+                                }));
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        debug!(iteration, "Thinking call returned non-success, skipping");
+                    }
+                    Err(e) => {
+                        warn!(iteration, error = %e, "Thinking phase failed, proceeding to action");
+                    }
+                }
+            }
+
             // Build payload and send via HttpClient
             let payload = caller.build_action_payload(messages, tool_schemas);
             debug!(iteration, model = %payload["model"], "ReAct iteration");
@@ -711,6 +786,7 @@ mod tests {
             max_iterations: Some(10),
             max_nudge_attempts: 3,
             max_todo_nudges: 4,
+            ..Default::default()
         })
     }
 
@@ -1137,5 +1213,78 @@ mod tests {
             serde_json::json!({"role": "assistant", "content": "I failed."}),
         ];
         assert!(ReactLoop::shallow_subagent_warning(&messages, false).is_none());
+    }
+
+    // --- Thinking level configuration tests ---
+
+    #[test]
+    fn test_config_thinking_level_default() {
+        let config = ReactLoopConfig::default();
+        assert_eq!(config.thinking_level, ThinkingLevel::Medium);
+        assert!(config.thinking_level.is_enabled());
+        assert!(!config.thinking_level.use_critique());
+    }
+
+    #[test]
+    fn test_config_thinking_level_off_skips_thinking() {
+        let config = ReactLoopConfig {
+            thinking_level: ThinkingLevel::Off,
+            ..Default::default()
+        };
+        assert!(!config.thinking_level.is_enabled());
+    }
+
+    #[test]
+    fn test_config_thinking_level_high_enables_critique() {
+        let config = ReactLoopConfig {
+            thinking_level: ThinkingLevel::High,
+            ..Default::default()
+        };
+        assert!(config.thinking_level.is_enabled());
+        assert!(config.thinking_level.use_critique());
+    }
+
+    #[test]
+    fn test_thinking_skipped_after_readonly_tools() {
+        // When last tools were readonly, should_skip_thinking returns true
+        // meaning thinking won't run even if level is enabled
+        let rl = ReactLoop::new(ReactLoopConfig {
+            thinking_level: ThinkingLevel::Medium,
+            ..Default::default()
+        });
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "read something"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{"id": "1", "function": {"name": "read_file", "arguments": "{}"}}]
+            }),
+            serde_json::json!({"role": "tool", "name": "read_file", "content": "ok", "tool_call_id": "1"}),
+        ];
+        assert!(rl.should_skip_thinking(&messages));
+    }
+
+    #[test]
+    fn test_thinking_not_skipped_after_write_tools() {
+        let rl = ReactLoop::new(ReactLoopConfig {
+            thinking_level: ThinkingLevel::High,
+            ..Default::default()
+        });
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "edit something"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{"id": "1", "function": {"name": "edit_file", "arguments": "{}"}}]
+            }),
+            serde_json::json!({"role": "tool", "name": "edit_file", "content": "ok", "tool_call_id": "1"}),
+        ];
+        assert!(!rl.should_skip_thinking(&messages));
+    }
+
+    #[test]
+    fn test_critique_system_prompt_is_valid() {
+        assert!(!CRITIQUE_SYSTEM_PROMPT.is_empty());
+        assert!(CRITIQUE_SYSTEM_PROMPT.contains("critique"));
     }
 }

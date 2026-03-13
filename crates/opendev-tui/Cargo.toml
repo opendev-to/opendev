@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 opendev-models = { workspace = true }
 opendev-agents = { workspace = true }
+opendev-runtime = { workspace = true }
 opendev-tools-core = { workspace = true }
 
 ratatui = { workspace = true }

@@ -12,6 +12,7 @@ opendev-http = { workspace = true }
 opendev-tools-core = { workspace = true }
 opendev-context = { workspace = true }
 opendev-memory = { workspace = true }
+opendev-runtime = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

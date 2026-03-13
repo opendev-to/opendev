@@ -228,6 +228,7 @@ impl SubagentManager {
             max_iterations: Some(25),
             max_nudge_attempts: 2,
             max_todo_nudges: 2,
+            ..Default::default()
         });
 
         debug!(subagent = %spec.name, "Running subagent ReAct loop");

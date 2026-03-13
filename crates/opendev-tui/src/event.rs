@@ -86,6 +86,12 @@ pub enum AppEvent {
         shallow_warning: Option<String>,
     },
 
+    // -- Thinking events --
+    /// A thinking trace was produced before the action phase.
+    ThinkingTrace(String),
+    /// A self-critique was produced (High thinking level only).
+    CritiqueTrace(String),
+
     // -- Task progress events --
     /// Agent started working on a task (shows progress bar).
     TaskProgressStarted { description: String },

@@ -201,6 +201,10 @@ pub trait AgentEventCallback: Send + Sync {
     fn on_tool_finished(&self, tool_id: &str, success: bool);
     /// Streaming text chunk from the assistant.
     fn on_agent_chunk(&self, text: &str);
+    /// A thinking trace was produced before the action phase.
+    fn on_thinking(&self, content: &str);
+    /// A self-critique was produced (High thinking level only).
+    fn on_critique(&self, content: &str);
 }
 
 /// Dependencies injected into agent runs.
