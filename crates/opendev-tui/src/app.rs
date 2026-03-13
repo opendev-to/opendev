@@ -775,6 +775,29 @@ impl App {
         }
     }
 
+    /// Return the byte offset of the next char boundary after `pos` in `s`,
+    /// or `s.len()` if already at the end.
+    fn next_char_boundary(s: &str, pos: usize) -> usize {
+        let mut idx = pos + 1;
+        while idx < s.len() && !s.is_char_boundary(idx) {
+            idx += 1;
+        }
+        idx.min(s.len())
+    }
+
+    /// Return the byte offset of the previous char boundary before `pos` in `s`,
+    /// or 0 if already at the start.
+    fn prev_char_boundary(s: &str, pos: usize) -> usize {
+        if pos == 0 {
+            return 0;
+        }
+        let mut idx = pos - 1;
+        while idx > 0 && !s.is_char_boundary(idx) {
+            idx -= 1;
+        }
+        idx
+    }
+
     /// Handle a key press event.
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
         // Only process key-press events (Kitty protocol also sends Release/Repeat)
@@ -821,7 +844,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
                 if !self.state.agent_active {
                     self.state.input_buffer.insert(self.state.input_cursor, '\n');
-                    self.state.input_cursor += 1;
+                    self.state.input_cursor += '\n'.len_utf8();
                 }
             }
             (m, KeyCode::Enter)
@@ -829,7 +852,7 @@ impl App {
             {
                 if !self.state.agent_active {
                     self.state.input_buffer.insert(self.state.input_cursor, '\n');
-                    self.state.input_cursor += 1;
+                    self.state.input_cursor += '\n'.len_utf8();
                 }
             }
             // Enter — accept autocomplete, submit message, or execute slash command
@@ -873,7 +896,8 @@ impl App {
             // Backspace
             (_, KeyCode::Backspace) => {
                 if self.state.input_cursor > 0 {
-                    self.state.input_cursor -= 1;
+                    self.state.input_cursor =
+                        Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
                     self.state.input_buffer.remove(self.state.input_cursor);
                     self.update_autocomplete();
                 }
@@ -888,13 +912,15 @@ impl App {
             // Left arrow
             (_, KeyCode::Left) => {
                 if self.state.input_cursor > 0 {
-                    self.state.input_cursor -= 1;
+                    self.state.input_cursor =
+                        Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
                 }
             }
             // Right arrow
             (_, KeyCode::Right) => {
                 if self.state.input_cursor < self.state.input_buffer.len() {
-                    self.state.input_cursor += 1;
+                    self.state.input_cursor =
+                        Self::next_char_boundary(&self.state.input_buffer, self.state.input_cursor);
                 }
             }
             // Home
@@ -1002,7 +1028,7 @@ impl App {
             // Regular character input
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                 self.state.input_buffer.insert(self.state.input_cursor, c);
-                self.state.input_cursor += 1;
+                self.state.input_cursor += c.len_utf8();
                 // Update autocomplete on input change
                 self.update_autocomplete();
             }

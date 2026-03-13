@@ -127,11 +127,13 @@ impl Widget for InputWidget<'_> {
 
                 if i == cursor_line {
                     let before = &line_text[..cursor_col];
-                    let cursor_char = line_text.get(cursor_col..cursor_col + 1).unwrap_or(" ");
-                    let after = if cursor_col < line_text.len() {
-                        &line_text[cursor_col + 1..]
+                    let (cursor_char, after) = if cursor_col < line_text.len() {
+                        // Find the end of the current char (next char boundary)
+                        let ch = line_text[cursor_col..].chars().next().unwrap();
+                        let end = cursor_col + ch.len_utf8();
+                        (&line_text[cursor_col..end], &line_text[end..])
                     } else {
-                        ""
+                        (" ", "")
                     };
                     let spans = Line::from(vec![
                         Span::styled(pfx, prefix_style),
