@@ -13,6 +13,7 @@ const DEFAULT_MAX_LENGTH: usize = 60;
 const ACTION_VERBS: &[&str] = &[
     "reading",
     "writing",
+    "editing",
     "searching",
     "analyzing",
     "creating",
@@ -42,6 +43,7 @@ const ACTION_VERBS: &[&str] = &[
     "linting",
     "reviewing",
     "examining",
+    "looking",
     "inspecting",
     "exploring",
     "scanning",

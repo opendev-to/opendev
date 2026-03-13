@@ -8,14 +8,15 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
+use crate::agent_types::{AgentDefinition, PartialResult};
 use crate::doom_loop::{DoomLoopAction, DoomLoopDetector, RecoveryAction};
 use crate::llm_calls::LlmCaller;
 use crate::response::ResponseCleaner;
 use crate::traits::{AgentError, AgentResult, LlmResponse, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
-use opendev_runtime::ThinkingLevel;
+use opendev_runtime::{play_finish_sound, ThinkingLevel};
 use opendev_tools_core::{ToolContext, ToolRegistry};
 
 /// Metrics for a single tool call execution.
@@ -129,6 +130,9 @@ pub struct ReactLoopConfig {
     pub thinking_system_prompt: Option<String>,
     /// The user's original task text, used for analysis prompt construction.
     pub original_task: Option<String>,
+    /// Optional agent definition — when set, the loop uses the agent's
+    /// thinking/critique model overrides and thinking level.
+    pub agent_definition: Option<AgentDefinition>,
 }
 
 impl Default for ReactLoopConfig {
@@ -140,6 +144,18 @@ impl Default for ReactLoopConfig {
             thinking_level: ThinkingLevel::Medium,
             thinking_system_prompt: None,
             original_task: None,
+            agent_definition: None,
+        }
+    }
+}
+
+impl ReactLoopConfig {
+    /// Return the effective thinking level, considering the agent definition override.
+    pub fn effective_thinking_level(&self) -> ThinkingLevel {
+        if let Some(ref def) = self.agent_definition {
+            def.effective_thinking_level()
+        } else {
+            self.thinking_level
         }
     }
 }
@@ -468,6 +484,22 @@ impl ReactLoop {
     /// completion, interruption, or iteration limit.
     ///
     /// Tool execution is dispatched via the `ToolRegistry` with the given `ToolContext`.
+    ///
+    /// # Tracing
+    ///
+    /// This method emits structured tracing spans for observability:
+    /// - `react_loop` — the outermost span for the full loop execution
+    /// - `thinking_phase` — each thinking/critique/refine cycle
+    /// - `llm_call` — each LLM HTTP request
+    /// - `tool_execution` — each individual tool call
+    ///
+    /// Use `tracing-subscriber` with JSON formatting to capture structured logs:
+    /// ```ignore
+    /// tracing_subscriber::fmt()
+    ///     .json()
+    ///     .with_span_list(true)
+    ///     .init();
+    /// ```
     #[allow(clippy::too_many_arguments)]
     pub async fn run<M>(
         &self,
@@ -483,6 +515,10 @@ impl ReactLoop {
     where
         M: TaskMonitor + ?Sized,
     {
+        let _react_span = info_span!("react_loop");
+        let _react_guard = _react_span.enter();
+        drop(_react_guard); // Don't hold guard across awaits; span is still active as parent
+
         let mut iteration: usize = 0;
         let mut consecutive_no_tool_calls: usize = 0;
         let mut doom_detector = DoomLoopDetector::new();
@@ -509,7 +545,15 @@ impl ReactLoop {
             // Thinking phase (before action)
             // Mirrors Python's 3-step flow: think → critique → refine → inject
             let skip_thinking = self.should_skip_thinking(messages);
-            if self.config.thinking_level.is_enabled() && !skip_thinking {
+            let effective_level = self.config.effective_thinking_level();
+            if effective_level.is_enabled() && !skip_thinking {
+                let _thinking_span = info_span!(
+                    "thinking_phase",
+                    iteration = iteration,
+                    level = %effective_level,
+                );
+                let _thinking_guard = _thinking_span.enter();
+                drop(_thinking_guard);
                 // Build analysis prompt based on original task
                 let analysis_prompt = self.config.original_task.as_deref().map(|task| {
                     format!(
@@ -546,7 +590,7 @@ impl ReactLoop {
                                 let mut final_trace = trace.clone();
 
                                 // Critique + refinement phase (High level only)
-                                if self.config.thinking_level.use_critique() {
+                                if effective_level.use_critique() {
                                     let critique_system = embedded::SYSTEM_CRITIQUE;
                                     let critique_payload =
                                         caller.build_critique_payload(trace, critique_system);
@@ -623,10 +667,18 @@ impl ReactLoop {
             debug!(iteration, model = %payload["model"], "ReAct iteration");
 
             let llm_start = Instant::now();
-            let http_result = http_client
-                .post_json(&payload, None)
-                .await
-                .map_err(|e| AgentError::LlmError(e.to_string()))?;
+            let http_result = async {
+                http_client
+                    .post_json(&payload, None)
+                    .await
+                    .map_err(|e| AgentError::LlmError(e.to_string()))
+            }
+            .instrument(info_span!(
+                "llm_call",
+                iteration = iteration,
+                model = %payload["model"],
+            ))
+            .await?;
             let llm_latency_ms = llm_start.elapsed().as_millis() as u64;
 
             if http_result.interrupted {
@@ -720,6 +772,8 @@ impl ReactLoop {
                     }
                     iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
                     self.push_metrics(iter_metrics);
+                    // Play completion sound (respects 30s cooldown)
+                    play_finish_sound();
                     let mut result = AgentResult::ok(content, messages.clone());
                     result.completion_status = status;
                     return Ok(result);
@@ -779,6 +833,8 @@ impl ReactLoop {
                     }
 
                     // Execute tool calls
+                    let total_tool_count = tool_calls.len();
+                    let mut completed_tool_count: usize = 0;
                     for tc in &tool_calls {
                         // Check for task_complete
                         if Self::is_task_complete(tc) {
@@ -819,9 +875,18 @@ impl ReactLoop {
                         }
 
                         let tool_start = Instant::now();
-                        let tool_result = tool_registry
-                            .execute(tool_name, args_map, tool_context)
-                            .await;
+                        let tool_result = async {
+                            tool_registry
+                                .execute(tool_name, args_map, tool_context)
+                                .await
+                        }
+                        .instrument(info_span!(
+                            "tool_execution",
+                            tool_name = tool_name,
+                            tool_call_id = tool_call_id_str,
+                            iteration = iteration,
+                        ))
+                        .await;
                         let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
 
                         iter_metrics.tool_calls.push(ToolCallMetric {
@@ -870,6 +935,8 @@ impl ReactLoop {
                             "content": formatted,
                         }));
 
+                        completed_tool_count += 1;
+
                         // Check for interrupt between tool executions —
                         // preserve partial work (completed tool results
                         // already appended to messages above).
@@ -884,7 +951,17 @@ impl ReactLoop {
                                 iter_start.elapsed().as_millis() as u64;
                             self.push_metrics(iter_metrics);
 
+                            // Build structured partial result
+                            let partial = PartialResult::from_interrupted_state(
+                                messages,
+                                response.content.as_deref(),
+                                iteration,
+                                completed_tool_count,
+                                total_tool_count,
+                            );
+
                             let mut result = AgentResult::interrupted(messages.clone());
+                            result.partial_result = Some(partial);
                             if !partial_content.is_empty() {
                                 result.content = format!(
                                     "Task interrupted by user (partial): {}",
