@@ -59,9 +59,12 @@ pub fn generate_plan_name(existing_dir: Option<&Path>, max_attempts: u32) -> Str
     let mut rng = rand::thread_rng();
 
     for _ in 0..max_attempts {
-        let adj = ADJECTIVES.choose(&mut rng).unwrap();
-        let verb = VERBS.choose(&mut rng).unwrap();
-        let noun = NOUNS.choose(&mut rng).unwrap();
+        // SAFETY: ADJECTIVES, VERBS, NOUNS are non-empty compile-time arrays
+        let adj = ADJECTIVES
+            .choose(&mut rng)
+            .expect("ADJECTIVES is non-empty");
+        let verb = VERBS.choose(&mut rng).expect("VERBS is non-empty");
+        let noun = NOUNS.choose(&mut rng).expect("NOUNS is non-empty");
         let name = format!("{}-{}-{}", adj, verb, noun);
 
         if let Some(dir) = existing_dir {
@@ -74,9 +77,11 @@ pub fn generate_plan_name(existing_dir: Option<&Path>, max_attempts: u32) -> Str
     }
 
     // Fallback: append random digits
-    let adj = ADJECTIVES.choose(&mut rng).unwrap();
-    let verb = VERBS.choose(&mut rng).unwrap();
-    let noun = NOUNS.choose(&mut rng).unwrap();
+    let adj = ADJECTIVES
+        .choose(&mut rng)
+        .expect("ADJECTIVES is non-empty");
+    let verb = VERBS.choose(&mut rng).expect("VERBS is non-empty");
+    let noun = NOUNS.choose(&mut rng).expect("NOUNS is non-empty");
     let suffix: u32 = rng.gen_range(1000..10000);
     format!("{}-{}-{}-{}", adj, verb, noun, suffix)
 }

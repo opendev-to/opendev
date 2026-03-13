@@ -39,6 +39,12 @@ pub struct TodoItem {
     pub title: String,
     /// Current status.
     pub status: TodoStatus,
+    /// Present continuous text for spinner display (e.g., "Running tests").
+    #[serde(default)]
+    pub active_form: String,
+    /// Completion notes / log entry.
+    #[serde(default)]
+    pub log: String,
     /// When the item was created.
     pub created_at: String,
     /// When the status last changed.
@@ -84,6 +90,8 @@ impl TodoManager {
                 id,
                 title,
                 status: TodoStatus::Pending,
+                active_form: String::new(),
+                log: String::new(),
                 created_at: now.clone(),
                 updated_at: now,
             },
@@ -92,18 +100,77 @@ impl TodoManager {
         id
     }
 
+    /// Add a new todo item with initial status and active_form. Returns its assigned ID.
+    pub fn add_with_status(
+        &mut self,
+        title: String,
+        status: TodoStatus,
+        active_form: String,
+    ) -> usize {
+        let now = Utc::now().to_rfc3339();
+        let id = self.next_id;
+        self.next_id += 1;
+        // If adding as InProgress, enforce single-active constraint
+        if status == TodoStatus::InProgress {
+            self.revert_other_doing(id);
+        }
+        self.todos.insert(
+            id,
+            TodoItem {
+                id,
+                title,
+                status,
+                active_form,
+                log: String::new(),
+                created_at: now.clone(),
+                updated_at: now,
+            },
+        );
+        debug!(id, "Added todo with status");
+        id
+    }
+
+    /// Replace the entire todo list with new items. Resets IDs starting from 1.
+    pub fn write_todos(&mut self, items: Vec<(String, TodoStatus, String)>) {
+        self.todos.clear();
+        self.next_id = 1;
+        for (title, status, active_form) in items {
+            self.add_with_status(title, status, active_form);
+        }
+    }
+
     /// Update the status of a todo item by ID.
+    ///
+    /// Enforces single "doing" constraint: when setting InProgress,
+    /// auto-reverts other "doing" items to Pending.
     ///
     /// Returns `true` if the item was found and updated.
     pub fn set_status(&mut self, id: usize, status: TodoStatus) -> bool {
+        if !self.todos.contains_key(&id) {
+            warn!(id, "Todo not found");
+            return false;
+        }
+        // Enforce single-active constraint
+        if status == TodoStatus::InProgress {
+            self.revert_other_doing(id);
+        }
         if let Some(item) = self.todos.get_mut(&id) {
             item.status = status;
             item.updated_at = Utc::now().to_rfc3339();
             debug!(id, %status, "Updated todo status");
-            true
-        } else {
-            warn!(id, "Todo not found");
-            false
+        }
+        true
+    }
+
+    /// Revert all "doing" items (except `except_id`) back to Pending.
+    fn revert_other_doing(&mut self, except_id: usize) {
+        let now = Utc::now().to_rfc3339();
+        for item in self.todos.values_mut() {
+            if item.id != except_id && item.status == TodoStatus::InProgress {
+                item.status = TodoStatus::Pending;
+                item.updated_at = now.clone();
+                debug!(id = item.id, "Reverted doing→pending (single-active)");
+            }
         }
     }
 
@@ -125,6 +192,11 @@ impl TodoManager {
     /// Get all todo items in order.
     pub fn all(&self) -> Vec<&TodoItem> {
         self.todos.values().collect()
+    }
+
+    /// Get mutable access to the internal map (for title updates etc.).
+    pub fn todos_mut(&mut self) -> &mut BTreeMap<usize, TodoItem> {
+        &mut self.todos
     }
 
     /// Check if there are any todos.
@@ -217,6 +289,125 @@ impl TodoManager {
         self.todos.clear();
         self.next_id = 1;
     }
+
+    /// Fuzzy-find a todo by ID string.
+    ///
+    /// Supports formats: `"todo-3"`, `"3"`, `"todo_3"`, exact title match,
+    /// or partial title match.
+    pub fn find_todo(&self, id_str: &str) -> Option<(usize, &TodoItem)> {
+        let id_str = id_str.trim();
+
+        // Try "todo-N" format
+        if let Some(n) = id_str.strip_prefix("todo-")
+            && let Ok(id) = n.parse::<usize>()
+            && let Some(item) = self.todos.get(&id)
+        {
+            return Some((id, item));
+        }
+
+        // Try "todo_N" format
+        if let Some(n) = id_str.strip_prefix("todo_")
+            && let Ok(id) = n.parse::<usize>()
+            && let Some(item) = self.todos.get(&id)
+        {
+            return Some((id, item));
+        }
+
+        // Try plain numeric
+        if let Ok(id) = id_str.parse::<usize>()
+            && let Some(item) = self.todos.get(&id)
+        {
+            return Some((id, item));
+        }
+
+        // Try exact title match (case-insensitive)
+        let lower = id_str.to_lowercase();
+        for item in self.todos.values() {
+            if item.title.to_lowercase() == lower {
+                return Some((item.id, item));
+            }
+        }
+
+        // Try partial title match
+        for item in self.todos.values() {
+            if item.title.to_lowercase().contains(&lower) {
+                return Some((item.id, item));
+            }
+        }
+
+        None
+    }
+
+    /// Get the `active_form` of the currently "doing" item, if any.
+    pub fn get_active_todo_message(&self) -> Option<String> {
+        self.todos
+            .values()
+            .find(|t| t.status == TodoStatus::InProgress)
+            .and_then(|t| {
+                if t.active_form.is_empty() {
+                    None
+                } else {
+                    Some(t.active_form.clone())
+                }
+            })
+    }
+
+    /// Whether there are any non-completed todos.
+    pub fn has_incomplete_todos(&self) -> bool {
+        self.todos
+            .values()
+            .any(|t| t.status != TodoStatus::Completed)
+    }
+
+    /// Format the todo list sorted by status: doing → todo → done.
+    pub fn format_status_sorted(&self) -> String {
+        if self.todos.is_empty() {
+            return "No todos.".to_string();
+        }
+
+        let done = self.completed_count();
+        let total = self.total();
+        let mut out = format!("Todos ({done}/{total} done):\n");
+
+        let mut items: Vec<&TodoItem> = self.todos.values().collect();
+        items.sort_by_key(|i| match i.status {
+            TodoStatus::InProgress => 0,
+            TodoStatus::Pending => 1,
+            TodoStatus::Completed => 2,
+        });
+
+        for item in items {
+            out.push_str(&format!(
+                "  [{}] {}. {}\n",
+                item.status, item.id, item.title
+            ));
+        }
+
+        out
+    }
+}
+
+/// Map status alias strings to `TodoStatus`.
+///
+/// Accepts: `pending`, `todo`, `in_progress`, `doing`, `in-progress`,
+/// `completed`, `done`, `complete`.
+pub fn parse_status(s: &str) -> Option<TodoStatus> {
+    match s.to_lowercase().trim() {
+        "pending" | "todo" => Some(TodoStatus::Pending),
+        "in_progress" | "doing" | "in-progress" | "in progress" => Some(TodoStatus::InProgress),
+        "completed" | "done" | "complete" => Some(TodoStatus::Completed),
+        _ => None,
+    }
+}
+
+/// Strip basic markdown formatting from text (bold, italic, code).
+pub fn strip_markdown(text: &str) -> String {
+    text.replace("**", "")
+        .replace("__", "")
+        .replace('*', "")
+        .replace('_', " ")
+        .replace('`', "")
+        .replace("~~", "")
 }
 
 /// Parse plan markdown content and extract numbered implementation steps.
@@ -500,5 +691,115 @@ Do some stuff.
         assert_eq!(TodoStatus::Pending.to_string(), "todo");
         assert_eq!(TodoStatus::InProgress.to_string(), "doing");
         assert_eq!(TodoStatus::Completed.to_string(), "done");
+    }
+
+    #[test]
+    fn test_find_todo_formats() {
+        let mgr = TodoManager::from_steps(&["Alpha".into(), "Beta".into(), "Gamma".into()]);
+
+        // Numeric
+        assert_eq!(mgr.find_todo("2").unwrap().0, 2);
+        // todo-N
+        assert_eq!(mgr.find_todo("todo-1").unwrap().0, 1);
+        // todo_N
+        assert_eq!(mgr.find_todo("todo_3").unwrap().0, 3);
+        // Exact title
+        assert_eq!(mgr.find_todo("Beta").unwrap().0, 2);
+        // Partial title
+        assert_eq!(mgr.find_todo("alph").unwrap().0, 1);
+        // Not found
+        assert!(mgr.find_todo("xyz").is_none());
+    }
+
+    #[test]
+    fn test_single_active_constraint() {
+        let mut mgr = TodoManager::from_steps(&["A".into(), "B".into(), "C".into()]);
+        mgr.start(1);
+        assert_eq!(mgr.get(1).unwrap().status, TodoStatus::InProgress);
+
+        // Starting another should revert the first
+        mgr.start(2);
+        assert_eq!(mgr.get(1).unwrap().status, TodoStatus::Pending);
+        assert_eq!(mgr.get(2).unwrap().status, TodoStatus::InProgress);
+    }
+
+    #[test]
+    fn test_add_with_status() {
+        let mut mgr = TodoManager::new();
+        let id = mgr.add_with_status(
+            "Test item".into(),
+            TodoStatus::InProgress,
+            "Testing...".into(),
+        );
+        assert_eq!(mgr.get(id).unwrap().status, TodoStatus::InProgress);
+        assert_eq!(mgr.get(id).unwrap().active_form, "Testing...");
+    }
+
+    #[test]
+    fn test_write_todos() {
+        let mut mgr = TodoManager::from_steps(&["Old".into()]);
+        mgr.write_todos(vec![
+            ("New A".into(), TodoStatus::Pending, String::new()),
+            (
+                "New B".into(),
+                TodoStatus::InProgress,
+                "Working on B".into(),
+            ),
+        ]);
+        assert_eq!(mgr.total(), 2);
+        assert_eq!(mgr.get(1).unwrap().title, "New A");
+        assert_eq!(mgr.get(2).unwrap().active_form, "Working on B");
+    }
+
+    #[test]
+    fn test_get_active_todo_message() {
+        let mut mgr = TodoManager::new();
+        mgr.add_with_status("Task".into(), TodoStatus::InProgress, "Doing task".into());
+        assert_eq!(
+            mgr.get_active_todo_message(),
+            Some("Doing task".to_string())
+        );
+    }
+
+    #[test]
+    fn test_has_incomplete_todos() {
+        let mut mgr = TodoManager::from_steps(&["A".into()]);
+        assert!(mgr.has_incomplete_todos());
+        mgr.complete(1);
+        assert!(!mgr.has_incomplete_todos());
+    }
+
+    #[test]
+    fn test_format_status_sorted() {
+        let mut mgr = TodoManager::from_steps(&["A".into(), "B".into(), "C".into()]);
+        mgr.start(2);
+        mgr.complete(3);
+        let status = mgr.format_status_sorted();
+        // "doing" should appear before "todo" and "done"
+        let doing_pos = status.find("[doing]").unwrap();
+        let todo_pos = status.find("[todo]").unwrap();
+        let done_pos = status.find("[done]").unwrap();
+        assert!(doing_pos < todo_pos);
+        assert!(todo_pos < done_pos);
+    }
+
+    #[test]
+    fn test_parse_status() {
+        assert_eq!(parse_status("pending"), Some(TodoStatus::Pending));
+        assert_eq!(parse_status("todo"), Some(TodoStatus::Pending));
+        assert_eq!(parse_status("in_progress"), Some(TodoStatus::InProgress));
+        assert_eq!(parse_status("doing"), Some(TodoStatus::InProgress));
+        assert_eq!(parse_status("in-progress"), Some(TodoStatus::InProgress));
+        assert_eq!(parse_status("completed"), Some(TodoStatus::Completed));
+        assert_eq!(parse_status("done"), Some(TodoStatus::Completed));
+        assert_eq!(parse_status("complete"), Some(TodoStatus::Completed));
+        assert_eq!(parse_status("unknown"), None);
+    }
+
+    #[test]
+    fn test_strip_markdown() {
+        assert_eq!(strip_markdown("**bold** text"), "bold text");
+        assert_eq!(strip_markdown("`code`"), "code");
+        assert_eq!(strip_markdown("~~struck~~"), "struck");
     }
 }

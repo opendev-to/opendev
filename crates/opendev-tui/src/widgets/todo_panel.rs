@@ -1,7 +1,8 @@
 //! Todo progress panel widget.
 //!
 //! Displays a compact panel showing plan execution progress with
-//! a progress bar and per-item status indicators.
+//! a progress bar and per-item status indicators. Supports both
+//! expanded (full list) and collapsed (single-line spinner) modes.
 //!
 //! Mirrors Python's `TaskProgressDisplay` from
 //! `opendev/ui_textual/components/task_progress.py`.
@@ -14,6 +15,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
 };
+
+/// Spinner frames for the collapsed active-todo display.
+const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Status of a single todo item for display purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,25 +33,30 @@ pub struct TodoDisplayItem {
     pub id: usize,
     pub title: String,
     pub status: TodoDisplayStatus,
+    /// Present continuous text for spinner (e.g., "Running tests").
+    pub active_form: Option<String>,
 }
 
 /// Widget that renders a todo progress panel.
 ///
 /// Shows:
-/// - A title with progress count (e.g. "Plan Progress (2/5)")
-/// - A visual progress bar
-/// - Each todo with a status indicator
+/// - Expanded: A title with progress count, progress bar, and each todo with status
+/// - Collapsed: A single line with spinner showing the active todo's `active_form`
 pub struct TodoPanelWidget<'a> {
     items: &'a [TodoDisplayItem],
     plan_name: Option<&'a str>,
+    expanded: bool,
+    spinner_tick: usize,
 }
 
 impl<'a> TodoPanelWidget<'a> {
-    /// Create a new todo panel widget.
+    /// Create a new todo panel widget (expanded by default).
     pub fn new(items: &'a [TodoDisplayItem]) -> Self {
         Self {
             items,
             plan_name: None,
+            expanded: true,
+            spinner_tick: 0,
         }
     }
 
@@ -55,6 +64,28 @@ impl<'a> TodoPanelWidget<'a> {
     pub fn with_plan_name(mut self, name: &'a str) -> Self {
         self.plan_name = Some(name);
         self
+    }
+
+    /// Set expanded/collapsed state.
+    pub fn with_expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
+        self
+    }
+
+    /// Set the spinner tick for animation.
+    pub fn with_spinner_tick(mut self, tick: usize) -> Self {
+        self.spinner_tick = tick;
+        self
+    }
+
+    /// Get the required height for this widget.
+    pub fn required_height(&self) -> u16 {
+        if !self.expanded {
+            // Collapsed: border top + 1 line + border bottom
+            return 3;
+        }
+        // Expanded: 2 borders + 1 progress bar + items (capped at 10)
+        (self.items.len() as u16 + 3).min(12)
     }
 
     fn build_lines(&self) -> Vec<Line<'a>> {
@@ -147,6 +178,47 @@ impl<'a> TodoPanelWidget<'a> {
 
         lines
     }
+
+    fn build_collapsed_line(&self) -> Line<'a> {
+        let spinner = SPINNER_FRAMES[self.spinner_tick % SPINNER_FRAMES.len()];
+
+        // Find the active (doing) item
+        let active_text = self
+            .items
+            .iter()
+            .find(|i| i.status == TodoDisplayStatus::InProgress)
+            .and_then(|i| {
+                i.active_form
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .or(Some(i.title.as_str()))
+            })
+            .unwrap_or("Working...");
+
+        let done = self
+            .items
+            .iter()
+            .filter(|i| i.status == TodoDisplayStatus::Completed)
+            .count();
+        let total = self.items.len();
+
+        Line::from(vec![
+            Span::styled(
+                format!(" {spinner} "),
+                Style::default()
+                    .fg(style_tokens::WARNING)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                active_text.to_string(),
+                Style::default().fg(style_tokens::WARNING),
+            ),
+            Span::styled(
+                format!("  ({done}/{total})"),
+                Style::default().fg(style_tokens::GREY),
+            ),
+        ])
+    }
 }
 
 impl Widget for TodoPanelWidget<'_> {
@@ -158,10 +230,14 @@ impl Widget for TodoPanelWidget<'_> {
             .filter(|i| i.status == TodoDisplayStatus::Completed)
             .count();
 
-        let title = if let Some(name) = self.plan_name {
-            format!(" Plan: {name} ({done}/{total}) ")
+        let title = if self.expanded {
+            if let Some(name) = self.plan_name {
+                format!(" TODOS: {name} ({done}/{total}) ")
+            } else {
+                format!(" TODOS ({done}/{total}) ")
+            }
         } else {
-            format!(" Plan Progress ({done}/{total}) ")
+            format!(" TODOS ({done}/{total}) ")
         };
 
         let border_color = if done == total && total > 0 {
@@ -175,9 +251,15 @@ impl Widget for TodoPanelWidget<'_> {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
 
-        let lines = self.build_lines();
-        let paragraph = Paragraph::new(lines).block(block);
-        paragraph.render(area, buf);
+        if self.expanded {
+            let lines = self.build_lines();
+            let paragraph = Paragraph::new(lines).block(block);
+            paragraph.render(area, buf);
+        } else {
+            let line = self.build_collapsed_line();
+            let paragraph = Paragraph::new(vec![line]).block(block);
+            paragraph.render(area, buf);
+        }
     }
 }
 
@@ -191,16 +273,19 @@ mod tests {
                 id: 1,
                 title: "Set up project".into(),
                 status: TodoDisplayStatus::Completed,
+                active_form: None,
             },
             TodoDisplayItem {
                 id: 2,
                 title: "Write code".into(),
                 status: TodoDisplayStatus::InProgress,
+                active_form: Some("Writing code".into()),
             },
             TodoDisplayItem {
                 id: 3,
                 title: "Write tests".into(),
                 status: TodoDisplayStatus::Pending,
+                active_form: None,
             },
         ]
     }
@@ -237,11 +322,13 @@ mod tests {
                 id: 1,
                 title: "Done".into(),
                 status: TodoDisplayStatus::Completed,
+                active_form: None,
             },
             TodoDisplayItem {
                 id: 2,
                 title: "Also done".into(),
                 status: TodoDisplayStatus::Completed,
+                active_form: None,
             },
         ];
         // Just verify no panic with all completed
@@ -256,10 +343,46 @@ mod tests {
             id: 1,
             title: "A".repeat(100),
             status: TodoDisplayStatus::Pending,
+            active_form: None,
         }];
         let widget = TodoPanelWidget::new(&items);
         let lines = widget.build_lines();
         // Progress bar + 1 item
         assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn test_collapsed_render() {
+        let items = make_items();
+        let widget = TodoPanelWidget::new(&items)
+            .with_expanded(false)
+            .with_spinner_tick(3);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 60, 3));
+        widget.render(Rect::new(0, 0, 60, 3), &mut buf);
+    }
+
+    #[test]
+    fn test_collapsed_uses_active_form() {
+        let items = make_items();
+        let widget = TodoPanelWidget::new(&items).with_expanded(false);
+        let line = widget.build_collapsed_line();
+        // Should contain the active_form text "Writing code"
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("Writing code"));
+    }
+
+    #[test]
+    fn test_required_height_expanded() {
+        let items = make_items();
+        let widget = TodoPanelWidget::new(&items);
+        // 3 items + progress bar + 2 borders = 6
+        assert_eq!(widget.required_height(), 6);
+    }
+
+    #[test]
+    fn test_required_height_collapsed() {
+        let items = make_items();
+        let widget = TodoPanelWidget::new(&items).with_expanded(false);
+        assert_eq!(widget.required_height(), 3);
     }
 }

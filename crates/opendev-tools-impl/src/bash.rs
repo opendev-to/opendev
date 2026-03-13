@@ -334,12 +334,21 @@ impl BashTool {
         command: &str,
         working_dir: &std::path::Path,
         timeout_secs: u64,
+        timeout_config: Option<&opendev_tools_core::ToolTimeoutConfig>,
     ) -> ToolResult {
         let exec_command = prepare_command(command);
 
+        // Use context-provided timeout config or fall back to defaults
+        let base_idle = timeout_config
+            .map(|c| Duration::from_secs(c.idle_timeout_secs))
+            .unwrap_or(IDLE_TIMEOUT);
+        let base_max = timeout_config
+            .map(|c| Duration::from_secs(c.max_timeout_secs))
+            .unwrap_or(MAX_TIMEOUT);
+
         // Caller timeout caps both idle and absolute timeouts
-        let idle_timeout = IDLE_TIMEOUT.min(Duration::from_secs(timeout_secs));
-        let max_timeout = MAX_TIMEOUT.min(Duration::from_secs(timeout_secs));
+        let idle_timeout = base_idle.min(Duration::from_secs(timeout_secs));
+        let max_timeout = base_max.min(Duration::from_secs(timeout_secs));
 
         // Spawn with new process group
         let mut cmd = Command::new("sh");
@@ -479,6 +488,7 @@ impl BashTool {
                         output: Some(display_output),
                         error: Some(format!("Command exited with code {exit_code}")),
                         metadata,
+                        duration_ms: None,
                     }
                 }
             }
@@ -504,6 +514,7 @@ impl BashTool {
                     },
                     error: Some(timeout_msg),
                     metadata,
+                    duration_ms: None,
                 }
             }
         }
@@ -607,6 +618,7 @@ impl BashTool {
                             output: Some(combined),
                             error: Some(format!("Command exited with code {exit_code}")),
                             metadata,
+                            duration_ms: None,
                         };
                     }
                 }
@@ -741,11 +753,16 @@ impl BaseTool for BashTool {
             None => return ToolResult::fail("command is required"),
         };
 
+        let max_allowed = ctx
+            .timeout_config
+            .as_ref()
+            .map(|c| c.max_timeout_secs)
+            .unwrap_or(MAX_TIMEOUT.as_secs());
         let timeout_secs = args
             .get("timeout")
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_TIMEOUT_SECS)
-            .min(600);
+            .min(max_allowed);
 
         // Security check
         if is_dangerous(command) {
@@ -766,8 +783,13 @@ impl BaseTool for BashTool {
         if run_in_background {
             self.run_background(command, &working_dir).await
         } else {
-            self.run_foreground(command, &working_dir, timeout_secs)
-                .await
+            self.run_foreground(
+                command,
+                &working_dir,
+                timeout_secs,
+                ctx.timeout_config.as_ref(),
+            )
+            .await
         }
     }
 }

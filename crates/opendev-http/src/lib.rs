@@ -9,6 +9,7 @@
 pub mod adapted_client;
 pub mod adapters;
 pub mod auth;
+pub mod circuit_breaker;
 pub mod client;
 pub mod models;
 pub mod rotation;
@@ -16,6 +17,7 @@ pub mod user_store;
 
 pub use adapted_client::AdaptedClient;
 pub use auth::CredentialStore;
+pub use circuit_breaker::CircuitBreaker;
 pub use client::HttpClient;
 pub use models::{HttpError, HttpResult, RetryConfig};
 pub use rotation::AuthProfileManager;

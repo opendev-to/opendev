@@ -230,8 +230,67 @@ fn save_global_mcp_config(config: &opendev_mcp::McpConfig) {
     }
 }
 
+/// Install a custom panic hook that writes crash reports to `~/.opendev/crash/`.
+fn install_panic_handler() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Capture backtrace
+        let backtrace = std::backtrace::Backtrace::force_capture();
+
+        // Build crash report
+        let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+        let mut report = String::new();
+        report.push_str("OpenDev Crash Report\n");
+        report.push_str(&format!("Timestamp: {}\n", chrono::Utc::now()));
+        report.push_str(&format!("Version: {}\n\n", env!("CARGO_PKG_VERSION")));
+
+        // Panic message
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic payload".to_string()
+        };
+        report.push_str(&format!("Panic: {}\n", message));
+
+        if let Some(location) = panic_info.location() {
+            report.push_str(&format!(
+                "Location: {}:{}:{}\n",
+                location.file(),
+                location.line(),
+                location.column()
+            ));
+        }
+
+        report.push_str(&format!("\nBacktrace:\n{}\n", backtrace));
+
+        // Write crash report to ~/.opendev/crash/
+        if let Some(home) = dirs_next::home_dir() {
+            let crash_dir = home.join(".opendev").join("crash");
+            if let Ok(()) = std::fs::create_dir_all(&crash_dir) {
+                let filename = format!("crash-{}.log", timestamp);
+                let crash_path = crash_dir.join(&filename);
+                if std::fs::write(&crash_path, &report).is_ok() {
+                    eprintln!(
+                        "\nOpenDev crashed unexpectedly. A crash report has been saved to:\n  {}\n\nPlease include this file when reporting the issue.\n",
+                        crash_path.display()
+                    );
+                } else {
+                    eprintln!("\nOpenDev crashed unexpectedly. Failed to write crash report.\n");
+                }
+            }
+        }
+
+        // Call the default panic handler
+        default_hook(panic_info);
+    }));
+}
+
 #[tokio::main]
 async fn main() {
+    install_panic_handler();
+
     let cli = Cli::parse();
 
     // Determine if we'll be running in TUI mode (interactive without -p)

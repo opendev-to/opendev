@@ -7,6 +7,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Default maximum number of entries in the embedding cache.
+const DEFAULT_MAX_ENTRIES: usize = 10_000;
+
 /// Metadata for a cached embedding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingMetadata {

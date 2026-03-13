@@ -11,6 +11,7 @@ use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tracing::{debug, warn};
 
 /// Action to take when a rule matches.
@@ -54,6 +55,11 @@ pub struct ApprovalRule {
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified_at: Option<String>,
+
+    /// Compiled regex pattern, lazily initialized on first match.
+    /// Skipped during serialization; rebuilt on demand via `OnceLock`.
+    #[serde(skip)]
+    compiled_regex: OnceLock<Option<Regex>>,
 }
 
 fn default_true() -> bool {
@@ -61,13 +67,58 @@ fn default_true() -> bool {
 }
 
 impl ApprovalRule {
+    /// Create a new approval rule.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: String,
+        name: String,
+        description: String,
+        rule_type: RuleType,
+        pattern: String,
+        action: RuleAction,
+        enabled: bool,
+        priority: i32,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            description,
+            rule_type,
+            pattern,
+            action,
+            enabled,
+            priority,
+            created_at: None,
+            modified_at: None,
+            compiled_regex: OnceLock::new(),
+        }
+    }
+
+    /// Get the compiled regex, initializing it on first access.
+    /// Returns `None` for non-regex rule types or invalid patterns.
+    fn get_compiled_regex(&self) -> Option<&Regex> {
+        if !matches!(self.rule_type, RuleType::Pattern | RuleType::Danger) {
+            return None;
+        }
+        self.compiled_regex
+            .get_or_init(|| match Regex::new(&self.pattern) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    warn!("Invalid regex pattern '{}': {}", self.pattern, e);
+                    None
+                }
+            })
+            .as_ref()
+    }
+
     /// Check whether this rule matches the given command string.
     pub fn matches(&self, command: &str) -> bool {
         if !self.enabled {
             return false;
         }
         match self.rule_type {
-            RuleType::Pattern | RuleType::Danger => Regex::new(&self.pattern)
+            RuleType::Pattern | RuleType::Danger => self
+                .get_compiled_regex()
                 .map(|re| re.is_match(command))
                 .unwrap_or(false),
             RuleType::Command => command == self.pattern,
@@ -161,6 +212,7 @@ impl ApprovalRulesManager {
             priority: 100,
             created_at: Some(now.clone()),
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         });
         self.rules.push(ApprovalRule {
             id: "default_danger_chmod".to_string(),
@@ -173,6 +225,7 @@ impl ApprovalRulesManager {
             priority: 100,
             created_at: Some(now),
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         });
     }
 
@@ -431,9 +484,12 @@ mod tests {
             priority: 0,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         };
         assert!(rule.matches("rm -rf /tmp"));
         assert!(!rule.matches("ls -la"));
+        // Verify regex was cached after first match
+        assert!(rule.compiled_regex.get().is_some());
     }
 
     #[test]
@@ -449,6 +505,7 @@ mod tests {
             priority: 0,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         };
         assert!(rule.matches("deploy"));
         assert!(!rule.matches("deploy --force"));
@@ -467,6 +524,7 @@ mod tests {
             priority: 0,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         };
         assert!(rule.matches("git push"));
         assert!(rule.matches("git push --force"));
@@ -488,6 +546,7 @@ mod tests {
             priority: 0,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         };
         assert!(!rule.matches("anything"));
     }
@@ -505,6 +564,7 @@ mod tests {
             priority: 0,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         };
         assert!(!rule.matches("anything"));
     }
@@ -531,6 +591,7 @@ mod tests {
             priority: 1,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         });
         mgr.add_rule(ApprovalRule {
             id: "high".into(),
@@ -543,6 +604,7 @@ mod tests {
             priority: 50,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         });
         // The default danger rule has priority 100, should win
         let matched = mgr.evaluate_command("rm -rf /");
@@ -565,6 +627,7 @@ mod tests {
             priority: 0,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         });
         assert_eq!(mgr.rules().len(), initial + 1);
         assert!(mgr.remove_rule("custom"));
@@ -586,6 +649,7 @@ mod tests {
             priority: 0,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         });
         assert!(mgr.update_rule("updatable", |r| {
             r.name = "new name".into();
@@ -630,6 +694,7 @@ mod tests {
                     priority: 10,
                     created_at: None,
                     modified_at: None,
+                    compiled_regex: OnceLock::new(),
                 },
                 RuleScope::Project,
             );
@@ -658,6 +723,7 @@ mod tests {
                 priority: 0,
                 created_at: None,
                 modified_at: None,
+                compiled_regex: OnceLock::new(),
             },
             RuleScope::Project,
         );
@@ -681,6 +747,7 @@ mod tests {
             priority: 0,
             created_at: None,
             modified_at: None,
+            compiled_regex: OnceLock::new(),
         });
         let listing = mgr.list_persistent_rules();
         assert_eq!(listing.len(), 1);

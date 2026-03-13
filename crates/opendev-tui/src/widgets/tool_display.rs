@@ -48,8 +48,8 @@ impl Widget for ToolDisplayWidget<'_> {
             let name_color = tool_color(category);
 
             // Spinner / status indicator
-            let (spinner_str, spinner_color) = if tool.finished {
-                if tool.success {
+            let (spinner_str, spinner_color) = if tool.is_finished() {
+                if tool.is_success() {
                     (COMPLETED_CHAR.to_string(), style_tokens::SUCCESS)
                 } else {
                     (COMPLETED_CHAR.to_string(), style_tokens::ERROR)
@@ -113,6 +113,7 @@ impl Widget for ToolDisplayWidget<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::ToolState;
     use std::time::Instant;
 
     #[test]
@@ -127,8 +128,7 @@ mod tests {
             id: "t1".into(),
             name: "bash".into(),
             output_lines: vec!["file1.rs".into(), "file2.rs".into()],
-            finished: false,
-            success: false,
+            state: ToolState::Running,
             elapsed_secs: 3,
             started_at: Instant::now(),
             tick_count: 0,
@@ -146,8 +146,7 @@ mod tests {
                 id: "t1".into(),
                 name: "spawn_subagent".into(),
                 output_lines: vec![],
-                finished: false,
-                success: false,
+                state: ToolState::Running,
                 elapsed_secs: 5,
                 started_at: Instant::now(),
                 tick_count: 0,
@@ -159,8 +158,7 @@ mod tests {
                 id: "t2".into(),
                 name: "read_file".into(),
                 output_lines: vec!["reading...".into()],
-                finished: false,
-                success: false,
+                state: ToolState::Running,
                 elapsed_secs: 2,
                 started_at: Instant::now(),
                 tick_count: 0,

@@ -10,5 +10,5 @@ pub mod models_dev;
 pub mod paths;
 
 pub use loader::ConfigLoader;
-pub use models_dev::{ModelInfo, ModelRegistry, ProviderInfo};
+pub use models_dev::{ModelInfo, ModelRegistry, ProviderInfo, sync_provider_cache_async};
 pub use paths::Paths;

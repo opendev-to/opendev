@@ -24,7 +24,7 @@ pub struct LlmCallConfig {
 ///
 /// Uses composition instead of Python's mixin pattern. Holds a `ResponseCleaner`
 /// and call configuration, producing structured `LlmResponse` values.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LlmCaller {
     cleaner: ResponseCleaner,
     /// Primary model config.

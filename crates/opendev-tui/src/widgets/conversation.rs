@@ -748,4 +748,233 @@ mod tests {
             );
         }
     }
+
+    // ---------------------------------------------------------------
+    // TUI snapshot tests using TestBackend
+    // ---------------------------------------------------------------
+
+    /// Extract visible text from a ratatui Buffer, row by row.
+    fn buffer_text(buf: &ratatui::buffer::Buffer, area: Rect) -> Vec<String> {
+        let mut rows = Vec::new();
+        for y in area.y..area.bottom() {
+            let mut row = String::new();
+            for x in area.x..area.right() {
+                row.push_str(buf[(x, y)].symbol());
+            }
+            rows.push(row.trim_end().to_string());
+        }
+        rows
+    }
+
+    #[test]
+    fn test_snapshot_empty_conversation() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let msgs: Vec<DisplayMessage> = vec![];
+
+        terminal
+            .draw(|frame| {
+                let widget = ConversationWidget::new(&msgs, 0);
+                frame.render_widget(widget, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = buffer_text(&buf, Rect::new(0, 0, 80, 24));
+        // Empty conversation renders nothing — all rows should be blank
+        for row in &rows {
+            assert!(
+                row.trim().is_empty(),
+                "Expected blank row for empty conversation, got: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_snapshot_single_user_message() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "What is Rust?".into(),
+            tool_call: None,
+        }];
+
+        terminal
+            .draw(|frame| {
+                let widget = ConversationWidget::new(&msgs, 0);
+                frame.render_widget(widget, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = buffer_text(&buf, Rect::new(0, 0, 80, 24));
+        // First row should contain the user prompt marker and message
+        assert!(
+            rows[0].contains(">") && rows[0].contains("What is Rust?"),
+            "First row should show user message, got: {:?}",
+            rows[0]
+        );
+    }
+
+    #[test]
+    fn test_snapshot_multi_message_with_tool_call() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let msgs = vec![
+            DisplayMessage {
+                role: DisplayRole::User,
+                content: "List files".into(),
+                tool_call: None,
+            },
+            DisplayMessage {
+                role: DisplayRole::Assistant,
+                content: "I'll list the files.".into(),
+                tool_call: Some(DisplayToolCall {
+                    name: "bash".into(),
+                    arguments: std::collections::HashMap::new(),
+                    summary: Some("ls -la".into()),
+                    success: true,
+                    collapsed: false,
+                    result_lines: vec!["main.rs".into(), "lib.rs".into()],
+                    nested_calls: vec![],
+                }),
+            },
+            DisplayMessage {
+                role: DisplayRole::Assistant,
+                content: "Here are the files.".into(),
+                tool_call: None,
+            },
+        ];
+
+        terminal
+            .draw(|frame| {
+                let widget = ConversationWidget::new(&msgs, 0);
+                frame.render_widget(widget, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let all_text: String = buffer_text(&buf, Rect::new(0, 0, 80, 24)).join("\n");
+
+        // Verify key content appears in the rendered output
+        assert!(all_text.contains("List files"), "Missing user message");
+        assert!(
+            all_text.contains("list the files"),
+            "Missing assistant content"
+        );
+        assert!(
+            all_text.contains("main.rs"),
+            "Missing tool result line 'main.rs'"
+        );
+        assert!(
+            all_text.contains("lib.rs"),
+            "Missing tool result line 'lib.rs'"
+        );
+        assert!(
+            all_text.contains("Here are the files"),
+            "Missing second assistant message"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_thinking_block() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let msgs = vec![
+            DisplayMessage {
+                role: DisplayRole::User,
+                content: "Explain closures".into(),
+                tool_call: None,
+            },
+            DisplayMessage {
+                role: DisplayRole::Thinking,
+                content: "Let me think about closures in Rust...".into(),
+                tool_call: None,
+            },
+            DisplayMessage {
+                role: DisplayRole::Assistant,
+                content: "Closures capture variables from their scope.".into(),
+                tool_call: None,
+            },
+        ];
+
+        terminal
+            .draw(|frame| {
+                let widget = ConversationWidget::new(&msgs, 0);
+                frame.render_widget(widget, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let all_text: String = buffer_text(&buf, Rect::new(0, 0, 80, 24)).join("\n");
+
+        assert!(
+            all_text.contains("Explain closures"),
+            "Missing user message"
+        );
+        assert!(
+            all_text.contains("think about closures"),
+            "Missing thinking content"
+        );
+        assert!(
+            all_text.contains("capture variables"),
+            "Missing assistant response"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_scroll_indicator() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // Create many messages to force scrolling in a small terminal
+        let msgs: Vec<DisplayMessage> = (0..50)
+            .map(|i| DisplayMessage {
+                role: if i % 2 == 0 {
+                    DisplayRole::User
+                } else {
+                    DisplayRole::Assistant
+                },
+                content: format!("Message number {i} with enough text to occupy a line"),
+                tool_call: None,
+            })
+            .collect();
+
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Render with scroll offset > 0
+        terminal
+            .draw(|frame| {
+                let widget = ConversationWidget::new(&msgs, 5);
+                frame.render_widget(widget, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let first_row: String = (0..80u16)
+            .map(|x| buf[(x, 0)].symbol().to_string())
+            .collect();
+
+        // When scrolled up, the first row should contain the scroll percentage indicator
+        assert!(
+            first_row.contains('%'),
+            "Expected scroll indicator with % on first row when scrolled, got: {first_row:?}"
+        );
+    }
 }

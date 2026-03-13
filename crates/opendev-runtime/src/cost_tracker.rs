@@ -62,6 +62,11 @@ pub struct CostTracker {
     pub total_output_tokens: u64,
     pub total_cost_usd: f64,
     pub call_count: u64,
+    /// Optional session cost budget in USD. When set, the agent loop should
+    /// check [`is_over_budget`](CostTracker::is_over_budget) and pause when
+    /// the budget is exhausted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_usd: Option<f64>,
 }
 
 /// Anthropic charges higher rates for prompts over 200K tokens.
@@ -78,7 +83,33 @@ impl CostTracker {
             total_output_tokens: 0,
             total_cost_usd: 0.0,
             call_count: 0,
+            budget_usd: None,
         }
+    }
+
+    /// Set a cost budget in USD for the session.
+    ///
+    /// Once [`total_cost_usd`](CostTracker::total_cost_usd) reaches or
+    /// exceeds this value, [`is_over_budget`](CostTracker::is_over_budget)
+    /// returns `true` and the agent loop should pause.
+    pub fn set_budget(&mut self, usd: f64) {
+        self.budget_usd = Some(usd);
+    }
+
+    /// Check whether the session has exceeded its cost budget.
+    ///
+    /// Returns `false` when no budget has been set.
+    pub fn is_over_budget(&self) -> bool {
+        match self.budget_usd {
+            Some(budget) => self.total_cost_usd >= budget,
+            None => false,
+        }
+    }
+
+    /// Return the remaining budget in USD, or `None` if no budget is set.
+    pub fn remaining_budget(&self) -> Option<f64> {
+        self.budget_usd
+            .map(|budget| (budget - self.total_cost_usd).max(0.0))
     }
 
     /// Record token usage from a single LLM call.
@@ -375,5 +406,200 @@ mod tests {
     fn test_round_f64() {
         assert_eq!(round_f64(1.23456789, 6), 1.234568);
         assert_eq!(round_f64(0.0, 2), 0.0);
+    }
+
+    // ---------------------------------------------------------------
+    // Cost tracker accuracy tests
+    // ---------------------------------------------------------------
+
+    /// Anthropic Claude 3.5 Sonnet pricing: $3/1M input, $15/1M output.
+    fn anthropic_sonnet_pricing() -> PricingInfo {
+        PricingInfo {
+            input_price_per_million: 3.0,
+            output_price_per_million: 15.0,
+        }
+    }
+
+    /// OpenAI GPT-4o pricing: $2.50/1M input, $10/1M output.
+    fn openai_gpt4o_pricing() -> PricingInfo {
+        PricingInfo {
+            input_price_per_million: 2.50,
+            output_price_per_million: 10.0,
+        }
+    }
+
+    #[test]
+    fn test_anthropic_cache_discount_accuracy() {
+        // Simulate a typical Anthropic call with prompt caching:
+        // 10K prompt tokens (fresh), 50K cached reads, 1K output tokens
+        let mut tracker = CostTracker::new();
+        let usage = TokenUsage {
+            prompt_tokens: 10_000,
+            completion_tokens: 1_000,
+            cache_read_input_tokens: 50_000,
+            cache_creation_input_tokens: 0,
+        };
+        let cost = tracker.record_usage(&usage, Some(&anthropic_sonnet_pricing()));
+
+        // Fresh input: 10_000 / 1M * $3 = $0.03
+        // Cached input: 50_000 / 1M * ($3 * 0.1) = 50_000 / 1M * $0.30 = $0.015
+        // Output: 1_000 / 1M * $15 = $0.015
+        let expected = 0.03 + 0.015 + 0.015;
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "Anthropic cache cost mismatch: got {cost}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn test_over_200k_tier_multiplier() {
+        // Verify the 1.5x multiplier kicks in exactly at the 200K boundary.
+        let mut tracker = CostTracker::new();
+        let pricing = anthropic_sonnet_pricing();
+
+        // Exactly at threshold: should NOT trigger multiplier
+        let at_threshold = TokenUsage {
+            prompt_tokens: 200_000,
+            completion_tokens: 0,
+            ..Default::default()
+        };
+        let cost_at = tracker.record_usage(&at_threshold, Some(&pricing));
+        let expected_at = 200_000.0 / 1_000_000.0 * 3.0; // $0.60
+        assert!(
+            (cost_at - expected_at).abs() < 1e-9,
+            "At 200K: got {cost_at}, expected {expected_at}"
+        );
+
+        // 1 token over threshold: multiplier applies to that 1 token
+        let mut tracker2 = CostTracker::new();
+        let over_threshold = TokenUsage {
+            prompt_tokens: 200_001,
+            completion_tokens: 0,
+            ..Default::default()
+        };
+        let cost_over = tracker2.record_usage(&over_threshold, Some(&pricing));
+        let expected_over = 0.60 + (1.0 / 1_000_000.0 * 3.0 * 1.5);
+        assert!(
+            (cost_over - expected_over).abs() < 1e-9,
+            "At 200_001: got {cost_over}, expected {expected_over}"
+        );
+    }
+
+    #[test]
+    fn test_openai_pricing_accuracy() {
+        let mut tracker = CostTracker::new();
+        let pricing = openai_gpt4o_pricing();
+
+        // Typical GPT-4o call: 5K input, 2K output
+        let usage = TokenUsage {
+            prompt_tokens: 5_000,
+            completion_tokens: 2_000,
+            // OpenAI has no cache tokens
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+        };
+        let cost = tracker.record_usage(&usage, Some(&pricing));
+
+        // Input: 5_000 / 1M * $2.50 = $0.0125
+        // Output: 2_000 / 1M * $10 = $0.02
+        let expected = 0.0125 + 0.02;
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "OpenAI cost mismatch: got {cost}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn test_cost_sum_across_multiple_calls() {
+        // Verify cumulative cost accuracy across 5 heterogeneous calls
+        let mut tracker = CostTracker::new();
+        let pricing = anthropic_sonnet_pricing();
+
+        let calls = vec![
+            TokenUsage {
+                prompt_tokens: 1_000,
+                completion_tokens: 500,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            },
+            TokenUsage {
+                prompt_tokens: 10_000,
+                completion_tokens: 2_000,
+                cache_read_input_tokens: 30_000,
+                cache_creation_input_tokens: 0,
+            },
+            TokenUsage {
+                prompt_tokens: 50_000,
+                completion_tokens: 5_000,
+                cache_read_input_tokens: 100_000,
+                cache_creation_input_tokens: 0,
+            },
+            TokenUsage {
+                prompt_tokens: 250_000, // triggers tiered pricing
+                completion_tokens: 3_000,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            },
+            TokenUsage {
+                prompt_tokens: 500,
+                completion_tokens: 100,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            },
+        ];
+
+        let mut sum = 0.0;
+        for usage in &calls {
+            let incremental = tracker.record_usage(usage, Some(&pricing));
+            sum += incremental;
+        }
+
+        // Verify total_cost_usd matches the sum of incremental costs
+        assert!(
+            (tracker.total_cost_usd - sum).abs() < 1e-9,
+            "Cumulative cost {:.6} != sum of incremental costs {:.6}",
+            tracker.total_cost_usd,
+            sum
+        );
+
+        // Verify token totals
+        let expected_input: u64 = calls.iter().map(|u| u.prompt_tokens).sum();
+        let expected_output: u64 = calls.iter().map(|u| u.completion_tokens).sum();
+        assert_eq!(tracker.total_input_tokens, expected_input);
+        assert_eq!(tracker.total_output_tokens, expected_output);
+        assert_eq!(tracker.call_count, 5);
+
+        // Verify the total is within a reasonable range for the given token volumes
+        // Total input: 311,500 tokens, total output: 10,600 tokens, cache: 130,000 tokens
+        // The total cost should be positive and non-trivial
+        assert!(
+            tracker.total_cost_usd > 0.5,
+            "Total cost should be > $0.50 for this volume"
+        );
+        assert!(
+            tracker.total_cost_usd < 5.0,
+            "Total cost should be < $5.00 for this volume"
+        );
+    }
+
+    #[test]
+    fn test_zero_price_model() {
+        // Some local models have $0 pricing — cost should be zero
+        let mut tracker = CostTracker::new();
+        let pricing = PricingInfo {
+            input_price_per_million: 0.0,
+            output_price_per_million: 0.0,
+        };
+        let usage = TokenUsage {
+            prompt_tokens: 100_000,
+            completion_tokens: 50_000,
+            ..Default::default()
+        };
+        let cost = tracker.record_usage(&usage, Some(&pricing));
+        assert_eq!(cost, 0.0);
+        assert_eq!(tracker.total_cost_usd, 0.0);
+        // Token counts should still be tracked
+        assert_eq!(tracker.total_input_tokens, 100_000);
+        assert_eq!(tracker.total_output_tokens, 50_000);
     }
 }

@@ -146,17 +146,22 @@ fn verb_to_gerund(text: &str) -> String {
         return text.to_string();
     }
 
+    let last_char = verb.chars().last();
+    let second_last = verb.chars().nth(verb.len().saturating_sub(2));
+    let third_last = verb.chars().nth(verb.len().saturating_sub(3));
+
     let gerund = if verb.ends_with('e') && !verb.ends_with("ee") {
         format!("{}ing", &verb[..verb.len() - 1])
     } else if verb.len() >= 3
-        && is_consonant(verb.chars().last().unwrap())
-        && is_vowel(verb.chars().nth(verb.len() - 2).unwrap())
-        && is_consonant(verb.chars().nth(verb.len() - 3).unwrap())
+        && last_char.is_some_and(is_consonant)
+        && second_last.is_some_and(is_vowel)
+        && third_last.is_some_and(is_consonant)
         && !verb.ends_with('w')
         && !verb.ends_with('x')
         && !verb.ends_with('y')
     {
-        format!("{}{}", verb, verb.chars().last().unwrap()) + "ing"
+        // Double the final consonant before adding -ing (e.g., "run" → "running")
+        format!("{}{}", verb, last_char.unwrap_or_default()) + "ing"
     } else {
         format!("{verb}ing")
     };

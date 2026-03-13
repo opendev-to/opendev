@@ -181,7 +181,10 @@ impl CustomCommandLoader {
         }
 
         self.commands = Some(commands);
-        self.commands.as_ref().unwrap()
+        // SAFETY: we just set self.commands to Some on the line above
+        self.commands
+            .as_ref()
+            .expect("commands was just set to Some")
     }
 
     /// Get a custom command by name.

@@ -12,7 +12,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-reqwest = { version = "0.13", features = ["json", "rustls", "blocking"] }
+reqwest = { version = "0.13", features = ["json", "rustls"] }
 tokio = { workspace = true }
 dirs = "6"
 

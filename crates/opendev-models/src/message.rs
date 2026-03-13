@@ -100,10 +100,28 @@ impl ChatMessage {
         if let Some(tokens) = self.tokens {
             return tokens;
         }
+        Self::compute_token_estimate(&self.content, &self.tool_calls)
+    }
+
+    /// Estimate token count and cache the result in `self.tokens`.
+    ///
+    /// On first call (when `tokens` is `None`), computes the estimate and
+    /// stores it so subsequent calls skip recomputation.  Returns the
+    /// (possibly newly cached) value.
+    pub fn cache_token_estimate(&mut self) -> u64 {
+        if let Some(tokens) = self.tokens {
+            return tokens;
+        }
+        let estimate = Self::compute_token_estimate(&self.content, &self.tool_calls);
+        self.tokens = Some(estimate);
+        estimate
+    }
+
+    /// Compute token estimate from content and tool calls (no caching).
+    fn compute_token_estimate(content: &str, tool_calls: &[ToolCall]) -> u64 {
         // Rough estimate: ~4 chars per token
-        let content_tokens = self.content.len() as u64 / 4;
-        let tool_tokens: u64 = self
-            .tool_calls
+        let content_tokens = content.len() as u64 / 4;
+        let tool_tokens: u64 = tool_calls
             .iter()
             .map(|tc| {
                 let params_str = serde_json::to_string(&tc.parameters).unwrap_or_default();
@@ -204,6 +222,29 @@ mod tests {
             ..msg
         };
         assert_eq!(msg2.token_estimate(), 42);
+    }
+
+    #[test]
+    fn test_cache_token_estimate() {
+        let mut msg = ChatMessage {
+            role: Role::Assistant,
+            content: "a".repeat(400),
+            timestamp: Utc::now(),
+            metadata: HashMap::new(),
+            tool_calls: vec![],
+            tokens: None,
+            thinking_trace: None,
+            reasoning_content: None,
+            token_usage: None,
+            provenance: None,
+        };
+        assert!(msg.tokens.is_none());
+        let estimate = msg.cache_token_estimate();
+        assert_eq!(estimate, 100);
+        // Now tokens should be cached
+        assert_eq!(msg.tokens, Some(100));
+        // Subsequent calls return the cached value
+        assert_eq!(msg.cache_token_estimate(), 100);
     }
 
     #[test]

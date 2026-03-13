@@ -17,18 +17,16 @@ fn make_rule(
     action: RuleAction,
     priority: i32,
 ) -> ApprovalRule {
-    ApprovalRule {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: format!("Test rule: {id}"),
+    ApprovalRule::new(
+        id.to_string(),
+        id.to_string(),
+        format!("Test rule: {id}"),
         rule_type,
-        pattern: pattern.to_string(),
+        pattern.to_string(),
         action,
-        enabled: true,
+        true,
         priority,
-        created_at: None,
-        modified_at: None,
-    }
+    )
 }
 
 // ========================================================================

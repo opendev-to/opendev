@@ -6,15 +6,45 @@
 
 use serde_json::Value;
 use std::collections::HashSet;
+use std::sync::Mutex;
+use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::doom_loop::{DoomLoopAction, DoomLoopDetector};
+use crate::doom_loop::{DoomLoopAction, DoomLoopDetector, RecoveryAction};
 use crate::llm_calls::LlmCaller;
 use crate::response::ResponseCleaner;
 use crate::traits::{AgentError, AgentResult, LlmResponse, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_runtime::ThinkingLevel;
 use opendev_tools_core::{ToolContext, ToolRegistry};
+
+/// Metrics for a single tool call execution.
+#[derive(Debug, Clone)]
+pub struct ToolCallMetric {
+    /// Name of the tool that was called.
+    pub tool_name: String,
+    /// Wall-clock duration of the tool execution in milliseconds.
+    pub duration_ms: u64,
+    /// Whether the tool call succeeded.
+    pub success: bool,
+}
+
+/// Per-iteration metrics collected during the ReAct loop.
+#[derive(Debug, Clone, Default)]
+pub struct IterationMetrics {
+    /// 1-based iteration number.
+    pub iteration: usize,
+    /// Wall-clock latency of the LLM API call in milliseconds.
+    pub llm_latency_ms: u64,
+    /// Number of input (prompt) tokens consumed.
+    pub input_tokens: u64,
+    /// Number of output (completion) tokens generated.
+    pub output_tokens: u64,
+    /// Metrics for each tool call executed in this iteration.
+    pub tool_calls: Vec<ToolCallMetric>,
+    /// Total wall-clock duration of the iteration in milliseconds.
+    pub total_duration_ms: u64,
+}
 
 /// Tools that are safe for parallel execution (read-only, no side effects).
 pub static PARALLELIZABLE_TOOLS: &[&str] = &[
@@ -129,6 +159,8 @@ pub struct ReactLoop {
     _cleaner: ResponseCleaner,
     parallelizable: HashSet<&'static str>,
     readonly_tools: HashSet<&'static str>,
+    /// Accumulated per-iteration metrics over the session.
+    iteration_metrics: Mutex<Vec<IterationMetrics>>,
 }
 
 impl ReactLoop {
@@ -137,6 +169,7 @@ impl ReactLoop {
         Self {
             config,
             _cleaner: ResponseCleaner::new(),
+            iteration_metrics: Mutex::new(Vec::new()),
             parallelizable: PARALLELIZABLE_TOOLS.iter().copied().collect(),
             readonly_tools: READONLY_TOOLS.iter().copied().collect(),
         }
@@ -158,6 +191,21 @@ impl ReactLoop {
     /// Create a ReAct loop with default configuration.
     pub fn with_defaults() -> Self {
         Self::new(ReactLoopConfig::default())
+    }
+
+    /// Return a snapshot of accumulated iteration metrics collected during `run()`.
+    pub fn iteration_metrics(&self) -> Vec<IterationMetrics> {
+        self.iteration_metrics.lock().unwrap().clone()
+    }
+
+    /// Clear accumulated iteration metrics.
+    pub fn clear_metrics(&self) {
+        self.iteration_metrics.lock().unwrap().clear();
+    }
+
+    /// Push a new iteration metrics entry.
+    fn push_metrics(&self, metrics: IterationMetrics) {
+        self.iteration_metrics.lock().unwrap().push(metrics);
     }
 
     /// Process a single LLM response and determine the next action.
@@ -441,6 +489,7 @@ impl ReactLoop {
 
         loop {
             iteration += 1;
+            let iter_start = Instant::now();
 
             if self.check_iteration_limit(iteration) {
                 info!(iteration, "Max iterations reached");
@@ -573,10 +622,12 @@ impl ReactLoop {
             let payload = caller.build_action_payload(messages, tool_schemas);
             debug!(iteration, model = %payload["model"], "ReAct iteration");
 
+            let llm_start = Instant::now();
             let http_result = http_client
                 .post_json(&payload, None)
                 .await
                 .map_err(|e| AgentError::LlmError(e.to_string()))?;
+            let llm_latency_ms = llm_start.elapsed().as_millis() as u64;
 
             if http_result.interrupted {
                 return Ok(AgentResult::interrupted(messages.clone()));
@@ -611,6 +662,18 @@ impl ReactLoop {
             // Parse the response
             let response = caller.parse_action_response(&body);
 
+            // Extract token counts for metrics
+            let input_tokens = response
+                .usage
+                .as_ref()
+                .and_then(|u| u.get("prompt_tokens").and_then(|t| t.as_u64()))
+                .unwrap_or(0);
+            let output_tokens = response
+                .usage
+                .as_ref()
+                .and_then(|u| u.get("completion_tokens").and_then(|t| t.as_u64()))
+                .unwrap_or(0);
+
             // Track token usage
             if let Some(monitor) = task_monitor
                 && let Some(ref usage) = response.usage
@@ -618,6 +681,16 @@ impl ReactLoop {
             {
                 monitor.update_tokens(total);
             }
+
+            // Initialize per-iteration metrics
+            let mut iter_metrics = IterationMetrics {
+                iteration,
+                llm_latency_ms,
+                input_tokens,
+                output_tokens,
+                tool_calls: Vec::new(),
+                total_duration_ms: 0,
+            };
 
             // Process the iteration
             let turn = self.process_iteration(
@@ -629,9 +702,13 @@ impl ReactLoop {
 
             match turn {
                 TurnResult::Interrupted => {
+                    iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                    self.push_metrics(iter_metrics);
                     return Ok(AgentResult::interrupted(messages.clone()));
                 }
                 TurnResult::MaxIterations => {
+                    iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                    self.push_metrics(iter_metrics);
                     return Ok(AgentResult::fail(
                         "Max iterations reached without completion",
                         messages.clone(),
@@ -641,12 +718,14 @@ impl ReactLoop {
                     if let Some(cb) = event_callback {
                         cb.on_agent_chunk(&content);
                     }
+                    iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                    self.push_metrics(iter_metrics);
                     let mut result = AgentResult::ok(content, messages.clone());
                     result.completion_status = status;
                     return Ok(result);
                 }
                 TurnResult::ToolCall { tool_calls } => {
-                    // Doom-loop detection
+                    // Doom-loop detection with recovery actions
                     let (doom_action, doom_warning) = doom_detector.check(&tool_calls);
                     match doom_action {
                         DoomLoopAction::ForceStop => {
@@ -654,31 +733,47 @@ impl ReactLoop {
                                 nudge_count = doom_detector.nudge_count(),
                                 "Doom loop force-stop: {}", doom_warning
                             );
+                            iter_metrics.total_duration_ms =
+                                iter_start.elapsed().as_millis() as u64;
+                            self.push_metrics(iter_metrics);
                             return Ok(AgentResult::fail(
                                 format!("Stopped: {doom_warning}"),
                                 messages.clone(),
                             ));
                         }
-                        DoomLoopAction::Notify => {
-                            warn!("Doom loop notify: {}", doom_warning);
-                            // Inject a system nudge but continue
-                            messages.push(serde_json::json!({
-                                "role": "user",
-                                "content": format!(
-                                    "[SYSTEM] Warning: {doom_warning} \
-                                     Please try a different approach."
-                                )
-                            }));
-                        }
-                        DoomLoopAction::Redirect => {
-                            debug!("Doom loop redirect: {}", doom_warning);
-                            messages.push(serde_json::json!({
-                                "role": "user",
-                                "content": format!(
-                                    "[SYSTEM] {doom_warning} \
-                                     Consider trying a different approach or tool."
-                                )
-                            }));
+                        DoomLoopAction::Redirect | DoomLoopAction::Notify => {
+                            let recovery =
+                                doom_detector.recovery_action(&doom_action, &doom_warning);
+                            match recovery {
+                                RecoveryAction::Nudge(nudge_msg) => {
+                                    debug!("Doom loop nudge: {}", nudge_msg);
+                                    messages.push(serde_json::json!({
+                                        "role": "user",
+                                        "content": format!("[SYSTEM] {nudge_msg}")
+                                    }));
+                                }
+                                RecoveryAction::StepBack(step_msg) => {
+                                    warn!("Doom loop step-back: {}", step_msg);
+                                    messages.push(serde_json::json!({
+                                        "role": "user",
+                                        "content": format!("[SYSTEM] {step_msg}")
+                                    }));
+                                }
+                                RecoveryAction::CompactContext => {
+                                    warn!(
+                                        "Doom loop suggests context compaction: {}",
+                                        doom_warning
+                                    );
+                                    messages.push(serde_json::json!({
+                                        "role": "user",
+                                        "content": "[SYSTEM] You appear to be stuck in a \
+                                         repeating loop. Your context may be too large or \
+                                         confusing. Summarize what you have learned so far, \
+                                         discard irrelevant details, and try a fundamentally \
+                                         different approach."
+                                    }));
+                                }
+                            }
                         }
                         DoomLoopAction::None => {}
                     }
@@ -688,6 +783,9 @@ impl ReactLoop {
                         // Check for task_complete
                         if Self::is_task_complete(tc) {
                             let (summary, status) = Self::extract_task_complete_args(tc);
+                            iter_metrics.total_duration_ms =
+                                iter_start.elapsed().as_millis() as u64;
+                            self.push_metrics(iter_metrics);
                             let mut result = AgentResult::ok(summary, messages.clone());
                             result.completion_status = Some(status);
                             return Ok(result);
@@ -720,9 +818,17 @@ impl ReactLoop {
                             cb.on_tool_started(tool_call_id_str, tool_name, &args_map);
                         }
 
+                        let tool_start = Instant::now();
                         let tool_result = tool_registry
                             .execute(tool_name, args_map, tool_context)
                             .await;
+                        let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+
+                        iter_metrics.tool_calls.push(ToolCallMetric {
+                            tool_name: tool_name.to_string(),
+                            duration_ms: tool_duration_ms,
+                            success: tool_result.success,
+                        });
 
                         if let Some(cb) = event_callback {
                             let output_str = if tool_result.success {
@@ -764,11 +870,28 @@ impl ReactLoop {
                             "content": formatted,
                         }));
 
-                        // Check for interrupt between tool executions
+                        // Check for interrupt between tool executions —
+                        // preserve partial work (completed tool results
+                        // already appended to messages above).
                         if let Some(monitor) = task_monitor
                             && monitor.should_interrupt()
                         {
-                            return Ok(AgentResult::interrupted(messages.clone()));
+                            // Collect partial assistant text from this iteration
+                            let partial_content =
+                                response.content.as_deref().unwrap_or("").to_string();
+
+                            iter_metrics.total_duration_ms =
+                                iter_start.elapsed().as_millis() as u64;
+                            self.push_metrics(iter_metrics);
+
+                            let mut result = AgentResult::interrupted(messages.clone());
+                            if !partial_content.is_empty() {
+                                result.content = format!(
+                                    "Task interrupted by user (partial): {}",
+                                    partial_content
+                                );
+                            }
+                            return Ok(result);
                         }
                     }
                 }
@@ -776,6 +899,10 @@ impl ReactLoop {
                     // LLM returned failure, loop will retry
                 }
             }
+
+            // Finalize metrics for this iteration
+            iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+            self.push_metrics(iter_metrics);
         }
     }
 
@@ -1365,5 +1492,91 @@ mod tests {
             Some("custom thinking prompt")
         );
         assert_eq!(config.original_task.as_deref(), Some("implement feature X"));
+    }
+
+    // --- Iteration metrics tests ---
+
+    #[test]
+    fn test_iteration_metrics_default() {
+        let metrics = IterationMetrics::default();
+        assert_eq!(metrics.iteration, 0);
+        assert_eq!(metrics.llm_latency_ms, 0);
+        assert_eq!(metrics.input_tokens, 0);
+        assert_eq!(metrics.output_tokens, 0);
+        assert!(metrics.tool_calls.is_empty());
+        assert_eq!(metrics.total_duration_ms, 0);
+    }
+
+    #[test]
+    fn test_tool_call_metric() {
+        let metric = ToolCallMetric {
+            tool_name: "read_file".to_string(),
+            duration_ms: 42,
+            success: true,
+        };
+        assert_eq!(metric.tool_name, "read_file");
+        assert_eq!(metric.duration_ms, 42);
+        assert!(metric.success);
+    }
+
+    #[test]
+    fn test_metrics_accumulation() {
+        let rl = make_loop();
+
+        // Initially empty
+        assert!(rl.iteration_metrics().is_empty());
+
+        // Push a metric
+        rl.push_metrics(IterationMetrics {
+            iteration: 1,
+            llm_latency_ms: 100,
+            input_tokens: 500,
+            output_tokens: 200,
+            tool_calls: vec![ToolCallMetric {
+                tool_name: "read_file".to_string(),
+                duration_ms: 10,
+                success: true,
+            }],
+            total_duration_ms: 150,
+        });
+
+        let metrics = rl.iteration_metrics();
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].iteration, 1);
+        assert_eq!(metrics[0].llm_latency_ms, 100);
+        assert_eq!(metrics[0].tool_calls.len(), 1);
+        assert_eq!(metrics[0].tool_calls[0].tool_name, "read_file");
+    }
+
+    #[test]
+    fn test_metrics_clear() {
+        let rl = make_loop();
+        rl.push_metrics(IterationMetrics {
+            iteration: 1,
+            ..Default::default()
+        });
+        assert_eq!(rl.iteration_metrics().len(), 1);
+
+        rl.clear_metrics();
+        assert!(rl.iteration_metrics().is_empty());
+    }
+
+    // --- Partial result preservation tests ---
+
+    #[test]
+    fn test_agent_result_interrupted_with_partial_content() {
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "do stuff"}),
+            serde_json::json!({"role": "tool", "name": "read_file", "content": "file data", "tool_call_id": "tc-1"}),
+        ];
+        let mut result = AgentResult::interrupted(messages);
+        // Simulate partial content preservation
+        result.content = "Task interrupted by user (partial): I was analyzing...".to_string();
+        assert!(result.interrupted);
+        assert!(result.content.contains("partial"));
+        assert!(result.content.contains("analyzing"));
+        // Messages should include the completed tool result
+        assert_eq!(result.messages.len(), 2);
+        assert_eq!(result.messages[1]["name"], "read_file");
     }
 }

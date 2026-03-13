@@ -25,6 +25,35 @@ pub enum ErrorCategory {
     Unknown,
 }
 
+/// Strategy for recovering from an error.
+///
+/// Each error category maps to a recommended recovery strategy that callers
+/// can use to decide how to handle failures automatically.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RecoveryStrategy {
+    /// Retry the operation after a delay.
+    Retry {
+        /// Milliseconds to wait before retrying.
+        delay_ms: u64,
+        /// Maximum number of retry attempts.
+        max_attempts: u32,
+    },
+    /// Fall back to an alternative model.
+    FallbackModel(String),
+    /// Reduce the context window and retry.
+    ReduceContext,
+    /// Require user intervention with a descriptive message.
+    UserIntervention(String),
+}
+
+impl RecoveryStrategy {
+    /// Serialize the recovery strategy to a JSON value.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({"type": "unknown"}))
+    }
+}
+
 /// Base structured error with metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredError {
@@ -57,6 +86,117 @@ impl StructuredError {
     /// Whether the operation should be retried.
     pub fn should_retry(&self) -> bool {
         self.is_retryable
+    }
+
+    /// Return a stable error code for this error.
+    ///
+    /// Error codes follow the pattern `EXXXX_DESCRIPTION`:
+    /// - E1xxx: Rate limiting and quota errors
+    /// - E2xxx: Tool and timeout errors
+    /// - E3xxx: Context and token errors
+    /// - E4xxx: Authentication and permission errors
+    /// - E5xxx: Gateway and network errors
+    /// - E9xxx: Unknown/unclassified errors
+    pub fn error_code(&self) -> &str {
+        match self.category {
+            ErrorCategory::RateLimit => "E1001_RATE_LIMIT",
+            ErrorCategory::Timeout => "E2001_TOOL_TIMEOUT",
+            ErrorCategory::ContextOverflow => "E3001_CONTEXT_OVERFLOW",
+            ErrorCategory::OutputLength => "E3002_OUTPUT_LENGTH",
+            ErrorCategory::Auth => "E4001_AUTH_FAILED",
+            ErrorCategory::Permission => "E4002_PERMISSION_DENIED",
+            ErrorCategory::Gateway => "E5001_GATEWAY_ERROR",
+            ErrorCategory::Api => "E5002_API_ERROR",
+            ErrorCategory::EditMismatch => "E6001_EDIT_MISMATCH",
+            ErrorCategory::FileNotFound => "E6002_FILE_NOT_FOUND",
+            ErrorCategory::Unknown => "E9001_UNKNOWN",
+        }
+    }
+
+    /// Serialize this error to a structured JSON value for reporting.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut obj = serde_json::json!({
+            "error_code": self.error_code(),
+            "category": self.category,
+            "message": self.message,
+            "is_retryable": self.is_retryable,
+        });
+        let map = obj.as_object_mut().expect("json object");
+        if let Some(sc) = self.status_code {
+            map.insert("status_code".into(), serde_json::json!(sc));
+        }
+        if let Some(ref p) = self.provider {
+            map.insert("provider".into(), serde_json::json!(p));
+        }
+        if let Some(ref oe) = self.original_error {
+            map.insert("original_error".into(), serde_json::json!(oe));
+        }
+        if let Some(tc) = self.token_count {
+            map.insert("token_count".into(), serde_json::json!(tc));
+        }
+        if let Some(tl) = self.token_limit {
+            map.insert("token_limit".into(), serde_json::json!(tl));
+        }
+        if let Some(ra) = self.retry_after {
+            map.insert("retry_after".into(), serde_json::json!(ra));
+        }
+        let strategy = self.recovery_strategy();
+        map.insert("recovery_strategy".into(), strategy.to_json());
+        obj
+    }
+
+    /// Return the recommended recovery strategy for this error.
+    pub fn recovery_strategy(&self) -> RecoveryStrategy {
+        match self.category {
+            ErrorCategory::RateLimit => {
+                let delay = self
+                    .retry_after
+                    .map(|s| (s * 1000.0) as u64)
+                    .unwrap_or(5000);
+                RecoveryStrategy::Retry {
+                    delay_ms: delay,
+                    max_attempts: 3,
+                }
+            }
+            ErrorCategory::Timeout => RecoveryStrategy::Retry {
+                delay_ms: 2000,
+                max_attempts: 2,
+            },
+            ErrorCategory::ContextOverflow => RecoveryStrategy::ReduceContext,
+            ErrorCategory::OutputLength => RecoveryStrategy::Retry {
+                delay_ms: 0,
+                max_attempts: 1,
+            },
+            ErrorCategory::Auth => RecoveryStrategy::UserIntervention(
+                "Check your API key and authentication settings.".into(),
+            ),
+            ErrorCategory::Permission => RecoveryStrategy::UserIntervention(
+                "Insufficient permissions. Check your access rights.".into(),
+            ),
+            ErrorCategory::Gateway => RecoveryStrategy::Retry {
+                delay_ms: 3000,
+                max_attempts: 3,
+            },
+            ErrorCategory::Api => {
+                if self.is_retryable {
+                    RecoveryStrategy::Retry {
+                        delay_ms: 2000,
+                        max_attempts: 3,
+                    }
+                } else {
+                    RecoveryStrategy::FallbackModel("default".into())
+                }
+            }
+            ErrorCategory::EditMismatch => RecoveryStrategy::UserIntervention(
+                "The edit target was not found. Review the file content.".into(),
+            ),
+            ErrorCategory::FileNotFound => RecoveryStrategy::UserIntervention(
+                "File not found. Check the path and try again.".into(),
+            ),
+            ErrorCategory::Unknown => RecoveryStrategy::UserIntervention(
+                "An unexpected error occurred. Please try again.".into(),
+            ),
+        }
     }
 
     /// Create a generic API error.
@@ -178,7 +318,7 @@ impl StructuredError {
 
 impl std::fmt::Display for StructuredError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{:?}] {}", self.category, self.message)
+        write!(f, "[{}] {}", self.error_code(), self.message)
     }
 }
 
@@ -306,8 +446,10 @@ pub fn classify_api_error(
     // Rate limiting
     for re in &patterns.rate_limit {
         if re.is_match(error_message) {
-            static RETRY_AFTER_RE: LazyLock<Regex> =
-                LazyLock::new(|| Regex::new(r"(?i)retry.?after[:\s]+(\d+\.?\d*)").unwrap());
+            static RETRY_AFTER_RE: LazyLock<Regex> = LazyLock::new(|| {
+                Regex::new(r"(?i)retry.?after[:\s]+(\d+\.?\d*)")
+                    .expect("valid regex: retry-after pattern")
+            });
             let retry_after = RETRY_AFTER_RE
                 .captures(error_message)
                 .and_then(|caps| caps.get(1))
@@ -442,7 +584,7 @@ mod tests {
     fn test_structured_error_display() {
         let err = StructuredError::api("test error", Some(500));
         let display = format!("{}", err);
-        assert!(display.contains("Api"));
+        assert!(display.contains("E5002_API_ERROR"));
         assert!(display.contains("test error"));
     }
 
@@ -459,5 +601,198 @@ mod tests {
         assert_eq!(deserialized.category, ErrorCategory::ContextOverflow);
         assert_eq!(deserialized.token_count, Some(200000));
         assert_eq!(deserialized.token_limit, Some(128000));
+    }
+
+    // --- #55: error_code and to_json tests ---
+
+    #[test]
+    fn test_error_code_rate_limit() {
+        let err = StructuredError::rate_limit("rate limited", None, Some(30.0));
+        assert_eq!(err.error_code(), "E1001_RATE_LIMIT");
+    }
+
+    #[test]
+    fn test_error_code_context_overflow() {
+        let err = StructuredError::context_overflow("overflow", None, None, None);
+        assert_eq!(err.error_code(), "E3001_CONTEXT_OVERFLOW");
+    }
+
+    #[test]
+    fn test_error_code_auth() {
+        let err = StructuredError::auth("bad key", Some(401), None);
+        assert_eq!(err.error_code(), "E4001_AUTH_FAILED");
+    }
+
+    #[test]
+    fn test_error_code_gateway() {
+        let err = StructuredError::gateway("bad gw", Some(502), None, None);
+        assert_eq!(err.error_code(), "E5001_GATEWAY_ERROR");
+    }
+
+    #[test]
+    fn test_error_code_api() {
+        let err = StructuredError::api("server error", Some(500));
+        assert_eq!(err.error_code(), "E5002_API_ERROR");
+    }
+
+    #[test]
+    fn test_error_code_unknown() {
+        let err = StructuredError::api("mystery", None);
+        assert_eq!(err.error_code(), "E9001_UNKNOWN");
+    }
+
+    #[test]
+    fn test_to_json_includes_error_code() {
+        let err = StructuredError::rate_limit("rate limited", Some("openai".into()), Some(30.0));
+        let json = err.to_json();
+        assert_eq!(json["error_code"], "E1001_RATE_LIMIT");
+        assert_eq!(json["category"], "rate_limit");
+        assert_eq!(json["message"], "rate limited");
+        assert_eq!(json["is_retryable"], true);
+        assert_eq!(json["provider"], "openai");
+        assert_eq!(json["retry_after"], 30.0);
+        // recovery_strategy should be present
+        assert!(json["recovery_strategy"]["type"].is_string());
+    }
+
+    #[test]
+    fn test_to_json_context_overflow_includes_tokens() {
+        let err = StructuredError::context_overflow(
+            "overflow",
+            Some("anthropic".into()),
+            Some(200000),
+            Some(128000),
+        );
+        let json = err.to_json();
+        assert_eq!(json["error_code"], "E3001_CONTEXT_OVERFLOW");
+        assert_eq!(json["token_count"], 200000);
+        assert_eq!(json["token_limit"], 128000);
+    }
+
+    #[test]
+    fn test_to_json_omits_none_fields() {
+        let err = StructuredError::api("error", Some(500));
+        let json = err.to_json();
+        assert!(json.get("provider").is_none());
+        assert!(json.get("token_count").is_none());
+        assert!(json.get("retry_after").is_none());
+    }
+
+    #[test]
+    fn test_display_includes_error_code() {
+        let err = StructuredError::api("test error", Some(500));
+        let display = format!("{}", err);
+        assert!(display.contains("E5002_API_ERROR"));
+        assert!(display.contains("test error"));
+    }
+
+    // --- #56: RecoveryStrategy tests ---
+
+    #[test]
+    fn test_recovery_strategy_rate_limit_with_retry_after() {
+        let err = StructuredError::rate_limit("rate limited", None, Some(10.0));
+        match err.recovery_strategy() {
+            RecoveryStrategy::Retry {
+                delay_ms,
+                max_attempts,
+            } => {
+                assert_eq!(delay_ms, 10000);
+                assert_eq!(max_attempts, 3);
+            }
+            other => panic!("Expected Retry, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_recovery_strategy_rate_limit_default_delay() {
+        let err = StructuredError::rate_limit("rate limited", None, None);
+        match err.recovery_strategy() {
+            RecoveryStrategy::Retry {
+                delay_ms,
+                max_attempts,
+            } => {
+                assert_eq!(delay_ms, 5000);
+                assert_eq!(max_attempts, 3);
+            }
+            other => panic!("Expected Retry, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_recovery_strategy_context_overflow() {
+        let err = StructuredError::context_overflow("overflow", None, None, None);
+        assert_eq!(err.recovery_strategy(), RecoveryStrategy::ReduceContext);
+    }
+
+    #[test]
+    fn test_recovery_strategy_auth() {
+        let err = StructuredError::auth("bad key", Some(401), None);
+        match err.recovery_strategy() {
+            RecoveryStrategy::UserIntervention(msg) => {
+                assert!(msg.contains("API key"));
+            }
+            other => panic!("Expected UserIntervention, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_recovery_strategy_retryable_api() {
+        let err = StructuredError::api("server error", Some(500));
+        match err.recovery_strategy() {
+            RecoveryStrategy::Retry { .. } => {}
+            other => panic!("Expected Retry, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_recovery_strategy_non_retryable_api() {
+        let err = StructuredError::api("bad request", Some(400));
+        match err.recovery_strategy() {
+            RecoveryStrategy::FallbackModel(model) => {
+                assert_eq!(model, "default");
+            }
+            other => panic!("Expected FallbackModel, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_recovery_strategy_gateway() {
+        let err = StructuredError::gateway("bad gw", Some(502), None, None);
+        match err.recovery_strategy() {
+            RecoveryStrategy::Retry {
+                delay_ms,
+                max_attempts,
+            } => {
+                assert_eq!(delay_ms, 3000);
+                assert_eq!(max_attempts, 3);
+            }
+            other => panic!("Expected Retry, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_recovery_strategy_serialization() {
+        let strategy = RecoveryStrategy::Retry {
+            delay_ms: 5000,
+            max_attempts: 3,
+        };
+        let json = strategy.to_json();
+        assert_eq!(json["type"], "retry");
+        assert_eq!(json["delay_ms"], 5000);
+        assert_eq!(json["max_attempts"], 3);
+    }
+
+    #[test]
+    fn test_recovery_strategy_fallback_serialization() {
+        let strategy = RecoveryStrategy::FallbackModel("gpt-4".into());
+        let json = strategy.to_json();
+        assert_eq!(json["type"], "fallback_model");
+    }
+
+    #[test]
+    fn test_recovery_strategy_reduce_context_serialization() {
+        let strategy = RecoveryStrategy::ReduceContext;
+        let json = strategy.to_json();
+        assert_eq!(json["type"], "reduce_context");
     }
 }

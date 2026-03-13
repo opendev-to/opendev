@@ -3,6 +3,8 @@
 //! Converts markdown text to styled ratatui `Line`s with basic formatting:
 //! headers, bold, italic, code blocks, and inline code.
 
+use std::borrow::Cow;
+
 use super::style_tokens;
 use ratatui::{
     style::{Modifier, Style},
@@ -132,6 +134,12 @@ fn is_ordered_list_line(line: &str) -> bool {
 }
 
 /// Parse inline spans handling backtick code and bold markers.
+///
+/// Uses `Cow<'static, str>` internally: substrings that require no
+/// transformation are converted to owned `String`s only once (at the Span
+/// boundary), which is unavoidable for `Span<'static>`. The `Cow` usage
+/// makes the intent clear and avoids redundant intermediate allocations
+/// when the same string passes through multiple parsing layers.
 fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mut remaining = text;
@@ -146,9 +154,9 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
 
             let after_start = &remaining[code_start + 1..];
             if let Some(code_end) = after_start.find('`') {
-                let code = &after_start[..code_end];
+                let code: Cow<'static, str> = Cow::Owned(after_start[..code_end].to_string());
                 spans.push(Span::styled(
-                    code.to_string(),
+                    code,
                     Style::default()
                         .fg(style_tokens::CODE_FG)
                         .add_modifier(Modifier::BOLD),
@@ -166,7 +174,7 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
     }
 
     if spans.is_empty() {
-        spans.push(Span::raw(String::new()));
+        spans.push(Span::raw(Cow::Owned(String::new())));
     }
 
     spans

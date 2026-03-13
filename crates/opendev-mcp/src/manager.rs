@@ -21,8 +21,8 @@ use crate::config::{
 };
 use crate::error::{McpError, McpResult};
 use crate::models::{
-    JsonRpcNotification, JsonRpcRequest, McpPromptSummary, McpServerInfo, McpTool, McpToolResult,
-    McpToolSchema,
+    JsonRpcNotification, JsonRpcRequest, McpContent, McpPromptSummary, McpServerInfo, McpTool,
+    McpToolResult, McpToolSchema,
 };
 use crate::transport::{self, McpTransport};
 
@@ -336,7 +336,58 @@ impl McpManager {
     }
 
     /// Call a tool on a connected MCP server.
+    ///
+    /// If the server has crashed or become unresponsive, the error is caught,
+    /// the failed server is removed from the connection pool, and a
+    /// user-friendly error result is returned instead of propagating the error.
     pub async fn call_tool(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> McpResult<McpToolResult> {
+        let result = self
+            .call_tool_inner(server_name, tool_name, arguments)
+            .await;
+
+        match result {
+            Ok(tool_result) => Ok(tool_result),
+            Err(
+                McpError::Transport(_)
+                | McpError::Timeout(_)
+                | McpError::Connection { .. }
+                | McpError::Io(_),
+            ) => {
+                // Server has likely crashed or become unresponsive.
+                // Remove it from the connection pool so its tools are
+                // no longer offered and we don't keep trying.
+                warn!(
+                    server = server_name,
+                    tool = tool_name,
+                    error = %result.as_ref().unwrap_err(),
+                    "MCP server failed, removing from active connections"
+                );
+                self.remove_failed_server(server_name).await;
+
+                // Return an error result that the agent can handle
+                // gracefully instead of crashing.
+                Ok(McpToolResult {
+                    content: vec![McpContent::Text {
+                        text: format!(
+                            "MCP server '{}' has become unavailable and has been removed. \
+                             The tool '{}' is no longer accessible.",
+                            server_name, tool_name
+                        ),
+                    }],
+                    is_error: true,
+                })
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Internal tool call implementation (no degradation logic).
+    async fn call_tool_inner(
         &self,
         server_name: &str,
         tool_name: &str,
@@ -376,6 +427,26 @@ impl McpManager {
 
         serde_json::from_value(result)
             .map_err(|e| McpError::Protocol(format!("Failed to parse tool result: {}", e)))
+    }
+
+    /// Remove a failed server from the connection pool, closing its transport
+    /// and dropping its tools from the registry.
+    async fn remove_failed_server(&self, name: &str) {
+        let mut connections = self.connections.write().await;
+        if let Some(conn) = connections.remove(name) {
+            // Best-effort close; the transport may already be dead.
+            if let Err(e) = conn.transport.close().await {
+                debug!(
+                    "Failed to close transport for crashed server '{}': {}",
+                    name, e
+                );
+            }
+            warn!(
+                server = name,
+                tools = conn.tools.len(),
+                "Removed failed MCP server and its tools from the registry"
+            );
+        }
     }
 
     /// List prompts from all connected servers.
@@ -679,6 +750,30 @@ while True:
         // Disconnect.
         manager.disconnect_server("mock").await.unwrap();
         assert!(!manager.is_connected("mock").await);
+        assert_eq!(manager.connected_count().await, 0);
+    }
+
+    /// Test that calling a tool on a disconnected/crashed server degrades
+    /// gracefully: returns an error result and removes the server.
+    #[tokio::test]
+    async fn test_call_tool_graceful_degradation_on_missing_server() {
+        let manager = McpManager::new(Some(PathBuf::from("/tmp")));
+
+        // Calling a tool on a non-existent server should return ServerNotFound
+        // (not a transport error, so it propagates rather than degrading).
+        let result = manager
+            .call_tool("gone", "some_tool", serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+    }
+
+    /// Test that remove_failed_server cleans up properly.
+    #[tokio::test]
+    async fn test_remove_failed_server() {
+        let manager = McpManager::new(Some(PathBuf::from("/tmp")));
+
+        // Removing a non-existent server should not panic
+        manager.remove_failed_server("nonexistent").await;
         assert_eq!(manager.connected_count().await, 0);
     }
 }

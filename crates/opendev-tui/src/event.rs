@@ -99,6 +99,10 @@ pub enum AppEvent {
     /// Agent finished the current task (hides progress bar).
     TaskProgressFinished,
 
+    // -- Budget events --
+    /// Session cost budget has been exhausted. The agent loop should pause.
+    BudgetExhausted { cost_usd: f64, budget_usd: f64 },
+
     // -- UI events --
     /// User submitted a message.
     UserSubmit(String),

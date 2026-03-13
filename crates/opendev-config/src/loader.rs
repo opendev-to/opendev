@@ -19,6 +19,8 @@ pub enum ConfigError {
         path: String,
         source: serde_json::Error,
     },
+    #[error("config validation failed: {0}")]
+    ValidationError(String),
 }
 
 /// Loads and merges configuration from multiple sources.
@@ -59,6 +61,11 @@ impl ConfigLoader {
 
         // Apply environment variable overrides
         Self::apply_env_overrides(&mut config);
+
+        // Validate final configuration
+        if let Err(e) = Self::validate(&config) {
+            warn!("Config validation: {}", e);
+        }
 
         Ok(config)
     }
@@ -120,6 +127,44 @@ impl ConfigLoader {
 
         debug!("Saved config to {:?}", path);
         Ok(())
+    }
+
+    /// Validate the loaded configuration.
+    ///
+    /// Checks:
+    /// - Model names are non-empty strings
+    /// - API keys are non-empty when explicitly set
+    /// - Temperature is between 0.0 and 2.0
+    /// - Max tokens is positive
+    pub fn validate(config: &AppConfig) -> Result<(), ConfigError> {
+        let mut errors = Vec::new();
+
+        if config.model.trim().is_empty() {
+            errors.push("model name must be a non-empty string".to_string());
+        }
+        if config.model_provider.trim().is_empty() {
+            errors.push("model_provider must be a non-empty string".to_string());
+        }
+        if let Some(ref key) = config.api_key
+            && key.trim().is_empty()
+        {
+            errors.push("api_key must be non-empty when set".to_string());
+        }
+        if !(0.0..=2.0).contains(&config.temperature) {
+            errors.push(format!(
+                "temperature must be between 0.0 and 2.0, got {}",
+                config.temperature
+            ));
+        }
+        if config.max_tokens == 0 {
+            errors.push("max_tokens must be positive".to_string());
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(ConfigError::ValidationError(errors.join("; ")))
+        }
     }
 
     /// Apply environment variable overrides.
@@ -246,5 +291,84 @@ mod tests {
 
         assert!(path.exists());
         assert!(!tmp.path().join("settings.json.tmp").exists());
+    }
+
+    #[test]
+    fn test_validate_default_config() {
+        let config = AppConfig::default();
+        assert!(ConfigLoader::validate(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_empty_model() {
+        let mut config = AppConfig::default();
+        config.model = String::new();
+        let err = ConfigLoader::validate(&config).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("model name must be a non-empty string"));
+    }
+
+    #[test]
+    fn test_validate_empty_provider() {
+        let mut config = AppConfig::default();
+        config.model_provider = "  ".to_string();
+        let err = ConfigLoader::validate(&config).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("model_provider must be a non-empty string"));
+    }
+
+    #[test]
+    fn test_validate_empty_api_key() {
+        let mut config = AppConfig::default();
+        config.api_key = Some(String::new());
+        let err = ConfigLoader::validate(&config).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("api_key must be non-empty when set"));
+    }
+
+    #[test]
+    fn test_validate_temperature_out_of_range() {
+        let mut config = AppConfig::default();
+        config.temperature = 2.5;
+        let err = ConfigLoader::validate(&config).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("temperature must be between 0.0 and 2.0"));
+
+        // Negative temperature
+        config.temperature = -0.1;
+        let err = ConfigLoader::validate(&config).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("temperature must be between 0.0 and 2.0"));
+    }
+
+    #[test]
+    fn test_validate_zero_max_tokens() {
+        let mut config = AppConfig::default();
+        config.max_tokens = 0;
+        let err = ConfigLoader::validate(&config).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("max_tokens must be positive"));
+    }
+
+    #[test]
+    fn test_validate_multiple_errors() {
+        let mut config = AppConfig::default();
+        config.model = String::new();
+        config.temperature = 3.0;
+        config.max_tokens = 0;
+        let err = ConfigLoader::validate(&config).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("model name"));
+        assert!(msg.contains("temperature"));
+        assert!(msg.contains("max_tokens"));
+    }
+
+    #[test]
+    fn test_validate_boundary_temperature() {
+        let mut config = AppConfig::default();
+        config.temperature = 0.0;
+        assert!(ConfigLoader::validate(&config).is_ok());
+        config.temperature = 2.0;
+        assert!(ConfigLoader::validate(&config).is_ok());
     }
 }

@@ -1,9 +1,10 @@
 //! HTTP client with retry logic and cancellation support.
 
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{debug, warn};
+use uuid::Uuid;
 
 use crate::models::{HttpError, HttpResult, RetryConfig};
 
@@ -35,6 +36,7 @@ pub struct HttpClient {
     client: reqwest::Client,
     api_url: String,
     retry_config: RetryConfig,
+    circuit_breaker: Option<std::sync::Arc<crate::circuit_breaker::CircuitBreaker>>,
 }
 
 impl HttpClient {
@@ -55,6 +57,7 @@ impl HttpClient {
             client,
             api_url: api_url.into(),
             retry_config: RetryConfig::default(),
+            circuit_breaker: None,
         })
     }
 
@@ -64,16 +67,36 @@ impl HttpClient {
         self
     }
 
+    /// Attach a circuit breaker to this client.
+    ///
+    /// When set, every request is gated by the circuit breaker. Successful
+    /// responses close the circuit; failures (transport-level or 5xx) open it.
+    pub fn with_circuit_breaker(
+        mut self,
+        cb: std::sync::Arc<crate::circuit_breaker::CircuitBreaker>,
+    ) -> Self {
+        self.circuit_breaker = Some(cb);
+        self
+    }
+
     /// POST JSON with retry logic and optional cancellation.
     ///
     /// On 429/503 responses, retries with exponential backoff. Respects
     /// `Retry-After` headers. Checks the cancellation token between attempts
     /// and races it against each request via `tokio::select!`.
+    ///
+    /// When a circuit breaker is attached, requests are rejected immediately
+    /// if the circuit is open.
     pub async fn post_json(
         &self,
         payload: &serde_json::Value,
         cancel: Option<&CancellationToken>,
     ) -> Result<HttpResult, HttpError> {
+        // Check circuit breaker before attempting any request.
+        if let Some(cb) = &self.circuit_breaker {
+            cb.check()?;
+        }
+
         let mut last_result: Option<HttpResult> = None;
 
         for attempt in 0..=self.retry_config.max_retries {
@@ -109,8 +132,12 @@ impl HttpClient {
                             status,
                             "Exhausted {} retries", self.retry_config.max_retries
                         );
-                        return Ok(last_result.unwrap());
+                        self.cb_record_failure();
+                        return Ok(last_result.unwrap_or_else(|| {
+                            HttpResult::fail("Unexpected retry exhaustion", false)
+                        }));
                     }
+                    self.cb_record_success();
                     return Ok(hr);
                 }
                 Ok(hr) if hr.retryable => {
@@ -128,26 +155,65 @@ impl HttpClient {
                         continue;
                     }
                     warn!("Exhausted {} retries", self.retry_config.max_retries);
-                    return Ok(last_result.unwrap());
+                    self.cb_record_failure();
+                    return Ok(last_result.unwrap_or_else(|| {
+                        HttpResult::fail("Unexpected retry exhaustion", false)
+                    }));
                 }
-                Ok(hr) => return Ok(hr),
-                Err(e) => return Err(e),
+                Ok(hr) => {
+                    if hr.success {
+                        self.cb_record_success();
+                    } else {
+                        self.cb_record_failure();
+                    }
+                    return Ok(hr);
+                }
+                Err(e) => {
+                    self.cb_record_failure();
+                    return Err(e);
+                }
             }
         }
 
+        self.cb_record_failure();
         Ok(last_result.unwrap_or_else(|| HttpResult::fail("Unexpected retry exhaustion", false)))
     }
 
+    /// Record a success on the circuit breaker (if attached).
+    fn cb_record_success(&self) {
+        if let Some(cb) = &self.circuit_breaker {
+            cb.record_success();
+        }
+    }
+
+    /// Record a failure on the circuit breaker (if attached).
+    fn cb_record_failure(&self) {
+        if let Some(cb) = &self.circuit_breaker {
+            cb.record_failure();
+        }
+    }
+
     /// Execute a single POST request, racing against cancellation.
+    ///
+    /// Each request is tagged with a unique `X-Request-Id` header and
+    /// logged via a tracing span for end-to-end observability.
     async fn execute_request(
         &self,
         payload: &serde_json::Value,
         cancel: Option<&CancellationToken>,
     ) -> Result<HttpResult, HttpError> {
+        let request_id = Uuid::new_v4().to_string();
+        debug!(request_id = %request_id, api_url = %self.api_url, "Sending LLM request");
+
         let request = self
             .client
             .post(&self.api_url)
             .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+            .header(
+                HeaderName::from_static("x-request-id"),
+                HeaderValue::from_str(&request_id)
+                    .unwrap_or_else(|_| HeaderValue::from_static("unknown")),
+            )
             .json(payload)
             .send();
 
@@ -166,6 +232,7 @@ impl HttpClient {
         match response {
             Ok(resp) => {
                 let status = resp.status().as_u16();
+                debug!(request_id = %request_id, status, "LLM response received");
                 if self.retry_config.is_retryable_status(status) {
                     // Parse Retry-After for the caller's retry logic
                     let body = resp.json::<serde_json::Value>().await.ok();
@@ -179,6 +246,7 @@ impl HttpClient {
                         .and_then(|m| m.as_str())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("HTTP {status}"));
+                    warn!(request_id = %request_id, status, error = %error_msg, "LLM request failed");
                     return Ok(HttpResult {
                         success: false,
                         status: Some(status),
@@ -190,8 +258,14 @@ impl HttpClient {
                 }
                 Ok(HttpResult::ok(status, body))
             }
-            Err(e) if is_retryable_error(&e) => Ok(HttpResult::fail(e.to_string(), true)),
-            Err(e) => Ok(HttpResult::fail(e.to_string(), false)),
+            Err(e) if is_retryable_error(&e) => {
+                warn!(request_id = %request_id, error = %e, "LLM request retryable error");
+                Ok(HttpResult::fail(e.to_string(), true))
+            }
+            Err(e) => {
+                warn!(request_id = %request_id, error = %e, "LLM request error");
+                Ok(HttpResult::fail(e.to_string(), false))
+            }
         }
     }
 
@@ -234,10 +308,13 @@ impl HttpClient {
 
 impl std::fmt::Debug for HttpClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HttpClient")
-            .field("api_url", &self.api_url)
-            .field("retry_config", &self.retry_config)
-            .finish()
+        let mut s = f.debug_struct("HttpClient");
+        s.field("api_url", &self.api_url)
+            .field("retry_config", &self.retry_config);
+        if let Some(cb) = &self.circuit_breaker {
+            s.field("circuit_breaker", cb);
+        }
+        s.finish()
     }
 }
 
@@ -315,5 +392,39 @@ mod tests {
             .interruptible_sleep(Duration::from_millis(10), None)
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_rejects_when_open() {
+        let cb = std::sync::Arc::new(crate::circuit_breaker::CircuitBreaker::new(
+            "test",
+            2,
+            Duration::from_secs(60),
+        ));
+        let client = HttpClient::new("https://example.com", HeaderMap::new(), None)
+            .unwrap()
+            .with_circuit_breaker(cb.clone());
+
+        // Open the circuit
+        cb.record_failure();
+        cb.record_failure();
+
+        let result = client.post_json(&serde_json::json!({}), None).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Circuit breaker open"));
+    }
+
+    #[test]
+    fn test_http_client_debug_with_circuit_breaker() {
+        let cb = std::sync::Arc::new(crate::circuit_breaker::CircuitBreaker::with_defaults(
+            "openai",
+        ));
+        let client = HttpClient::new("https://api.example.com/v1/chat", HeaderMap::new(), None)
+            .unwrap()
+            .with_circuit_breaker(cb);
+        let debug = format!("{:?}", client);
+        assert!(debug.contains("circuit_breaker"));
+        assert!(debug.contains("openai"));
     }
 }

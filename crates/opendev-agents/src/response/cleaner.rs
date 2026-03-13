@@ -9,11 +9,27 @@ use std::sync::LazyLock;
 static CLEANUP_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     vec![
         // Match chat template tokens like <|im_end|>, <|im_user|>, etc.
-        (Regex::new(r"<\|[^|]+\|>").unwrap(), ""),
-        (Regex::new(r"</?tool_call>").unwrap(), ""),
-        (Regex::new(r"</?tool_response>").unwrap(), ""),
-        (Regex::new(r"<function=[^>]+>").unwrap(), ""),
-        (Regex::new(r"</?parameter[^>]*>").unwrap(), ""),
+        // All patterns below are known-good compile-time regex literals.
+        (
+            Regex::new(r"<\|[^|]+\|>").expect("valid regex: chat template tokens"),
+            "",
+        ),
+        (
+            Regex::new(r"</?tool_call>").expect("valid regex: tool_call tags"),
+            "",
+        ),
+        (
+            Regex::new(r"</?tool_response>").expect("valid regex: tool_response tags"),
+            "",
+        ),
+        (
+            Regex::new(r"<function=[^>]+>").expect("valid regex: function tags"),
+            "",
+        ),
+        (
+            Regex::new(r"</?parameter[^>]*>").expect("valid regex: parameter tags"),
+            "",
+        ),
     ]
 });
 

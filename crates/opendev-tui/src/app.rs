@@ -4,7 +4,7 @@
 //! the main render loop, and dispatches events to widgets and controllers.
 
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::controllers::{ApprovalController, MessageController};
 use crate::event::{AppEvent, EventHandler};
@@ -118,6 +118,10 @@ pub struct AppState {
     pub active_subagents: Vec<crate::widgets::nested_tool::SubagentDisplayState>,
     /// Todo items from the current plan (for the todo progress panel).
     pub todo_items: Vec<TodoDisplayItem>,
+    /// Whether the todo panel is expanded (true) or collapsed (false).
+    pub todo_expanded: bool,
+    /// Spinner tick counter for todo panel animation.
+    pub todo_spinner_tick: usize,
     /// Optional plan name for the todo panel title.
     pub plan_name: Option<String>,
     /// Application version string.
@@ -139,6 +143,12 @@ pub struct AppState {
     pub cached_lines: Vec<ratatui::text::Line<'static>>,
     /// Generation counter at which `cached_lines` was last built.
     pub lines_generation: u64,
+    /// Scroll acceleration: last scroll direction (true = up, false = down).
+    pub scroll_last_direction: Option<bool>,
+    /// Scroll acceleration: timestamp of the last scroll key press.
+    pub scroll_last_time: Option<Instant>,
+    /// Scroll acceleration: current acceleration level (0 = base, increases).
+    pub scroll_accel_level: u8,
 }
 
 /// A message prepared for display in the conversation widget.
@@ -266,6 +276,8 @@ impl Default for AppState {
             background_task_count: 0,
             active_subagents: Vec::new(),
             todo_items: Vec::new(),
+            todo_expanded: true,
+            todo_spinner_tick: 0,
             plan_name: None,
             version: String::from("0.1.0"),
             welcome_panel: WelcomePanelState::new(),
@@ -276,6 +288,9 @@ impl Default for AppState {
             message_generation: 0,
             cached_lines: Vec::new(),
             lines_generation: u64::MAX, // Force initial build
+            scroll_last_direction: None,
+            scroll_last_time: None,
+            scroll_accel_level: 0,
         }
     }
 }
@@ -439,6 +454,11 @@ impl App {
     ///
     /// This is the expensive part of line building (markdown rendering, etc.)
     /// that only needs to happen when messages actually change -- not every frame.
+    ///
+    /// Viewport culling: we estimate the line count per message and skip building
+    /// styled lines for messages whose line indices are far above the visible
+    /// viewport (scroll_offset from bottom + viewport height + 50-line buffer).
+    /// Skipped messages emit placeholder blank lines to preserve scroll math.
     fn rebuild_cached_lines(&mut self) {
         use crate::formatters::display::strip_system_reminders;
         use crate::formatters::markdown::MarkdownRenderer;
@@ -450,9 +470,66 @@ impl App {
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
 
+        // --- Viewport culling: estimate line counts per message ---
+        let viewport_h = self.state.terminal_height as usize;
+        let buffer_lines = 50;
+        // Visible window measured from bottom of content
+        let visible_from_bottom = self.state.scroll_offset as usize + viewport_h + buffer_lines;
+
+        // Quick estimate of line count per message (without full rendering)
+        let msg_line_estimates: Vec<usize> = self
+            .state
+            .messages
+            .iter()
+            .map(|msg| {
+                let content = strip_system_reminders(&msg.content);
+                let text_lines = if content.is_empty() { 0 } else { content.lines().count() };
+                let tool_lines = if let Some(ref tc) = msg.tool_call {
+                    1 + if !tc.collapsed {
+                        tc.result_lines.len()
+                    } else if !tc.result_lines.is_empty() {
+                        1
+                    } else {
+                        0
+                    } + tc.nested_calls.len()
+                } else {
+                    0
+                };
+                // +1 for blank separator
+                text_lines + tool_lines + 1
+            })
+            .collect();
+
+        let total_estimated: usize = msg_line_estimates.iter().sum();
+
+        // Determine which messages are within the visible window.
+        // Lines are rendered top-to-bottom; scroll_offset is from the bottom.
+        // A message is visible if its line range overlaps:
+        //   [total_estimated - visible_from_bottom, total_estimated]
+        let cull_start = total_estimated.saturating_sub(visible_from_bottom);
+        let mut cumulative = 0usize;
+        let msg_visible: Vec<bool> = msg_line_estimates
+            .iter()
+            .map(|&est| {
+                let msg_start = cumulative;
+                let msg_end = cumulative + est;
+                cumulative = msg_end;
+                // Visible if this message's range overlaps the visible window
+                msg_end > cull_start
+            })
+            .collect();
+
         let mut lines: Vec<Line<'static>> = Vec::new();
 
-        for msg in &self.state.messages {
+        for (msg_idx, msg) in self.state.messages.iter().enumerate() {
+            // Viewport culling: emit placeholder lines for off-screen messages
+            if !msg_visible[msg_idx] {
+                let est = msg_line_estimates[msg_idx];
+                for _ in 0..est {
+                    lines.push(Line::from(""));
+                }
+                continue;
+            }
             let content = strip_system_reminders(&msg.content);
             if content.is_empty() && msg.tool_call.is_none() {
                 continue;
@@ -665,8 +742,13 @@ impl App {
         let has_subagents = !self.state.active_subagents.is_empty();
         let has_todos = !self.state.todo_items.is_empty();
         let todo_height: u16 = if has_todos {
-            // 2 borders + 1 progress bar + items (capped)
-            (self.state.todo_items.len() as u16 + 3).min(10)
+            if self.state.todo_expanded {
+                // 2 borders + 1 progress bar + items (capped at 12)
+                (self.state.todo_items.len() as u16 + 3).min(12)
+            } else {
+                // Collapsed: border top + 1 line + border bottom
+                3
+            }
         } else {
             0
         };
@@ -730,7 +812,9 @@ impl App {
 
         // Todo panel (only if plan has todos)
         if has_todos {
-            let mut todo_widget = TodoPanelWidget::new(&self.state.todo_items);
+            let mut todo_widget = TodoPanelWidget::new(&self.state.todo_items)
+                .with_expanded(self.state.todo_expanded)
+                .with_spinner_tick(self.state.todo_spinner_tick);
             if let Some(ref name) = self.state.plan_name {
                 todo_widget = todo_widget.with_plan_name(name);
             }
@@ -1333,15 +1417,20 @@ impl App {
             (_, KeyCode::End) => {
                 self.state.input_cursor = self.state.input_buffer.len();
             }
-            // Page Up — scroll conversation
+            // Page Up — scroll conversation (with acceleration)
             (_, KeyCode::PageUp) => {
-                self.state.scroll_offset = self.state.scroll_offset.saturating_add(10);
+                let base = self.accelerated_scroll(true);
+                // PageUp uses 3x the accelerated scroll amount
+                let amount = base.saturating_mul(3);
+                self.state.scroll_offset = self.state.scroll_offset.saturating_add(amount);
                 self.state.user_scrolled = true;
             }
-            // Page Down — scroll conversation
+            // Page Down — scroll conversation (with acceleration)
             (_, KeyCode::PageDown) => {
                 if self.state.scroll_offset > 0 {
-                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(10);
+                    let base = self.accelerated_scroll(false);
+                    let amount = base.saturating_mul(3);
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(amount);
                 } else {
                     self.state.user_scrolled = false;
                 }
@@ -1393,12 +1482,13 @@ impl App {
                     self.state.input_cursor += 1;
                 }
             }
-            // Up/Down arrow — navigate autocomplete or scroll
+            // Up/Down arrow — navigate autocomplete or scroll (with acceleration)
             (_, KeyCode::Up) => {
                 if self.state.autocomplete.is_visible() {
                     self.state.autocomplete.select_prev();
                 } else {
-                    self.state.scroll_offset = self.state.scroll_offset.saturating_add(3);
+                    let amount = self.accelerated_scroll(true);
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_add(amount);
                     self.state.user_scrolled = true;
                 }
             }
@@ -1406,7 +1496,8 @@ impl App {
                 if self.state.autocomplete.is_visible() {
                     self.state.autocomplete.select_next();
                 } else if self.state.scroll_offset > 0 {
-                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
+                    let amount = self.accelerated_scroll(false);
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(amount);
                 } else {
                     self.state.user_scrolled = false;
                 }
@@ -1421,6 +1512,13 @@ impl App {
                         self.state.message_generation += 1;
                         break;
                     }
+                }
+            }
+            // Ctrl+T — toggle todo panel expanded/collapsed
+            (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
+                if !self.state.todo_items.is_empty() {
+                    self.state.todo_expanded = !self.state.todo_expanded;
+                    self.state.dirty = true;
                 }
             }
             // Ctrl+B — show background tasks info
@@ -1450,6 +1548,34 @@ impl App {
                 self.update_autocomplete();
             }
             _ => {}
+        }
+    }
+
+    /// Compute the scroll amount with acceleration.
+    ///
+    /// If the same scroll direction is repeated within 200ms, the amount
+    /// increases: 3 -> 6 -> 12 (then caps). Resets on direction change or timeout.
+    fn accelerated_scroll(&mut self, up: bool) -> u16 {
+        let now = Instant::now();
+        let same_direction = self.state.scroll_last_direction == Some(up);
+        let within_window = self
+            .state
+            .scroll_last_time
+            .is_some_and(|t| now.duration_since(t) < Duration::from_millis(200));
+
+        if same_direction && within_window {
+            self.state.scroll_accel_level = (self.state.scroll_accel_level + 1).min(2);
+        } else {
+            self.state.scroll_accel_level = 0;
+        }
+
+        self.state.scroll_last_direction = Some(up);
+        self.state.scroll_last_time = Some(now);
+
+        match self.state.scroll_accel_level {
+            0 => 3,
+            1 => 6,
+            _ => 12,
         }
     }
 
@@ -1569,6 +1695,11 @@ impl App {
         // Advance spinner animation
         if self.state.agent_active || !self.state.active_tools.is_empty() {
             self.state.spinner.tick();
+        }
+
+        // Advance todo spinner (for collapsed mode)
+        if !self.state.todo_items.is_empty() {
+            self.state.todo_spinner_tick = self.state.todo_spinner_tick.wrapping_add(1);
         }
 
         // Update elapsed time and tick counter on active tools

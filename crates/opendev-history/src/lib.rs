@@ -16,5 +16,5 @@ pub mod snapshot;
 pub use file_locks::FileLock;
 pub use index::SessionIndex;
 pub use listing::SessionListing;
-pub use session_manager::SessionManager;
+pub use session_manager::{SessionManager, generate_title_from_messages};
 pub use snapshot::SnapshotManager;

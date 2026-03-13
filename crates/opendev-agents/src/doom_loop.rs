@@ -35,6 +35,22 @@ pub enum DoomLoopAction {
     ForceStop,
 }
 
+/// Recovery strategy recommended when a doom loop is detected.
+///
+/// The detector returns progressively stronger actions:
+/// 1st detection -> `Nudge` (gentle redirect)
+/// 2nd detection -> `StepBack` (reconsider approach)
+/// 3rd detection -> `CompactContext` (summarize and restart)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecoveryAction {
+    /// Send a nudge message to the model.
+    Nudge(String),
+    /// Suggest switching to a different approach.
+    StepBack(String),
+    /// Suggest compacting context to break out of confusion.
+    CompactContext,
+}
+
 /// Doom-loop cycle detector.
 ///
 /// Maintains a sliding window of tool call fingerprints and checks for
@@ -63,6 +79,28 @@ impl DoomLoopDetector {
     pub fn reset(&mut self) {
         self.recent.clear();
         self.nudge_count = 0;
+    }
+
+    /// Map a detected doom-loop action to a concrete recovery strategy.
+    ///
+    /// Escalation sequence:
+    /// - `Redirect` (1st detection) -> `Nudge` (gentle redirect)
+    /// - `Notify` (2nd detection) -> `StepBack` (reconsider approach)
+    /// - `ForceStop` (3rd detection) -> `CompactContext`
+    /// - `None` -> empty `Nudge` (no-op)
+    pub fn recovery_action(&self, action: &DoomLoopAction, warning: &str) -> RecoveryAction {
+        match action {
+            DoomLoopAction::Redirect => RecoveryAction::Nudge(format!(
+                "{warning} Consider trying a different approach or tool."
+            )),
+            DoomLoopAction::Notify => RecoveryAction::StepBack(format!(
+                "Warning: {warning} Please reconsider your approach entirely. \
+                 Step back and think about what is fundamentally going wrong, \
+                 then try a different strategy."
+            )),
+            DoomLoopAction::ForceStop => RecoveryAction::CompactContext,
+            DoomLoopAction::None => RecoveryAction::Nudge(String::new()),
+        }
     }
 
     /// Compute a compact fingerprint for a tool call: `"tool_name:args_hash"`.
@@ -293,6 +331,66 @@ mod tests {
                 assert_eq!(action, DoomLoopAction::Redirect);
                 assert!(warning.contains("3-step cycle"));
             }
+        }
+    }
+
+    #[test]
+    fn test_recovery_action_redirect_returns_nudge() {
+        let mut det = DoomLoopDetector::new();
+        let tc = make_tool_call("read_file", "{\"path\": \"same.rs\"}");
+
+        // Trigger first detection (Redirect)
+        det.check(&[tc.clone()]);
+        det.check(&[tc.clone()]);
+        let (action, warning) = det.check(&[tc.clone()]);
+        assert_eq!(action, DoomLoopAction::Redirect);
+
+        let recovery = det.recovery_action(&action, &warning);
+        match recovery {
+            RecoveryAction::Nudge(msg) => {
+                assert!(msg.contains("Consider trying a different approach"));
+            }
+            other => panic!("Expected Nudge, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_recovery_action_notify_returns_step_back() {
+        let mut det = DoomLoopDetector::new();
+        let tc = make_tool_call("read_file", "{\"path\": \"same.rs\"}");
+
+        // First detection (Redirect)
+        det.check(&[tc.clone()]);
+        det.check(&[tc.clone()]);
+        det.check(&[tc.clone()]);
+
+        // Second detection (Notify)
+        let (action, warning) = det.check(&[tc.clone()]);
+        assert_eq!(action, DoomLoopAction::Notify);
+
+        let recovery = det.recovery_action(&action, &warning);
+        match recovery {
+            RecoveryAction::StepBack(msg) => {
+                assert!(msg.contains("reconsider your approach"));
+            }
+            other => panic!("Expected StepBack, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_recovery_action_force_stop_returns_compact() {
+        let det = DoomLoopDetector::new();
+        let recovery = det.recovery_action(&DoomLoopAction::ForceStop, "stuck");
+        assert_eq!(recovery, RecoveryAction::CompactContext);
+    }
+
+    #[test]
+    fn test_recovery_action_none_returns_empty_nudge() {
+        let det = DoomLoopDetector::new();
+        let recovery = det.recovery_action(&DoomLoopAction::None, "");
+        match recovery {
+            RecoveryAction::Nudge(msg) => assert!(msg.is_empty()),
+            other => panic!("Expected empty Nudge, got {:?}", other),
         }
     }
 }

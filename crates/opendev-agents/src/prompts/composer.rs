@@ -18,11 +18,14 @@ use std::sync::LazyLock;
 use super::embedded;
 
 /// Regex to strip HTML comment frontmatter from markdown files.
-static FRONTMATTER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^\s*<!--.*?-->\s*").unwrap());
+static FRONTMATTER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)^\s*<!--.*?-->\s*").expect("valid regex: frontmatter pattern")
+});
 
 /// Regex for `{{variable_name}}` placeholders in templates.
-static VARIABLE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{(\w+)\}\}").unwrap());
+static VARIABLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\{\{(\w+)\}\}").expect("valid regex: variable placeholder pattern")
+});
 
 /// Runtime context passed to condition functions for section filtering.
 pub type PromptContext = HashMap<String, serde_json::Value>;

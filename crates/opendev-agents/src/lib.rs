@@ -20,11 +20,11 @@ pub mod skills;
 pub mod subagents;
 pub mod traits;
 
-pub use doom_loop::{DoomLoopAction, DoomLoopDetector};
+pub use doom_loop::{DoomLoopAction, DoomLoopDetector, RecoveryAction};
 pub use llm_calls::LlmCaller;
 pub use main_agent::MainAgent;
 pub use prompts::{PromptComposer, PromptSection};
-pub use react_loop::{ReactLoop, ReactLoopConfig, TurnResult};
+pub use react_loop::{IterationMetrics, ReactLoop, ReactLoopConfig, ToolCallMetric, TurnResult};
 pub use response::ResponseCleaner;
 pub use skills::{LoadedSkill, SkillLoader, SkillMetadata, SkillSource};
 pub use subagents::{

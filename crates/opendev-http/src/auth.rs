@@ -175,7 +175,8 @@ impl CredentialStore {
         };
 
         self.cache = Some(data);
-        self.cache.as_ref().unwrap()
+        // SAFETY: we just set self.cache to Some on the line above
+        self.cache.as_ref().expect("cache was just set to Some")
     }
 
     /// Save credentials with restrictive permissions.

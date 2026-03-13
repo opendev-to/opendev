@@ -96,8 +96,14 @@ fn register_default_tools(registry: &mut ToolRegistry) {
     registry.register(Arc::new(DiffPreviewTool));
     registry.register(Arc::new(PresentPlanTool::new()));
 
-    // Todo (with shared manager)
+    // Todo tools (5 separate tools sharing one manager)
     let todo_manager = Arc::new(Mutex::new(opendev_runtime::TodoManager::new()));
+    registry.register(Arc::new(WriteTodosTool::new(Arc::clone(&todo_manager))));
+    registry.register(Arc::new(UpdateTodoTool::new(Arc::clone(&todo_manager))));
+    registry.register(Arc::new(CompleteTodoTool::new(Arc::clone(&todo_manager))));
+    registry.register(Arc::new(ListTodosTool::new(Arc::clone(&todo_manager))));
+    registry.register(Arc::new(ClearTodosTool::new(Arc::clone(&todo_manager))));
+    // Keep legacy single-action tool for backward compatibility
     registry.register(Arc::new(TodoTool::new(todo_manager)));
 
     // Agent tools
@@ -148,11 +154,15 @@ impl AgentRuntime {
         // Configure HTTP client based on provider
         let api_key = config.get_api_key().unwrap_or_default();
 
+        // Auto-detect provider from API key if not explicitly set
+        let provider = AdaptedClient::resolve_provider(&config.model_provider, &api_key);
+        debug!(provider = %provider, "Resolved model provider");
+
         let (api_url, headers, adapter): (
             String,
             HeaderMap,
             Option<Box<dyn opendev_http::adapters::base::ProviderAdapter>>,
-        ) = match config.model_provider.as_str() {
+        ) = match provider.as_str() {
             "anthropic" => {
                 let adapter = opendev_http::adapters::anthropic::AnthropicAdapter::new();
                 let url = config
@@ -195,6 +205,35 @@ impl AgentRuntime {
                 hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
                 (
                     url,
+                    hdrs,
+                    Some(
+                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
+                    ),
+                )
+            }
+            "gemini" | "google" => {
+                let adapter =
+                    opendev_http::adapters::gemini::GeminiAdapter::new(&config.model);
+                let api_url = config
+                    .api_base_url
+                    .clone()
+                    .map(|base| {
+                        opendev_http::adapters::gemini::gemini_api_url(&base, &config.model)
+                    })
+                    .unwrap_or_else(|| {
+                        opendev_http::adapters::gemini::gemini_api_url(
+                            adapter.api_url(),
+                            &config.model,
+                        )
+                    });
+                let mut hdrs = HeaderMap::new();
+                // Gemini uses x-goog-api-key header
+                if let Ok(val) = HeaderValue::from_str(&api_key) {
+                    hdrs.insert("x-goog-api-key", val);
+                }
+                hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                (
+                    api_url,
                     hdrs,
                     Some(
                         Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
@@ -262,8 +301,12 @@ impl AgentRuntime {
             }
         };
 
+        let circuit_breaker = std::sync::Arc::new(
+            opendev_http::CircuitBreaker::with_defaults(&provider),
+        );
         let raw_http_client = HttpClient::new(api_url, headers, None)
-            .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+            .map_err(|e| format!("Failed to create HTTP client: {e}"))?
+            .with_circuit_breaker(circuit_breaker);
 
         let http_client = match adapter {
             Some(a) => AdaptedClient::with_adapter(raw_http_client, a),
@@ -385,6 +428,7 @@ impl AgentRuntime {
             is_subagent: false,
             session_id: self.session_manager.current_session().map(|s| s.id.clone()),
             values: HashMap::new(),
+            timeout_config: None,
         };
 
         // Step 6: Set thinking context for this query

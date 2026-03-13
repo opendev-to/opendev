@@ -175,12 +175,20 @@ impl ModelRegistry {
         // Schedule background refresh if stale
         if !registry.providers.is_empty() && is_cache_stale(&providers_dir, DEFAULT_CACHE_TTL) {
             let cache_dir = cache_dir.to_path_buf();
-            std::thread::Builder::new()
-                .name("models-dev-sync".to_string())
-                .spawn(move || {
-                    let _ = sync_provider_cache(Some(&cache_dir), None);
-                })
-                .ok();
+            // Use tokio::spawn if inside a runtime, otherwise fall back to a thread
+            if let Ok(_handle) = tokio::runtime::Handle::try_current() {
+                let cache_dir_clone = cache_dir.clone();
+                tokio::spawn(async move {
+                    let _ = sync_provider_cache_async(Some(&cache_dir_clone), None).await;
+                });
+            } else {
+                std::thread::Builder::new()
+                    .name("models-dev-sync".to_string())
+                    .spawn(move || {
+                        let _ = sync_provider_cache(Some(&cache_dir), None);
+                    })
+                    .ok();
+            }
         }
 
         registry
@@ -441,10 +449,9 @@ pub fn sync_provider_cache(
     Ok(true)
 }
 
-/// Fetch the models.dev catalog.
-fn fetch_models_dev() -> Option<serde_json::Value> {
-    // Use blocking reqwest for sync context
-    let client = reqwest::blocking::Client::builder()
+/// Fetch the models.dev catalog asynchronously.
+async fn fetch_models_dev_async() -> Option<serde_json::Value> {
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .user_agent(
             std::env::var("OPENDEV_HTTP_USER_AGENT")
@@ -453,8 +460,8 @@ fn fetch_models_dev() -> Option<serde_json::Value> {
         .build()
         .ok()?;
 
-    match client.get(MODELS_DEV_URL).send() {
-        Ok(resp) if resp.status().is_success() => resp.json().ok(),
+    match client.get(MODELS_DEV_URL).send().await {
+        Ok(resp) if resp.status().is_success() => resp.json().await.ok(),
         Ok(resp) => {
             debug!("models.dev returned status {}", resp.status());
             None
@@ -464,6 +471,112 @@ fn fetch_models_dev() -> Option<serde_json::Value> {
             None
         }
     }
+}
+
+/// Fetch the models.dev catalog (sync wrapper for non-async contexts).
+///
+/// Spawns a new tokio runtime if needed. Prefer `fetch_models_dev_async`
+/// when already inside an async context.
+fn fetch_models_dev() -> Option<serde_json::Value> {
+    // Try to use an existing tokio runtime; fall back to creating one.
+    match tokio::runtime::Handle::try_current() {
+        Ok(_handle) => {
+            // We are inside a tokio runtime but on a blocking thread
+            // (e.g., spawned via std::thread). Use block_on from a
+            // spawn_blocking context or a new thread.
+            std::thread::scope(|s| {
+                s.spawn(|| {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .ok()
+                        .and_then(|rt| rt.block_on(fetch_models_dev_async()))
+                })
+                .join()
+                .ok()
+                .flatten()
+            })
+        }
+        Err(_) => {
+            // No runtime — build a lightweight one.
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()
+                .and_then(|rt| rt.block_on(fetch_models_dev_async()))
+        }
+    }
+}
+
+/// Async version of `sync_provider_cache` for use in async contexts.
+///
+/// Fetches from models.dev without blocking the tokio runtime.
+pub async fn sync_provider_cache_async(
+    cache_dir: Option<&Path>,
+    cache_ttl: Option<Duration>,
+) -> Result<bool, RegistryError> {
+    let cache_dir = cache_dir.map(PathBuf::from).unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(".opendev")
+            .join("cache")
+    });
+    let providers_dir = cache_dir.join("providers");
+    let ttl = cache_ttl.unwrap_or(DEFAULT_CACHE_TTL);
+
+    // Check TTL via marker file
+    let marker = providers_dir.join(".last_sync");
+    if marker.exists()
+        && let Ok(meta) = marker.metadata()
+        && let Ok(mtime) = meta.modified()
+        && SystemTime::now()
+            .duration_since(mtime)
+            .is_ok_and(|age| age <= ttl)
+    {
+        return Ok(false); // Still fresh
+    }
+
+    if std::env::var("OPENDEV_DISABLE_REMOTE_MODELS")
+        .is_ok_and(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+    {
+        return Ok(false);
+    }
+
+    let catalog = if let Ok(override_path) = std::env::var("OPENDEV_MODELS_DEV_PATH") {
+        let path = PathBuf::from(override_path);
+        if path.exists() {
+            let content = std::fs::read_to_string(&path)?;
+            serde_json::from_str(&content)?
+        } else {
+            warn!("OPENDEV_MODELS_DEV_PATH {:?} does not exist", path);
+            return Ok(false);
+        }
+    } else {
+        match fetch_models_dev_async().await {
+            Some(data) => data,
+            None => return Ok(false),
+        }
+    };
+
+    std::fs::create_dir_all(&providers_dir)?;
+
+    if let Some(catalog_obj) = catalog.as_object() {
+        for (provider_id, provider_data) in catalog_obj {
+            if let Some(converted) = convert_provider_to_internal(provider_id, provider_data) {
+                if converted["models"].as_object().is_none_or(|m| m.is_empty()) {
+                    continue;
+                }
+                let path = providers_dir.join(format!("{provider_id}.json"));
+                let json = serde_json::to_string_pretty(&converted).unwrap_or_default();
+                if let Err(e) = std::fs::write(&path, json) {
+                    debug!("Failed to write cache for provider {}: {}", provider_id, e);
+                }
+            }
+        }
+    }
+
+    let _ = std::fs::File::create(&marker);
+    Ok(true)
 }
 
 /// Convert a models.dev provider entry to internal JSON format.

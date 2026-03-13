@@ -47,6 +47,9 @@ pub struct ToolResult {
     /// Additional metadata (tool-specific).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Execution duration in milliseconds (populated by the registry).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 impl ToolResult {
@@ -57,6 +60,7 @@ impl ToolResult {
             output: Some(output.into()),
             error: None,
             metadata: HashMap::new(),
+            duration_ms: None,
         }
     }
 
@@ -70,6 +74,7 @@ impl ToolResult {
             output: Some(output.into()),
             error: None,
             metadata,
+            duration_ms: None,
         }
     }
 
@@ -80,12 +85,36 @@ impl ToolResult {
             output: None,
             error: Some(error.into()),
             metadata: HashMap::new(),
+            duration_ms: None,
         }
     }
 
     /// Create a result from a ToolError.
     pub fn from_error(err: ToolError) -> Self {
         Self::fail(err.to_string())
+    }
+}
+
+/// Per-tool timeout configuration.
+///
+/// Allows overriding the default idle and maximum timeouts for tools
+/// that execute external processes (e.g., bash).
+#[derive(Debug, Clone)]
+pub struct ToolTimeoutConfig {
+    /// Idle timeout in seconds: kill when no stdout/stderr activity for this long.
+    /// Defaults to 60 seconds.
+    pub idle_timeout_secs: u64,
+    /// Absolute maximum runtime in seconds (safety cap).
+    /// Defaults to 600 seconds.
+    pub max_timeout_secs: u64,
+}
+
+impl Default for ToolTimeoutConfig {
+    fn default() -> Self {
+        Self {
+            idle_timeout_secs: 60,
+            max_timeout_secs: 600,
+        }
     }
 }
 
@@ -103,6 +132,8 @@ pub struct ToolContext {
     pub session_id: Option<String>,
     /// Arbitrary context values for tool-specific needs.
     pub values: HashMap<String, serde_json::Value>,
+    /// Optional per-tool timeout overrides.
+    pub timeout_config: Option<ToolTimeoutConfig>,
 }
 
 impl ToolContext {
@@ -113,6 +144,7 @@ impl ToolContext {
             is_subagent: false,
             session_id: None,
             values: HashMap::new(),
+            timeout_config: None,
         }
     }
 
@@ -131,6 +163,12 @@ impl ToolContext {
     /// Insert a context value.
     pub fn with_value(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.values.insert(key.into(), value);
+        self
+    }
+
+    /// Set timeout configuration.
+    pub fn with_timeout_config(mut self, config: ToolTimeoutConfig) -> Self {
+        self.timeout_config = Some(config);
         self
     }
 }
@@ -240,5 +278,57 @@ mod tests {
     fn test_tool_error_display() {
         let err = ToolError::InvalidParams("missing file_path".into());
         assert_eq!(err.to_string(), "Invalid parameters: missing file_path");
+    }
+
+    #[test]
+    fn test_tool_result_duration_ms_default_none() {
+        let result = ToolResult::ok("output");
+        assert!(result.duration_ms.is_none());
+
+        let result = ToolResult::fail("error");
+        assert!(result.duration_ms.is_none());
+    }
+
+    #[test]
+    fn test_tool_result_duration_ms_serde() {
+        let mut result = ToolResult::ok("output");
+        result.duration_ms = Some(42);
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"duration_ms\":42"));
+        let deserialized: ToolResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.duration_ms, Some(42));
+    }
+
+    #[test]
+    fn test_tool_result_duration_ms_skipped_when_none() {
+        let result = ToolResult::ok("output");
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("duration_ms"));
+    }
+
+    #[test]
+    fn test_tool_timeout_config_default() {
+        let config = ToolTimeoutConfig::default();
+        assert_eq!(config.idle_timeout_secs, 60);
+        assert_eq!(config.max_timeout_secs, 600);
+    }
+
+    #[test]
+    fn test_tool_context_with_timeout_config() {
+        let config = ToolTimeoutConfig {
+            idle_timeout_secs: 30,
+            max_timeout_secs: 300,
+        };
+        let ctx = ToolContext::new("/tmp/project").with_timeout_config(config);
+        assert!(ctx.timeout_config.is_some());
+        let tc = ctx.timeout_config.unwrap();
+        assert_eq!(tc.idle_timeout_secs, 30);
+        assert_eq!(tc.max_timeout_secs, 300);
+    }
+
+    #[test]
+    fn test_tool_context_default_no_timeout_config() {
+        let ctx = ToolContext::default();
+        assert!(ctx.timeout_config.is_none());
     }
 }

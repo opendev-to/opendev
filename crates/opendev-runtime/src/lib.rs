@@ -38,7 +38,7 @@ pub use interrupt::{InterruptToken, InterruptedError};
 pub use plan_index::PlanIndex;
 pub use plan_names::generate_plan_name;
 pub use session_model::SessionModelManager;
-pub use todo::{TodoItem, TodoManager, TodoStatus, parse_plan_steps};
+pub use todo::{TodoItem, TodoManager, TodoStatus, parse_plan_steps, parse_status, strip_markdown};
 
 pub use action_summarizer::summarize_action;
 pub use custom_commands::{CustomCommand, CustomCommandLoader};

@@ -149,7 +149,9 @@ impl AnthropicAdapter {
                     }))
                 })
                 .collect();
-            *payload.get_mut("tools").unwrap() = json!(converted);
+            if let Some(tools_slot) = payload.get_mut("tools") {
+                *tools_slot = json!(converted);
+            }
         }
 
         // Convert tool_choice from Chat Completions to Anthropic format
@@ -275,7 +277,9 @@ impl AnthropicAdapter {
                 }
             }
 
-            *payload.get_mut("messages").unwrap() = json!(converted);
+            if let Some(messages_slot) = payload.get_mut("messages") {
+                *messages_slot = json!(converted);
+            }
         }
     }
 

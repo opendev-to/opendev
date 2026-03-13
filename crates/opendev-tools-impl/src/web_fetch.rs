@@ -115,6 +115,7 @@ impl BaseTool for WebFetchTool {
                 output: Some(body),
                 error: Some(format!("HTTP {status}")),
                 metadata,
+                duration_ms: None,
             };
         }
 

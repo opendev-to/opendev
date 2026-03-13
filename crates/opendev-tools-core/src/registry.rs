@@ -82,7 +82,8 @@ impl ToolRegistry {
     /// Execute a tool by name with parameter normalization.
     ///
     /// Normalizes parameters (camelCase -> snake_case, path resolution) before
-    /// passing them to the tool's execute method.
+    /// passing them to the tool's execute method. Automatically measures
+    /// execution time and attaches it to the result as `duration_ms`.
     pub async fn execute(
         &self,
         tool_name: &str,
@@ -101,7 +102,10 @@ impl ToolRegistry {
         let working_dir = ctx.working_dir.to_string_lossy().to_string();
         let normalized = normalizer::normalize_params(tool_name, args, Some(&working_dir));
 
-        tool.execute(normalized, ctx).await
+        let start = std::time::Instant::now();
+        let mut result = tool.execute(normalized, ctx).await;
+        result.duration_ms = Some(start.elapsed().as_millis() as u64);
+        result
     }
 }
 
@@ -210,6 +214,23 @@ mod tests {
         let result = reg.execute("echo", args, &ctx).await;
         assert!(result.success);
         assert_eq!(result.output.as_deref(), Some("Echo: hello"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_populates_duration_ms() {
+        let mut reg = ToolRegistry::new();
+        reg.register(Arc::new(EchoTool));
+
+        let mut args = HashMap::new();
+        args.insert("message".into(), serde_json::json!("timing"));
+
+        let ctx = ToolContext::new("/tmp/test");
+        let result = reg.execute("echo", args, &ctx).await;
+        assert!(result.success);
+        // duration_ms should be populated by the registry
+        assert!(result.duration_ms.is_some());
+        // Execution should be near-instant (< 100ms for an echo)
+        assert!(result.duration_ms.unwrap() < 100);
     }
 
     #[tokio::test]
