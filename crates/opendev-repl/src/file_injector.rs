@@ -10,6 +10,7 @@
 //! - Images: Multimodal blocks for vision models (base64 encoded)
 
 use base64::Engine as _;
+use opendev_runtime::gitignore::GitIgnoreParser;
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
@@ -82,20 +83,8 @@ const BINARY_EXTENSIONS: &[&str] = &[
     ".db", ".sqlite3",
 ];
 
-/// Directories that should always be ignored in directory listings.
-const ALWAYS_IGNORE_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".tox",
-    "target",
-    "dist",
-    "build",
-    ".next",
-    ".cache",
-];
+// Directory ignore filtering is now handled by GitIgnoreParser from opendev-runtime,
+// which reads .gitignore files and has a comprehensive always-ignored dirs list.
 
 /// Maximum file size before truncation (50 KB).
 const MAX_FILE_SIZE: u64 = 50 * 1024;
@@ -185,6 +174,8 @@ pub struct InjectionResult {
 pub struct FileContentInjector {
     /// Working directory for resolving relative paths.
     working_dir: PathBuf,
+    /// GitIgnore parser for filtering directory listings.
+    gitignore: GitIgnoreParser,
 }
 
 impl FileContentInjector {
@@ -193,7 +184,11 @@ impl FileContentInjector {
         let working_dir = working_dir
             .canonicalize()
             .unwrap_or_else(|_| working_dir.clone());
-        Self { working_dir }
+        let gitignore = GitIgnoreParser::new(&working_dir);
+        Self {
+            working_dir,
+            gitignore,
+        }
     }
 
     // -- public API ---------------------------------------------------------
@@ -498,7 +493,12 @@ impl FileContentInjector {
             Err(_) => return vec![format!("{}[permission denied]", prefix)],
         };
 
-        let mut items: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        let mut items: Vec<PathBuf> = entries
+            .filter_map(|e| {
+                e.ok()
+                    .map(|e| e.path().canonicalize().unwrap_or_else(|_| e.path()))
+            })
+            .collect();
 
         // Sort: directories first, then by lowercase name
         items.sort_by(|a, b| {
@@ -523,17 +523,10 @@ impl FileContentInjector {
             }
         });
 
-        // Filter ignored dirs
-        let ignore_set: HashSet<&str> = ALWAYS_IGNORE_DIRS.iter().copied().collect();
+        // Filter ignored entries using GitIgnoreParser (respects .gitignore + always-ignored dirs)
         let items: Vec<PathBuf> = items
             .into_iter()
-            .filter(|p| {
-                let name = p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                !(p.is_dir() && ignore_set.contains(name.as_str()))
-            })
+            .filter(|p| !self.gitignore.is_ignored(p))
             .take(MAX_DIR_ITEMS)
             .collect();
 
