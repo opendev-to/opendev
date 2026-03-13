@@ -34,6 +34,8 @@ pub struct ConversationWidget<'a> {
     task_progress: Option<&'a TaskProgress>,
     /// Pre-computed spinner character for the current frame.
     spinner_char: char,
+    /// Pre-built cached lines for the static message portion (if available).
+    cached_lines: Option<&'a [Line<'static>]>,
 }
 
 impl<'a> ConversationWidget<'a> {
@@ -48,6 +50,7 @@ impl<'a> ConversationWidget<'a> {
             active_tools: &[],
             task_progress: None,
             spinner_char: SPINNER_FRAMES[0],
+            cached_lines: None,
         }
     }
 
@@ -83,6 +86,14 @@ impl<'a> ConversationWidget<'a> {
 
     pub fn spinner_char(mut self, ch: char) -> Self {
         self.spinner_char = ch;
+        self
+    }
+
+    /// Supply pre-built cached lines for the static message portion.
+    /// When set, `build_lines()` is skipped and these lines are used directly,
+    /// with dynamic spinner/progress lines still built fresh each frame.
+    pub fn cached_lines(mut self, lines: &'a [Line<'static>]) -> Self {
+        self.cached_lines = Some(lines);
         self
     }
 
@@ -266,8 +277,21 @@ impl<'a> ConversationWidget<'a> {
             lines.push(Line::from(""));
         }
 
-        // Inline spinner lines at the bottom of the conversation
-        let active_unfinished: Vec<_> = self.active_tools.iter().filter(|t| !t.finished).collect();
+        lines
+    }
+
+    /// Build spinner/progress lines separately from message content.
+    ///
+    /// These are rendered outside the scrollable area so that spinner
+    /// animation (60ms ticks) doesn't shift scroll math or cause jitter.
+    fn build_spinner_lines(&self) -> Vec<Line<'a>> {
+        let mut lines: Vec<Line> = Vec::new();
+
+        let active_unfinished: Vec<_> = self
+            .active_tools
+            .iter()
+            .filter(|t| !t.is_finished())
+            .collect();
 
         if !active_unfinished.is_empty() {
             for tool in &active_unfinished {
@@ -307,10 +331,6 @@ impl<'a> ConversationWidget<'a> {
                 ),
             ]));
         }
-
-        // Bottom padding — 1 line of breathing room (the render method reserves
-        // an additional row, so the total visual gap is 2 rows).
-        lines.push(Line::from(""));
 
         lines
     }
@@ -368,17 +388,33 @@ impl Widget for ConversationWidget<'_> {
             return;
         }
 
-        // Reserve 1 row at the bottom as a guaranteed gap before the input separator.
-        // The content also has 2 blank padding lines, but word-wrapping estimation
-        // (div_ceil) can undercount rows vs. ratatui's actual WordWrapper, causing
-        // the padding to be clipped at certain terminal sizes.  This reserved row
-        // ensures at least 1 row of breathing room regardless of scroll accuracy.
+        // Build spinner lines separately — these are rendered outside the
+        // scrollable paragraph so that 60ms tick animation doesn't shift
+        // the scroll math or cause the gap to jitter.
+        let spinner_lines = self.build_spinner_lines();
+        let spinner_height = spinner_lines.len() as u16;
+
+        // Reserve bottom rows: 1 gap row + spinner rows (if any).
+        // This keeps the gap between conversation and input stable.
+        let reserved = 1 + spinner_height;
+        let content_height = area.height.saturating_sub(reserved);
+        if content_height == 0 {
+            return;
+        }
+
         let content_area = Rect {
-            height: area.height - 1,
+            height: content_height,
             ..area
         };
 
-        let lines = self.build_lines();
+        // Use pre-built cached lines if available, otherwise build from scratch.
+        let owned_lines;
+        let lines: &[Line] = if let Some(cached) = self.cached_lines {
+            cached
+        } else {
+            owned_lines = self.build_lines();
+            &owned_lines
+        };
 
         // Compute total wrapped line count (character-level estimate)
         let total_lines: usize = lines
@@ -395,7 +431,7 @@ impl Widget for ConversationWidget<'_> {
         let viewport_height = content_area.height as usize;
         let max_scroll = total_lines.saturating_sub(viewport_height);
 
-        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(lines.to_vec()).wrap(Wrap { trim: false });
 
         // scroll_offset = lines from bottom; convert to lines from top for ratatui
         let clamped = (self.scroll_offset as usize).min(max_scroll);
@@ -404,6 +440,26 @@ impl Widget for ConversationWidget<'_> {
         paragraph
             .scroll((actual_scroll as u16, 0))
             .render(content_area, buf);
+
+        // Render spinner lines below the scroll area.
+        // Short conversation: position right after messages.
+        // Long conversation: position at bottom of scroll area.
+        if spinner_height > 0 {
+            let spinner_y = if total_lines < viewport_height {
+                // Short: right after the last message line
+                content_area.y + total_lines as u16
+            } else {
+                // Long: fixed at bottom of scroll area
+                content_area.y + content_area.height
+            };
+
+            for (i, line) in spinner_lines.iter().enumerate() {
+                let y = spinner_y + i as u16;
+                if y < area.bottom() {
+                    buf.set_line(area.x, y, line, area.width);
+                }
+            }
+        }
 
         // Scroll position indicator when scrolled up
         if self.scroll_offset > 0 && max_scroll > 0 {
@@ -513,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn test_inline_spinner_active_tools() {
+    fn test_spinner_active_tools() {
         let msgs = vec![DisplayMessage {
             role: DisplayRole::User,
             content: "Do something".into(),
@@ -523,8 +579,7 @@ mod tests {
             id: "t1".into(),
             name: "bash".into(),
             output_lines: vec![],
-            finished: false,
-            success: false,
+            state: crate::app::ToolState::Running,
             elapsed_secs: 3,
             started_at: std::time::Instant::now(),
             tick_count: 0,
@@ -533,18 +588,27 @@ mod tests {
             args: Default::default(),
         }];
         let widget = ConversationWidget::new(&msgs, 0).active_tools(&tools);
-        let lines = widget.build_lines();
-        let text: String = lines
+        // Spinner is now built separately from message lines
+        let spinner = widget.build_spinner_lines();
+        let text: String = spinner
             .iter()
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
             .collect();
         assert!(text.contains("bash"));
         assert!(text.contains("(3s)"));
+        // Message lines should NOT contain spinner content
+        let msg_lines = widget.build_lines();
+        let msg_text: String = msg_lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(!msg_text.contains("(3s)"));
     }
 
     #[test]
-    fn test_inline_spinner_thinking() {
+    fn test_spinner_thinking() {
         let msgs = vec![DisplayMessage {
             role: DisplayRole::User,
             content: "Hello".into(),
@@ -558,8 +622,8 @@ mod tests {
             started_at: std::time::Instant::now(),
         };
         let widget = ConversationWidget::new(&msgs, 0).task_progress(Some(&progress));
-        let lines = widget.build_lines();
-        let text: String = lines
+        let spinner = widget.build_spinner_lines();
+        let text: String = spinner
             .iter()
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
@@ -569,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn test_inline_spinner_tools_take_priority_over_thinking() {
+    fn test_spinner_tools_take_priority_over_thinking() {
         let msgs = vec![DisplayMessage {
             role: DisplayRole::User,
             content: "Hello".into(),
@@ -579,8 +643,7 @@ mod tests {
             id: "t1".into(),
             name: "read_file".into(),
             output_lines: vec![],
-            finished: false,
-            success: false,
+            state: crate::app::ToolState::Running,
             elapsed_secs: 1,
             started_at: std::time::Instant::now(),
             tick_count: 2,
@@ -598,8 +661,8 @@ mod tests {
         let widget = ConversationWidget::new(&msgs, 0)
             .active_tools(&tools)
             .task_progress(Some(&progress));
-        let lines = widget.build_lines();
-        let text: String = lines
+        let spinner = widget.build_spinner_lines();
+        let text: String = spinner
             .iter()
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
@@ -617,9 +680,11 @@ mod tests {
             tool_call: None,
         }];
         let widget = ConversationWidget::new(&msgs, 0);
+        let spinner = widget.build_spinner_lines();
+        assert!(spinner.is_empty());
+        // Message lines: "> Hello" + blank separator
         let lines = widget.build_lines();
-        // Message line + blank line + 1 bottom padding line, no spinner
-        assert_eq!(lines.len(), 3);
+        assert_eq!(lines.len(), 2);
     }
 
     #[test]
