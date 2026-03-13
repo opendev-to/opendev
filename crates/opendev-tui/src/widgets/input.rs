@@ -16,15 +16,23 @@ pub struct InputWidget<'a> {
     cursor: usize,
     agent_active: bool,
     mode: &'a str,
+    pending_count: usize,
 }
 
 impl<'a> InputWidget<'a> {
-    pub fn new(buffer: &'a str, cursor: usize, agent_active: bool, mode: &'a str) -> Self {
+    pub fn new(
+        buffer: &'a str,
+        cursor: usize,
+        agent_active: bool,
+        mode: &'a str,
+        pending_count: usize,
+    ) -> Self {
         Self {
             buffer,
             cursor,
             agent_active,
             mode,
+            pending_count,
         }
     }
 }
@@ -41,10 +49,16 @@ impl Widget for InputWidget<'_> {
             style_tokens::ACCENT
         };
 
-        let placeholder = if self.agent_active {
-            "Agent is thinking... (ESC to interrupt)"
+        let placeholder = if self.pending_count > 0 {
+            format!(
+                "{} message{} queued (ESC to cancel)",
+                self.pending_count,
+                if self.pending_count == 1 { "" } else { "s" }
+            )
+        } else if self.agent_active {
+            "Agent is thinking... (ESC to interrupt)".to_owned()
         } else {
-            "Type a message..."
+            "Type a message...".to_owned()
         };
 
         // Row 0: separator line with embedded mode indicator
@@ -160,16 +174,63 @@ mod tests {
 
     #[test]
     fn test_input_widget_creation() {
-        let _widget = InputWidget::new("hello", 3, false, "NORMAL");
+        let _widget = InputWidget::new("hello", 3, false, "NORMAL", 0);
     }
 
     #[test]
     fn test_input_widget_empty() {
-        let _widget = InputWidget::new("", 0, false, "NORMAL");
+        let _widget = InputWidget::new("", 0, false, "NORMAL", 0);
     }
 
     #[test]
     fn test_input_widget_agent_active() {
-        let _widget = InputWidget::new("", 0, true, "NORMAL");
+        let _widget = InputWidget::new("", 0, true, "NORMAL", 0);
+    }
+
+    #[test]
+    fn test_queue_indicator_placeholder() {
+        // Verify the widget renders queue count in placeholder
+        let area = Rect::new(0, 0, 60, 3);
+        let mut buf = Buffer::empty(area);
+
+        let widget = InputWidget::new("", 0, true, "NORMAL", 2);
+        widget.render(area, &mut buf);
+
+        // Check that "2 messages queued" appears in the rendered buffer
+        let rendered: String = (0..area.width)
+            .map(|x| {
+                buf.cell((x, 1))
+                    .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
+            })
+            .collect();
+        assert!(
+            rendered.contains("2 messages queued"),
+            "Expected '2 messages queued' in rendered output, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn test_queue_indicator_single_message() {
+        let area = Rect::new(0, 0, 60, 3);
+        let mut buf = Buffer::empty(area);
+
+        let widget = InputWidget::new("", 0, true, "NORMAL", 1);
+        widget.render(area, &mut buf);
+
+        let rendered: String = (0..area.width)
+            .map(|x| {
+                buf.cell((x, 1))
+                    .map_or(' ', |c| c.symbol().chars().next().unwrap_or(' '))
+            })
+            .collect();
+        assert!(
+            rendered.contains("1 message queued"),
+            "Expected '1 message queued' in rendered output, got: {rendered:?}"
+        );
+        // Should NOT say "messages" (plural)
+        assert!(
+            !rendered.contains("1 messages"),
+            "Should use singular 'message' for count=1"
+        );
     }
 }

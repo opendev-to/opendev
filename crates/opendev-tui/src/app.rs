@@ -130,6 +130,15 @@ pub struct AppState {
     pub terminal_height: u16,
     /// Queued messages submitted while agent was processing.
     pub pending_messages: Vec<String>,
+    /// Dirty flag — set to `true` when state changes; cleared after render.
+    pub dirty: bool,
+    /// Generation counter for message/tool state changes.
+    /// Incremented whenever messages, tool results, or collapse state change.
+    pub message_generation: u64,
+    /// Cached conversation lines (static message portion only, excludes spinners).
+    pub cached_lines: Vec<ratatui::text::Line<'static>>,
+    /// Generation counter at which `cached_lines` was last built.
+    pub lines_generation: u64,
 }
 
 /// A message prepared for display in the conversation widget.
@@ -164,14 +173,41 @@ pub struct DisplayToolCall {
     pub nested_calls: Vec<DisplayToolCall>,
 }
 
+/// State of a tool execution lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolState {
+    /// Tool is queued but not yet executing.
+    Pending,
+    /// Tool is currently executing.
+    Running,
+    /// Tool finished successfully.
+    Completed,
+    /// Tool finished with an error.
+    Error,
+    /// Tool was cancelled before completion.
+    Cancelled,
+}
+
+impl ToolState {
+    /// Returns true if the tool is in a terminal state (Completed, Error, or Cancelled).
+    pub fn is_finished(&self) -> bool {
+        matches!(self, Self::Completed | Self::Error | Self::Cancelled)
+    }
+
+    /// Returns true if the tool completed successfully.
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Completed)
+    }
+}
+
 /// Active tool execution being displayed.
 #[derive(Debug, Clone)]
 pub struct ToolExecution {
     pub id: String,
     pub name: String,
     pub output_lines: Vec<String>,
-    pub finished: bool,
-    pub success: bool,
+    /// Current state of the tool execution.
+    pub state: ToolState,
     /// Elapsed seconds since tool started.
     pub elapsed_secs: u64,
     /// Start timestamp for elapsed time calculation.
@@ -184,6 +220,18 @@ pub struct ToolExecution {
     pub depth: usize,
     /// Tool arguments for display.
     pub args: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl ToolExecution {
+    /// Whether the tool execution has finished (terminal state).
+    pub fn is_finished(&self) -> bool {
+        self.state.is_finished()
+    }
+
+    /// Whether the tool execution was successful.
+    pub fn is_success(&self) -> bool {
+        self.state.is_success()
+    }
 }
 
 impl Default for AppState {
@@ -224,6 +272,10 @@ impl Default for AppState {
             terminal_width: 80,
             terminal_height: 24,
             pending_messages: Vec::new(),
+            dirty: true,
+            message_generation: 0,
+            cached_lines: Vec::new(),
+            lines_generation: u64::MAX, // Force initial build
         }
     }
 }
@@ -344,6 +396,7 @@ impl App {
     ///
     /// Draining all pending events before each render avoids redundant frames
     /// when typing fast (5 queued keys = 1 render instead of 5).
+    /// The dirty flag skips renders when no state has changed.
     async fn event_loop(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -354,8 +407,17 @@ impl App {
             self.state.terminal_width = size.width;
             self.state.terminal_height = size.height;
 
-            // Render
-            terminal.draw(|frame| self.render(frame))?;
+            // Only render when state has changed
+            if self.state.dirty {
+                // Rebuild cached conversation lines if message generation changed
+                if self.state.lines_generation != self.state.message_generation {
+                    self.rebuild_cached_lines();
+                    self.state.lines_generation = self.state.message_generation;
+                }
+
+                terminal.draw(|frame| self.render(frame))?;
+                self.state.dirty = false;
+            }
 
             // Wait for at least one event
             if let Some(event) = self.event_handler.next().await {
@@ -371,6 +433,226 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Rebuild the cached static conversation lines from messages.
+    ///
+    /// This is the expensive part of line building (markdown rendering, etc.)
+    /// that only needs to happen when messages actually change -- not every frame.
+    fn rebuild_cached_lines(&mut self) {
+        use crate::formatters::display::strip_system_reminders;
+        use crate::formatters::markdown::MarkdownRenderer;
+        use crate::formatters::style_tokens::{self, Indent};
+        use crate::formatters::tool_registry::{
+            categorize_tool, format_tool_call_display, tool_color,
+        };
+        use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR};
+        use ratatui::style::{Modifier, Style};
+        use ratatui::text::{Line, Span};
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        for msg in &self.state.messages {
+            let content = strip_system_reminders(&msg.content);
+            if content.is_empty() && msg.tool_call.is_none() {
+                continue;
+            }
+
+            match msg.role {
+                DisplayRole::Assistant => {
+                    let md_lines = MarkdownRenderer::render(&content);
+                    let mut leading_consumed = false;
+                    for md_line in md_lines {
+                        let line_text: String = md_line
+                            .spans
+                            .iter()
+                            .map(|s| s.content.to_string())
+                            .collect();
+                        let has_content = !line_text.trim().is_empty();
+
+                        if !leading_consumed && has_content {
+                            let mut spans = vec![Span::styled(
+                                format!("{} ", COMPLETED_CHAR),
+                                Style::default().fg(style_tokens::GREEN_BRIGHT),
+                            )];
+                            spans.extend(
+                                md_line
+                                    .spans
+                                    .into_iter()
+                                    .map(|s| Span::styled(s.content.to_string(), s.style)),
+                            );
+                            lines.push(Line::from(spans));
+                            leading_consumed = true;
+                        } else {
+                            let mut spans = vec![Span::raw(Indent::CONT.to_string())];
+                            spans.extend(
+                                md_line
+                                    .spans
+                                    .into_iter()
+                                    .map(|s| Span::styled(s.content.to_string(), s.style)),
+                            );
+                            lines.push(Line::from(spans));
+                        }
+                    }
+                }
+                DisplayRole::User => {
+                    let content_lines: Vec<&str> = content.lines().collect();
+                    for (i, content_line) in content_lines.iter().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    "> ".to_string(),
+                                    Style::default()
+                                        .fg(style_tokens::ACCENT)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default().fg(style_tokens::PRIMARY),
+                                ),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::raw(Indent::CONT.to_string()),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default().fg(style_tokens::PRIMARY),
+                                ),
+                            ]));
+                        }
+                    }
+                }
+                DisplayRole::System => {
+                    let content_lines: Vec<&str> = content.lines().collect();
+                    for (i, content_line) in content_lines.iter().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    "! ".to_string(),
+                                    Style::default()
+                                        .fg(style_tokens::WARNING)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default().fg(style_tokens::SUBTLE),
+                                ),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::raw(Indent::CONT.to_string()),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default().fg(style_tokens::SUBTLE),
+                                ),
+                            ]));
+                        }
+                    }
+                }
+                DisplayRole::Thinking => {
+                    for (i, content_line) in content.lines().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("{} ", style_tokens::THINKING_ICON),
+                                    Style::default().fg(style_tokens::THINKING_BG),
+                                ),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default()
+                                        .fg(style_tokens::THINKING_BG)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::raw(Indent::CONT.to_string()),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default()
+                                        .fg(style_tokens::THINKING_BG)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            ]));
+                        }
+                    }
+                }
+            }
+
+            // Tool call summary
+            if let Some(ref tc) = msg.tool_call {
+                let category = categorize_tool(&tc.name);
+                let color = tool_color(category);
+                let (icon, icon_color) = if tc.success {
+                    (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
+                } else {
+                    (COMPLETED_CHAR, style_tokens::ERROR)
+                };
+                let display = format_tool_call_display(&tc.name, &tc.arguments);
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+                    Span::styled(
+                        display,
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+
+                // Collapsible result lines
+                if !tc.collapsed && !tc.result_lines.is_empty() {
+                    for (i, result_line) in tc.result_lines.iter().enumerate() {
+                        let prefix_char = if i == 0 {
+                            format!("  {}  ", CONTINUATION_CHAR)
+                        } else {
+                            Indent::RESULT_CONT.to_string()
+                        };
+                        lines.push(Line::from(vec![
+                            Span::styled(prefix_char, Style::default().fg(style_tokens::SUBTLE)),
+                            Span::styled(
+                                result_line.clone(),
+                                Style::default().fg(style_tokens::SUBTLE),
+                            ),
+                        ]));
+                    }
+                } else if tc.collapsed && !tc.result_lines.is_empty() {
+                    let count = tc.result_lines.len();
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
+                            CONTINUATION_CHAR
+                        ),
+                        Style::default()
+                            .fg(style_tokens::SUBTLE)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                }
+
+                // Nested tool calls
+                for nested in &tc.nested_calls {
+                    let n_indent = Indent::CONT.to_string();
+                    let n_category = categorize_tool(&nested.name);
+                    let n_color = tool_color(n_category);
+                    let (n_icon, n_icon_color) = if nested.success {
+                        (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
+                    } else {
+                        (COMPLETED_CHAR, style_tokens::ERROR)
+                    };
+                    let n_display = format_tool_call_display(&nested.name, &nested.arguments);
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("{n_indent}\u{2514}\u{2500} "),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                        Span::styled(format!("{n_icon} "), Style::default().fg(n_icon_color)),
+                        Span::styled(n_display, Style::default().fg(n_color)),
+                    ]));
+                }
+            }
+
+            // Blank line between messages
+            lines.push(Line::from(""));
+        }
+
+        self.state.cached_lines = lines;
     }
 
     /// Render the full UI layout.
@@ -431,7 +713,7 @@ impl App {
                 .mode(mode_str);
             frame.render_widget(wp, chunks[0]);
         } else {
-            let conversation =
+            let mut conversation =
                 ConversationWidget::new(&self.state.messages, self.state.scroll_offset)
                     .terminal_width(area.width)
                     .version(&self.state.version)
@@ -440,6 +722,9 @@ impl App {
                     .active_tools(&self.state.active_tools)
                     .task_progress(self.state.task_progress.as_ref())
                     .spinner_char(self.state.spinner.current());
+            if !self.state.cached_lines.is_empty() {
+                conversation = conversation.cached_lines(&self.state.cached_lines);
+            }
             frame.render_widget(conversation, chunks[0]);
         }
 
@@ -464,6 +749,7 @@ impl App {
             self.state.input_cursor,
             self.state.agent_active,
             mode_str,
+            self.state.pending_messages.len(),
         );
         frame.render_widget(input, chunks[3]);
 
@@ -568,33 +854,67 @@ impl App {
         frame.render_widget(paragraph, popup_area);
     }
 
+    /// Drain the next pending message from the queue.
+    /// Displays the user message and sends it to the agent backend.
+    fn drain_next_pending_message(&mut self) {
+        if let Some(queued_msg) = self.state.pending_messages.first().cloned() {
+            self.state.pending_messages.remove(0);
+            // Display the user message NOW (deferred from queue time)
+            self.message_controller
+                .handle_user_submit(&mut self.state, &queued_msg);
+            self.state.message_generation += 1;
+            // Send to agent backend
+            self.state.agent_active = true;
+            let _ = self.event_tx.send(AppEvent::UserSubmit(queued_msg));
+            self.state.dirty = true;
+        }
+    }
+
     /// Dispatch an event to the appropriate handler.
     fn handle_event(&mut self, event: AppEvent) {
         match event {
-            AppEvent::Key(key) => self.handle_key(key),
-            AppEvent::Resize(_, _) => {} // ratatui handles resize automatically
-            AppEvent::Tick => self.handle_tick(),
+            AppEvent::Key(key) => {
+                self.handle_key(key);
+                self.state.dirty = true;
+            }
+            AppEvent::Resize(_, _) => {
+                // ratatui handles resize automatically, but we need to re-render
+                self.state.dirty = true;
+            }
+            AppEvent::Tick => {
+                self.handle_tick();
+                // Tick is dirty only when there are animations running
+                if self.state.agent_active
+                    || !self.state.active_tools.is_empty()
+                    || !self.state.active_subagents.is_empty()
+                    || self.state.task_progress.is_some()
+                    || !self.state.welcome_panel.fade_complete
+                {
+                    self.state.dirty = true;
+                }
+            }
 
             // Agent events
             AppEvent::AgentStarted => {
                 self.state.agent_active = true;
+                self.state.dirty = true;
             }
             AppEvent::AgentChunk(text) => {
                 self.message_controller
                     .handle_agent_chunk(&mut self.state, &text);
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::AgentMessage(msg) => {
                 self.message_controller
                     .handle_agent_message(&mut self.state, msg);
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::AgentFinished => {
                 self.state.agent_active = false;
-                // Drain pending messages: send the first queued message
-                if let Some(queued_msg) = self.state.pending_messages.first().cloned() {
-                    self.state.pending_messages.remove(0);
-                    self.state.agent_active = true;
-                    let _ = self.event_tx.send(AppEvent::UserSubmit(queued_msg));
-                }
+                self.state.dirty = true;
+                self.drain_next_pending_message();
             }
             AppEvent::AgentError(err) => {
                 self.state.agent_active = false;
@@ -603,6 +923,10 @@ impl App {
                     content: format!("Error: {err}"),
                     tool_call: None,
                 });
+                self.state.dirty = true;
+                self.state.message_generation += 1;
+                // Continue processing queued messages despite the error
+                self.drain_next_pending_message();
             }
 
             // Thinking events
@@ -612,6 +936,8 @@ impl App {
                     content: format!("Thinking: {content}"),
                     tool_call: None,
                 });
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::CritiqueTrace(content) => {
                 self.state.messages.push(DisplayMessage {
@@ -619,6 +945,8 @@ impl App {
                     content: format!("Critique: {content}"),
                     tool_call: None,
                 });
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::RefinedThinkingTrace(content) => {
                 self.state.messages.push(DisplayMessage {
@@ -626,6 +954,8 @@ impl App {
                     content: format!("Refined: {content}"),
                     tool_call: None,
                 });
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
 
             // Tool events
@@ -638,8 +968,7 @@ impl App {
                     id: tool_id,
                     name: tool_name,
                     output_lines: Vec::new(),
-                    finished: false,
-                    success: false,
+                    state: ToolState::Running,
                     elapsed_secs: 0,
                     started_at: std::time::Instant::now(),
                     tick_count: 0,
@@ -647,11 +976,14 @@ impl App {
                     depth: 0,
                     args,
                 });
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::ToolOutput { tool_id, output } => {
                 if let Some(tool) = self.state.active_tools.iter_mut().find(|t| t.id == tool_id) {
                     tool.output_lines.push(output);
                 }
+                self.state.dirty = true;
             }
             AppEvent::ToolResult {
                 tool_id,
@@ -691,14 +1023,21 @@ impl App {
                         }),
                     });
                 }
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::ToolFinished { tool_id, success } => {
                 if let Some(tool) = self.state.active_tools.iter_mut().find(|t| t.id == tool_id) {
-                    tool.finished = true;
-                    tool.success = success;
+                    tool.state = if success {
+                        ToolState::Completed
+                    } else {
+                        ToolState::Error
+                    };
                 }
                 // Remove finished tools after a brief display period
-                self.state.active_tools.retain(|t| !t.finished);
+                self.state.active_tools.retain(|t| !t.is_finished());
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::ToolApprovalRequired {
                 tool_id: _,
@@ -711,6 +1050,7 @@ impl App {
                 let _rx = self.approval_controller.start(description, wd);
                 // The receiver will be consumed by the agent runner
                 // via the event loop (Up/Down/Enter/Esc handled in handle_key).
+                self.state.dirty = true;
             }
 
             // Subagent events
@@ -721,6 +1061,7 @@ impl App {
                 self.state.active_subagents.push(
                     crate::widgets::nested_tool::SubagentDisplayState::new(subagent_name, task),
                 );
+                self.state.dirty = true;
             }
             AppEvent::SubagentToolCall {
                 subagent_name,
@@ -735,6 +1076,7 @@ impl App {
                 {
                     subagent.add_tool_call(tool_name, tool_id);
                 }
+                self.state.dirty = true;
             }
             AppEvent::SubagentToolComplete {
                 subagent_name,
@@ -750,6 +1092,7 @@ impl App {
                 {
                     subagent.complete_tool_call(&tool_id, success);
                 }
+                self.state.dirty = true;
             }
             AppEvent::SubagentFinished {
                 subagent_name,
@@ -768,6 +1111,7 @@ impl App {
                 }
                 // Remove finished subagents after marking them
                 // (keep them for one more render so the user sees the result)
+                self.state.dirty = true;
             }
 
             // Task progress events
@@ -779,9 +1123,11 @@ impl App {
                     interrupted: false,
                     started_at: std::time::Instant::now(),
                 });
+                self.state.dirty = true;
             }
             AppEvent::TaskProgressFinished => {
                 self.state.task_progress = None;
+                self.state.dirty = true;
             }
 
             // UI events
@@ -791,21 +1137,26 @@ impl App {
                     let _ = tx.send(msg.clone());
                     self.state.agent_active = true;
                 }
+                self.state.dirty = true;
             }
             AppEvent::Interrupt => {
                 if self.state.agent_active {
                     self.interrupt_manager.interrupt();
                     self.state.agent_active = false;
+                    self.state.pending_messages.clear();
                 }
+                self.state.dirty = true;
             }
             AppEvent::ModeChanged(mode) => {
                 self.state.mode = match mode.as_str() {
                     "plan" => OperationMode::Plan,
                     _ => OperationMode::Normal,
                 };
+                self.state.dirty = true;
             }
             AppEvent::Quit => {
                 self.state.running = false;
+                self.state.dirty = true;
             }
 
             // Passthrough for unhandled events
@@ -922,13 +1273,9 @@ impl App {
                     self.state.autocomplete.dismiss();
 
                     if self.state.agent_active {
-                        // Queue the message for when the agent finishes
-                        self.state.messages.push(DisplayMessage {
-                            role: DisplayRole::User,
-                            content: msg.clone(),
-                            tool_call: None,
-                        });
+                        // Queue silently — message will display when consumed
                         self.state.pending_messages.push(msg);
+                        self.state.dirty = true;
                     } else {
                         // Start fading the welcome panel on first user message
                         if !self.state.welcome_panel.fade_complete
@@ -942,6 +1289,7 @@ impl App {
                         } else {
                             self.message_controller
                                 .handle_user_submit(&mut self.state, &msg);
+                            self.state.message_generation += 1;
                             let _ = self.event_tx.send(AppEvent::UserSubmit(msg));
                         }
                     }
@@ -1070,6 +1418,7 @@ impl App {
                         && !tc.result_lines.is_empty()
                     {
                         tc.collapsed = !tc.collapsed;
+                        self.state.message_generation += 1;
                         break;
                     }
                 }
@@ -1091,6 +1440,7 @@ impl App {
                         tool_call: None,
                     });
                 }
+                self.state.message_generation += 1;
             }
             // Regular character input
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
@@ -1126,6 +1476,7 @@ impl App {
                 self.state.messages.clear();
                 self.state.scroll_offset = 0;
                 self.state.user_scrolled = false;
+                self.state.message_generation += 1;
             }
             "mode" => {
                 self.state.mode = match self.state.mode {
@@ -1137,6 +1488,7 @@ impl App {
                     content: format!("Mode: {}", self.state.mode),
                     tool_call: None,
                 });
+                self.state.message_generation += 1;
             }
             "thinking" => {
                 self.state.thinking_level = match self.state.thinking_level {
@@ -1150,6 +1502,7 @@ impl App {
                     content: format!("Thinking: {}", self.state.thinking_level),
                     tool_call: None,
                 });
+                self.state.message_generation += 1;
             }
             "autonomy" => {
                 self.state.autonomy = match self.state.autonomy {
@@ -1162,6 +1515,7 @@ impl App {
                     content: format!("Autonomy: {}", self.state.autonomy),
                     tool_call: None,
                 });
+                self.state.message_generation += 1;
             }
             "help" => {
                 self.state.messages.push(DisplayMessage {
@@ -1184,6 +1538,7 @@ impl App {
                     .join("\n"),
                     tool_call: None,
                 });
+                self.state.message_generation += 1;
             }
             _ => {
                 self.state.messages.push(DisplayMessage {
@@ -1193,6 +1548,7 @@ impl App {
                     ),
                     tool_call: None,
                 });
+                self.state.message_generation += 1;
             }
         }
     }
@@ -1217,7 +1573,7 @@ impl App {
 
         // Update elapsed time and tick counter on active tools
         for tool in &mut self.state.active_tools {
-            if !tool.finished {
+            if !tool.is_finished() {
                 tool.elapsed_secs = tool.started_at.elapsed().as_secs();
                 tool.tick_count += 1;
             }
