@@ -1,10 +1,10 @@
-//! Animated welcome panel with rainbow gradient, matrix braille rain, and breathing text.
+//! Animated welcome panel with cyan/blue matrix rain and breathing logo.
 //!
-//! Ports the Python `AnimatedWelcomePanel` from `opendev-py/opendev/ui_textual/widgets/welcome_panel.py`.
 //! Features:
-//! - Rainbow gradient text cycling through HSL hues
-//! - Matrix-style braille rain with "O p e n D e v" as negative space
-//! - Breathing text effect (sinusoidal lightness oscillation)
+//! - Cyan-blue matrix braille rain with per-column depth variation
+//! - Bright head glow on each rain column
+//! - "O p e n D e v" as breathing negative space with per-letter hue shift
+//! - Cohesive blue-themed gradient text and border
 //! - Fade-out animation on first message submission
 
 use ratatui::{
@@ -61,6 +61,7 @@ struct RainColumn {
     speed: f32,
     trail_len: u8,
     char_offset: u8,
+    hue_offset: f32, // per-column hue variation for depth
 }
 
 // ---------------------------------------------------------------------------
@@ -117,8 +118,8 @@ impl WelcomePanelState {
             return;
         }
 
-        // Rainbow gradient rotation
-        self.gradient_offset = (self.gradient_offset + 5) % 360;
+        // Gradient rotation (slower, more elegant sweep)
+        self.gradient_offset = (self.gradient_offset + 3) % 360;
 
         // Braille offset advances every 2 ticks
         self.braille_tick += 1;
@@ -153,14 +154,16 @@ impl WelcomePanelState {
         self.rain_columns.reserve(w);
         for _ in 0..w {
             let y = pseudo_rand(&mut self.rng_seed) * h as f32;
-            let speed = 0.15 + pseudo_rand(&mut self.rng_seed) * 0.35;
-            let trail_len = 3 + (pseudo_rand(&mut self.rng_seed) * 5.0) as u8;
+            let speed = 0.10 + pseudo_rand(&mut self.rng_seed) * 0.40;
+            let trail_len = 4 + (pseudo_rand(&mut self.rng_seed) * 6.0) as u8;
             let char_offset = (pseudo_rand(&mut self.rng_seed) * SPINNER_FRAMES.len() as f32) as u8;
+            let hue_offset = pseudo_rand(&mut self.rng_seed) * 30.0 - 15.0; // -15..+15
             self.rain_columns.push(RainColumn {
                 y,
                 speed,
                 trail_len,
                 char_offset,
+                hue_offset,
             });
         }
     }
@@ -174,9 +177,8 @@ impl WelcomePanelState {
         for col in &mut self.rain_columns {
             col.y += col.speed;
             if col.y > h + col.trail_len as f32 {
-                col.y = -(pseudo_rand(&mut (col.char_offset as u64 ^ 0xDEAD_BEEF)) * 4.0);
-                // Slight speed jitter
-                col.speed = 0.15 + (col.char_offset as f32 % 7.0) * 0.05;
+                col.y = -(pseudo_rand(&mut (col.char_offset as u64 ^ 0xDEAD_BEEF)) * 6.0);
+                col.speed = 0.10 + (col.char_offset as f32 % 9.0) * 0.04;
             }
         }
     }
@@ -228,7 +230,7 @@ impl<'a> WelcomePanelWidget<'a> {
         }
     }
 
-    /// Write a string with per-character rainbow gradient, centered in the row.
+    /// Write a string with cyan-blue gradient sweep, centered in the row.
     fn write_gradient_line(
         &self,
         buf: &mut Buffer,
@@ -243,23 +245,27 @@ impl<'a> WelcomePanelWidget<'a> {
             if ch == ' ' {
                 continue;
             }
-            let hue = ((i as u16 * 8 + line_offset * 20 + self.state.gradient_offset) % 360) as f64;
-            let sat = 0.8 * self.state.fade_progress as f64;
-            let lit = 0.6 * self.state.fade_progress as f64
+            // Sweep within 190-250 (cyan to blue-purple) instead of full rainbow
+            let sweep = (i as u16 * 3 + line_offset * 10 + self.state.gradient_offset) % 360;
+            let hue = 190.0 + (sweep as f64 / 360.0) * 60.0; // maps to 190..250
+            let sat = 0.75 * self.state.fade_progress as f64;
+            let lit = 0.55 * self.state.fade_progress as f64
                 + 0.1 * (1.0 - self.state.fade_progress as f64);
             let color = hsl_to_rgb(hue, sat, lit);
             Self::put(buf, area, start_x + i as u16, y, ch, color);
         }
     }
 
-    /// Draw the rounded border with cycling hue.
+    /// Draw the rounded border with slow cyan-blue sweep.
     fn draw_border(&self, buf: &mut Buffer, area: Rect, bx: u16, by: u16, bw: u16, bh: u16) {
         let offset = self.state.gradient_offset;
         let fade = self.state.fade_progress as f64;
+        let perimeter = 2 * (bw + bh);
 
         let border_color = |idx: u16| -> Color {
-            let hue = ((idx * 3 + offset) % 360) as f64;
-            hsl_to_rgb(hue, 0.5 * fade, 0.4 * fade + 0.1 * (1.0 - fade))
+            let t = ((idx as f64 / perimeter as f64) + offset as f64 / 360.0) % 1.0;
+            let hue = 195.0 + t * 50.0; // 195..245 (cyan to blue)
+            hsl_to_rgb(hue, 0.6 * fade, 0.35 * fade + 0.08 * (1.0 - fade))
         };
 
         // Top: ╭───╮
@@ -284,33 +290,88 @@ impl<'a> WelcomePanelWidget<'a> {
         }
     }
 
+    /// 3-row elegant logo: thin frame lines + wide-spaced text.
+    const LOGO_LINES: [&'static str; 3] = [
+        "─────────────────────────────",
+        "  O   P   E   N   D   E   V  ",
+        "─────────────────────────────",
+    ];
+    const LOGO_WIDTH: usize = 29;
+    const LOGO_HEIGHT: usize = 3;
+
     /// Render the matrix braille rain field.
     fn render_rain(&self, buf: &mut Buffer, area: Rect, rx: u16, ry: u16, rw: usize, rh: usize) {
-        // "O p e n D e v" exclusion zone
-        let logo = "O p e n D e v";
-        let logo_len = logo.len();
-        let logo_start_col = rw.saturating_sub(logo_len) / 2;
-        let logo_end_col = logo_start_col + logo_len;
-        let logo_row = rh / 2;
-
         let fade = self.state.fade_progress as f64;
+        let base_hue = 200.0;
+
+        // Decide between block logo (big) and compact single-line (small)
+        let show_block = rh >= 5 && rw >= Self::LOGO_WIDTH;
+        let compact_logo = "O p e n D e v";
+        let compact_len = compact_logo.len();
+        let show_compact = !show_block && rw >= compact_len;
+
+        // Block logo zone
+        let bl_start_col = rw.saturating_sub(Self::LOGO_WIDTH) / 2;
+        let bl_end_col = bl_start_col + Self::LOGO_WIDTH;
+        let bl_start_row = rh.saturating_sub(Self::LOGO_HEIGHT) / 2;
+        let bl_end_row = bl_start_row + Self::LOGO_HEIGHT;
+
+        // Compact logo zone
+        let cl_start_col = rw.saturating_sub(compact_len) / 2;
+        let cl_end_col = cl_start_col + compact_len;
+        let cl_row = rh / 2;
 
         for (col_idx, rain_col) in self.state.rain_columns.iter().enumerate().take(rw) {
             let head_y = rain_col.y as i32;
             let trail = rain_col.trail_len as i32;
+            let col_hue = base_hue + rain_col.hue_offset as f64;
 
             for row in 0..rh {
                 let row_i = row as i32;
                 let dist = head_y - row_i;
 
-                // Exclusion zone: draw "OpenDev" text instead of rain
-                if row == logo_row && col_idx >= logo_start_col && col_idx < logo_end_col {
-                    let ch_idx = col_idx - logo_start_col;
-                    let ch = logo.as_bytes()[ch_idx] as char;
+                // Block logo exclusion zone
+                if show_block
+                    && row >= bl_start_row
+                    && row < bl_end_row
+                    && col_idx >= bl_start_col
+                    && col_idx < bl_end_col
+                {
+                    let logo_r = row - bl_start_row;
+                    let logo_c = col_idx - bl_start_col;
+                    if let Some(ch) = Self::LOGO_LINES[logo_r].chars().nth(logo_c)
+                        && ch != ' '
+                    {
+                        let is_frame = ch == '─';
+                        if is_frame {
+                            // Frame lines: subtle, steady glow
+                            let color = hsl_to_rgb(210.0, 0.5 * fade, 0.22 * fade);
+                            Self::put(buf, area, rx + col_idx as u16, ry + row as u16, ch, color);
+                        } else {
+                            // Letters: bright breathing with per-letter hue shift
+                            let letter_t = logo_c as f64 / Self::LOGO_WIDTH as f64;
+                            let letter_hue = 190.0 + letter_t * 40.0;
+                            let breathe = 0.35 + 0.25 * (1.0 + self.state.breathe_phase.sin());
+                            let color = hsl_to_rgb(letter_hue, 0.9 * fade, breathe * fade);
+                            Self::put(buf, area, rx + col_idx as u16, ry + row as u16, ch, color);
+                        }
+                    }
+                    continue;
+                }
+
+                // Compact logo fallback (single line)
+                if show_compact
+                    && row == cl_row
+                    && col_idx >= cl_start_col
+                    && col_idx < cl_end_col
+                {
+                    let ch_idx = col_idx - cl_start_col;
+                    let ch = compact_logo.as_bytes()[ch_idx] as char;
                     if ch != ' ' {
-                        let breathe = 0.15
-                            + 0.075 * (1.0 + self.state.breathe_phase.sin());
-                        let color = hsl_to_rgb(160.0, 0.7 * fade, breathe * fade);
+                        let letter_t = ch_idx as f64 / compact_len as f64;
+                        let letter_hue = 190.0 + letter_t * 40.0;
+                        let breathe = 0.30 + 0.22 * (1.0 + self.state.breathe_phase.sin());
+                        let color = hsl_to_rgb(letter_hue, 0.85 * fade, breathe * fade);
                         Self::put(buf, area, rx + col_idx as u16, ry + row as u16, ch, color);
                     }
                     continue;
@@ -319,14 +380,22 @@ impl<'a> WelcomePanelWidget<'a> {
                 // Rain drop within trail range
                 if dist >= 0 && dist <= trail {
                     let t = dist as f64 / trail as f64;
-                    let lightness = 0.55 * (1.0 - t) + 0.15 * t;
-                    let frame_idx = (rain_col.char_offset as usize
-                        + row
-                        + self.state.braille_offset)
-                        % SPINNER_FRAMES.len();
-                    let ch = SPINNER_FRAMES[frame_idx];
-                    let color = hsl_to_rgb(160.0, 0.8 * fade, lightness * fade);
-                    Self::put(buf, area, rx + col_idx as u16, ry + row as u16, ch, color);
+                    if dist == 0 {
+                        let color = hsl_to_rgb(col_hue, 0.5 * fade, 0.75 * fade);
+                        Self::put(buf, area, rx + col_idx as u16, ry + row as u16, '▓', color);
+                    } else if dist == 1 {
+                        let color = hsl_to_rgb(col_hue, 0.75 * fade, 0.55 * fade);
+                        Self::put(buf, area, rx + col_idx as u16, ry + row as u16, '░', color);
+                    } else {
+                        let lightness = 0.45 * (1.0 - t) + 0.10 * t;
+                        let frame_idx = (rain_col.char_offset as usize
+                            + row
+                            + self.state.braille_offset)
+                            % SPINNER_FRAMES.len();
+                        let ch = SPINNER_FRAMES[frame_idx];
+                        let color = hsl_to_rgb(col_hue, 0.8 * fade, lightness * fade);
+                        Self::put(buf, area, rx + col_idx as u16, ry + row as u16, ch, color);
+                    }
                 }
             }
         }
@@ -341,8 +410,8 @@ impl Widget for WelcomePanelWidget<'_> {
 
         // Content lines
         let line1 = format!(
-            "\u{2550}\u{2550}\u{2550}  O P E N D E V  v{}  \u{2550}\u{2550}\u{2550}  Mode: {}  \u{2550}\u{2550}\u{2550}",
-            self.version, self.mode
+            "\u{2550}\u{2550}\u{2550}  O P E N D E V  v{}  \u{2550}\u{2550}\u{2550}",
+            self.version
         );
         let line3 = "/help  \u{2502}  /models  \u{2502}  Shift+Tab plan mode  \u{2502}  @file context";
 
@@ -448,14 +517,14 @@ mod tests {
         let mut state = WelcomePanelState::new();
         assert_eq!(state.gradient_offset, 0);
         state.tick(80, 24);
-        assert_eq!(state.gradient_offset, 5);
+        assert_eq!(state.gradient_offset, 3);
         state.tick(80, 24);
-        assert_eq!(state.gradient_offset, 10);
+        assert_eq!(state.gradient_offset, 6);
 
         // Wraps at 360
         state.gradient_offset = 358;
         state.tick(80, 24);
-        assert_eq!(state.gradient_offset, 3); // (358+5) % 360 = 3
+        assert_eq!(state.gradient_offset, 1); // (358+3) % 360 = 1
     }
 
     #[test]
@@ -487,9 +556,9 @@ mod tests {
         state.ensure_rain_field(40, 10);
         assert_eq!(state.rain_columns.len(), 40);
         for col in &state.rain_columns {
-            assert!(col.speed >= 0.15);
+            assert!(col.speed >= 0.10);
             assert!(col.speed <= 0.50);
-            assert!(col.trail_len >= 3 && col.trail_len <= 7);
+            assert!(col.trail_len >= 4 && col.trail_len <= 9);
         }
     }
 
