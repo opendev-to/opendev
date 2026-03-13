@@ -281,7 +281,7 @@ impl<'a> ConversationWidget<'a> {
                 let spinner = SPINNER_FRAMES[frame_idx];
                 lines.push(Line::from(vec![
                     Span::styled(
-                        format!("  {spinner} "),
+                        format!("{spinner} "),
                         Style::default().fg(style_tokens::BLUE_BRIGHT),
                     ),
                     Span::styled(
@@ -298,7 +298,7 @@ impl<'a> ConversationWidget<'a> {
             let elapsed = progress.started_at.elapsed().as_secs();
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("  {} ", self.spinner_char),
+                    format!("{} ", self.spinner_char),
                     Style::default().fg(style_tokens::BLUE_BRIGHT),
                 ),
                 Span::styled(
