@@ -3,19 +3,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use opendev_runtime::redact_secrets;
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
-
-/// Patterns that look like secrets and should be redacted.
-const REDACTION_PATTERNS: &[&str] = &[
-    "sk-",
-    "Bearer ",
-    "token:",
-    "password:",
-    "secret:",
-    "api_key:",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-];
 
 /// Tool for listing and reading conversation sessions.
 #[derive(Debug)]
@@ -155,33 +144,11 @@ fn session_read(dir: &Path, session_id: &str) -> ToolResult {
         Err(e) => return ToolResult::fail(format!("Failed to read session: {e}")),
     };
 
-    // Redact sensitive data
-    let redacted = redact_sensitive(&content);
+    // Redact sensitive data using the comprehensive secrets detector
+    // (catches Anthropic, OpenAI, Groq, Google, GitHub, Bearer, password, base64 secrets)
+    let redacted = redact_secrets(&content);
 
     ToolResult::ok(redacted)
-}
-
-fn redact_sensitive(text: &str) -> String {
-    let mut result = text.to_string();
-    for pattern in REDACTION_PATTERNS {
-        let mut search_from = 0;
-        while let Some(rel_pos) = result[search_from..].find(pattern) {
-            let pos = search_from + rel_pos;
-            let start = pos + pattern.len();
-            // Redact up to 60 chars or until whitespace/quote
-            let end = result[start..]
-                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
-                .map(|i| start + i)
-                .unwrap_or((start + 60).min(result.len()));
-            if end > start {
-                result.replace_range(start..end, "[REDACTED]");
-                search_from = pos + pattern.len() + "[REDACTED]".len();
-            } else {
-                search_from = start;
-            }
-        }
-    }
-    result
 }
 
 #[cfg(test)]
@@ -227,10 +194,11 @@ mod tests {
     }
 
     #[test]
-    fn test_redact_sensitive() {
-        let text = r#"key: sk-abc123xyz token:"secret_value" normal text"#;
-        let redacted = redact_sensitive(text);
-        assert!(!redacted.contains("abc123xyz"));
+    fn test_redact_secrets_in_session() {
+        // Anthropic API key pattern
+        let text = "key: sk-ant-api03-abcdefghij1234567890abcdefghij1234567890abcdefghij normal text";
+        let redacted = redact_secrets(text);
+        assert!(!redacted.contains("abcdefghij1234567890"));
         assert!(redacted.contains("[REDACTED]"));
         assert!(redacted.contains("normal text"));
     }
