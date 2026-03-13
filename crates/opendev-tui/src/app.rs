@@ -790,8 +790,15 @@ impl App {
                     let _ = self.event_tx.send(AppEvent::Interrupt);
                 }
             }
-            // Shift+Enter or Alt+Enter — insert newline in input buffer
-            // Use contains() so extra modifier bits don't prevent matching.
+            // Shift+Enter — insert newline in input buffer
+            // iTerm2 (and many terminals) map Shift+Enter to Ctrl+J (ASCII LF).
+            // Alt+Enter sends Enter with ALT modifier. Both insert a newline.
+            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                if !self.state.agent_active {
+                    self.state.input_buffer.insert(self.state.input_cursor, '\n');
+                    self.state.input_cursor += 1;
+                }
+            }
             (m, KeyCode::Enter)
                 if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
             {
