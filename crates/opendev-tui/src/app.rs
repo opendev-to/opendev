@@ -6,20 +6,20 @@
 use std::io;
 use std::time::Duration;
 
+use crate::controllers::{ApprovalController, MessageController};
+use crate::event::{AppEvent, EventHandler};
+use crate::managers::InterruptManager;
+use crate::widgets::{
+    ConversationWidget, InputWidget, NestedToolWidget, StatusBarWidget, TodoDisplayItem,
+    TodoPanelWidget, ToolDisplayWidget, WelcomePanelState, WelcomePanelWidget,
+};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, layout, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend, layout};
 use tokio::sync::mpsc;
-use crate::controllers::{ApprovalController, MessageController};
-use crate::managers::InterruptManager;
-use crate::event::{AppEvent, EventHandler};
-use crate::widgets::{
-    ConversationWidget, InputWidget, NestedToolWidget, StatusBarWidget, TodoDisplayItem,
-    TodoPanelWidget, ToolDisplayWidget,
-};
 
 /// Operation mode — mirrors `OperationMode` from the Python side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +123,12 @@ pub struct AppState {
     pub plan_name: Option<String>,
     /// Application version string.
     pub version: String,
+    /// Animated welcome panel state.
+    pub welcome_panel: WelcomePanelState,
+    /// Cached terminal width for tick-time access.
+    pub terminal_width: u16,
+    /// Cached terminal height for tick-time access.
+    pub terminal_height: u16,
 }
 
 /// A message prepared for display in the conversation widget.
@@ -211,6 +217,9 @@ impl Default for AppState {
             todo_items: Vec::new(),
             plan_name: None,
             version: String::from("0.1.0"),
+            welcome_panel: WelcomePanelState::new(),
+            terminal_width: 80,
+            terminal_height: 24,
         }
     }
 }
@@ -231,6 +240,12 @@ pub struct App {
     interrupt_manager: InterruptManager,
     /// Optional channel for forwarding user messages to the agent backend.
     user_message_tx: Option<mpsc::UnboundedSender<String>>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        App::new()
+    }
 }
 
 impl App {
@@ -305,6 +320,11 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     ) -> io::Result<()> {
         while self.state.running {
+            // Cache terminal dimensions for tick-time access
+            let size = terminal.size()?;
+            self.state.terminal_width = size.width;
+            self.state.terminal_height = size.height;
+
             // Render
             terminal.draw(|frame| self.render(frame))?;
 
@@ -346,28 +366,29 @@ impl App {
                 .state
                 .active_subagents
                 .iter()
-                .map(|s| {
-                    1 + s.active_tools.len() as u16
-                        + s.completed_tools.len().min(3) as u16
-                })
+                .map(|s| 1 + s.active_tools.len() as u16 + s.completed_tools.len().min(3) as u16)
                 .sum();
             (lines + 2).min(12) // Cap at 12 lines
         } else {
             0
         };
-        let progress_height: u16 = if self.state.task_progress.is_some() { 1 } else { 0 };
+        let progress_height: u16 = if self.state.task_progress.is_some() {
+            1
+        } else {
+            0
+        };
 
         let chunks = layout::Layout::default()
             .direction(layout::Direction::Vertical)
             .constraints(
                 [
-                    layout::Constraint::Min(5),                   // conversation
-                    layout::Constraint::Length(todo_height),       // todo panel
-                    layout::Constraint::Length(subagent_height),   // subagent display
-                    layout::Constraint::Length(tool_height),       // tool display
-                    layout::Constraint::Length(progress_height),   // task progress
-                    layout::Constraint::Length(2),                 // input
-                    layout::Constraint::Length(2),                 // status bar
+                    layout::Constraint::Min(5),                  // conversation
+                    layout::Constraint::Length(todo_height),     // todo panel
+                    layout::Constraint::Length(subagent_height), // subagent display
+                    layout::Constraint::Length(tool_height),     // tool display
+                    layout::Constraint::Length(progress_height), // task progress
+                    layout::Constraint::Length(2),               // input
+                    layout::Constraint::Length(2),               // status bar
                 ]
                 .as_ref(),
             )
@@ -378,12 +399,22 @@ impl App {
             OperationMode::Normal => "NORMAL",
             OperationMode::Plan => "PLAN",
         };
-        let conversation = ConversationWidget::new(&self.state.messages, self.state.scroll_offset)
-            .terminal_width(area.width)
-            .version(&self.state.version)
-            .working_dir(&self.state.working_dir)
-            .mode(mode_str);
-        frame.render_widget(conversation, chunks[0]);
+
+        // Show animated welcome panel when no messages (or during fade-out)
+        if self.state.messages.is_empty() && !self.state.welcome_panel.fade_complete {
+            let wp = WelcomePanelWidget::new(&self.state.welcome_panel)
+                .version(&self.state.version)
+                .mode(mode_str);
+            frame.render_widget(wp, chunks[0]);
+        } else {
+            let conversation =
+                ConversationWidget::new(&self.state.messages, self.state.scroll_offset)
+                    .terminal_width(area.width)
+                    .version(&self.state.version)
+                    .working_dir(&self.state.working_dir)
+                    .mode(mode_str);
+            frame.render_widget(conversation, chunks[0]);
+        }
 
         // Todo panel (only if plan has todos)
         if has_todos {
@@ -408,10 +439,8 @@ impl App {
 
         // Task progress (only if active)
         if let Some(ref progress) = self.state.task_progress {
-            let progress_widget = crate::widgets::progress::TaskProgressWidget::new(
-                progress,
-                &self.state.spinner,
-            );
+            let progress_widget =
+                crate::widgets::progress::TaskProgressWidget::new(progress, &self.state.spinner);
             frame.render_widget(progress_widget, chunks[4]);
         }
 
@@ -449,10 +478,10 @@ impl App {
 
     /// Render autocomplete popup above the input area.
     fn render_autocomplete(&self, frame: &mut ratatui::Frame, input_area: layout::Rect) {
+        use crate::formatters::style_tokens;
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
         use ratatui::widgets::{Block, Borders, Paragraph};
-        use crate::formatters::style_tokens;
 
         let suggestions = &self.state.autocomplete_suggestions;
         let max_show = suggestions.len().min(8);
@@ -484,7 +513,9 @@ impl App {
                     Span::styled(
                         cmd.description.to_string(),
                         if selected {
-                            Style::default().fg(style_tokens::CODE_BG).bg(style_tokens::CYAN)
+                            Style::default()
+                                .fg(style_tokens::CODE_BG)
+                                .bg(style_tokens::CYAN)
                         } else {
                             Style::default().fg(style_tokens::SUBTLE)
                         },
@@ -498,7 +529,9 @@ impl App {
             .border_style(Style::default().fg(style_tokens::BORDER))
             .title(Span::styled(
                 " Commands ",
-                Style::default().fg(style_tokens::CYAN).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(style_tokens::CYAN)
+                    .add_modifier(Modifier::BOLD),
             ));
 
         let paragraph = Paragraph::new(lines).block(block);
@@ -552,6 +585,13 @@ impl App {
                     tool_call: None,
                 });
             }
+            AppEvent::RefinedThinkingTrace(content) => {
+                self.state.messages.push(DisplayMessage {
+                    role: DisplayRole::Thinking,
+                    content: format!("Refined: {content}"),
+                    tool_call: None,
+                });
+            }
 
             // Tool events
             AppEvent::ToolStarted { tool_id, tool_name } => {
@@ -569,22 +609,12 @@ impl App {
                 });
             }
             AppEvent::ToolOutput { tool_id, output } => {
-                if let Some(tool) = self
-                    .state
-                    .active_tools
-                    .iter_mut()
-                    .find(|t| t.id == tool_id)
-                {
+                if let Some(tool) = self.state.active_tools.iter_mut().find(|t| t.id == tool_id) {
                     tool.output_lines.push(output);
                 }
             }
             AppEvent::ToolFinished { tool_id, success } => {
-                if let Some(tool) = self
-                    .state
-                    .active_tools
-                    .iter_mut()
-                    .find(|t| t.id == tool_id)
-                {
+                if let Some(tool) = self.state.active_tools.iter_mut().find(|t| t.id == tool_id) {
                     tool.finished = true;
                     tool.success = success;
                 }
@@ -610,10 +640,7 @@ impl App {
                 task,
             } => {
                 self.state.active_subagents.push(
-                    crate::widgets::nested_tool::SubagentDisplayState::new(
-                        subagent_name,
-                        task,
-                    ),
+                    crate::widgets::nested_tool::SubagentDisplayState::new(subagent_name, task),
                 );
             }
             AppEvent::SubagentToolCall {
@@ -747,6 +774,13 @@ impl App {
                     self.state.autocomplete_visible = false;
                     self.state.autocomplete_suggestions.clear();
 
+                    // Start fading the welcome panel on first user message
+                    if !self.state.welcome_panel.fade_complete
+                        && !self.state.welcome_panel.is_fading
+                    {
+                        self.state.welcome_panel.start_fade();
+                    }
+
                     if msg.starts_with('/') {
                         self.execute_slash_command(&msg);
                     } else {
@@ -811,7 +845,9 @@ impl App {
             }
             // Ctrl+Shift+A — cycle autonomy level
             // crossterm delivers uppercase char when Shift is held
-            (m, KeyCode::Char('A')) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::SHIFT) => {
+            (m, KeyCode::Char('A'))
+                if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::SHIFT) =>
+            {
                 self.state.autonomy = match self.state.autonomy {
                     AutonomyLevel::Manual => AutonomyLevel::SemiAuto,
                     AutonomyLevel::SemiAuto => AutonomyLevel::Auto,
@@ -820,7 +856,9 @@ impl App {
             }
             // Ctrl+Shift+T — cycle thinking level
             // crossterm delivers uppercase char when Shift is held
-            (m, KeyCode::Char('T')) if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::SHIFT) => {
+            (m, KeyCode::Char('T'))
+                if m.contains(KeyModifiers::CONTROL) && m.contains(KeyModifiers::SHIFT) =>
+            {
                 self.state.thinking_level = match self.state.thinking_level {
                     ThinkingLevel::Off => ThinkingLevel::Low,
                     ThinkingLevel::Low => ThinkingLevel::Medium,
@@ -830,7 +868,9 @@ impl App {
             }
             // Tab — accept autocomplete suggestion
             (_, KeyCode::Tab) => {
-                if self.state.autocomplete_visible && !self.state.autocomplete_suggestions.is_empty() {
+                if self.state.autocomplete_visible
+                    && !self.state.autocomplete_suggestions.is_empty()
+                {
                     let cmd = self.state.autocomplete_suggestions[self.state.autocomplete_index];
                     self.state.input_buffer = format!("/{}", cmd.name);
                     self.state.input_cursor = self.state.input_buffer.len();
@@ -840,7 +880,9 @@ impl App {
             }
             // Up/Down arrow — navigate autocomplete
             (_, KeyCode::Up) => {
-                if self.state.autocomplete_visible && !self.state.autocomplete_suggestions.is_empty() {
+                if self.state.autocomplete_visible
+                    && !self.state.autocomplete_suggestions.is_empty()
+                {
                     if self.state.autocomplete_index > 0 {
                         self.state.autocomplete_index -= 1;
                     }
@@ -850,8 +892,11 @@ impl App {
                 }
             }
             (_, KeyCode::Down) => {
-                if self.state.autocomplete_visible && !self.state.autocomplete_suggestions.is_empty() {
-                    if self.state.autocomplete_index < self.state.autocomplete_suggestions.len() - 1 {
+                if self.state.autocomplete_visible
+                    && !self.state.autocomplete_suggestions.is_empty()
+                {
+                    if self.state.autocomplete_index < self.state.autocomplete_suggestions.len() - 1
+                    {
                         self.state.autocomplete_index += 1;
                     }
                 } else if self.state.scroll_offset > 0 {
@@ -880,9 +925,7 @@ impl App {
             }
             // Regular character input
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                self.state
-                    .input_buffer
-                    .insert(self.state.input_cursor, c);
+                self.state.input_buffer.insert(self.state.input_cursor, c);
                 self.state.input_cursor += 1;
                 // Update autocomplete on input change
                 self.update_autocomplete();
@@ -980,7 +1023,9 @@ impl App {
             _ => {
                 self.state.messages.push(DisplayMessage {
                     role: DisplayRole::System,
-                    content: format!("Unknown command: /{name}. Type /help for available commands."),
+                    content: format!(
+                        "Unknown command: /{name}. Type /help for available commands."
+                    ),
                     tool_call: None,
                 });
             }
@@ -989,6 +1034,17 @@ impl App {
 
     /// Handle periodic tick (spinner animation, etc.).
     fn handle_tick(&mut self) {
+        // Advance welcome panel animation
+        if !self.state.welcome_panel.fade_complete {
+            // Ensure rain field is initialized/resized before ticking
+            let w = self.state.terminal_width;
+            let h = self.state.terminal_height;
+            let rain_w = ((w as f32 * 0.7) as usize).clamp(20, 90);
+            let rain_h = (h.saturating_sub(11) as usize).clamp(4, 20);
+            self.state.welcome_panel.ensure_rain_field(rain_w, rain_h);
+            self.state.welcome_panel.tick(w, h);
+        }
+
         // Advance spinner animation
         if self.state.agent_active || !self.state.active_tools.is_empty() {
             self.state.spinner.tick();
@@ -1009,9 +1065,9 @@ impl App {
             }
         }
         // Remove subagents that finished more than 3 seconds ago
-        self.state.active_subagents.retain(|s| {
-            !s.finished || s.elapsed_secs() < 3
-        });
+        self.state
+            .active_subagents
+            .retain(|s| !s.finished || s.elapsed_secs() < 3);
 
         // Update task progress elapsed time from wall clock
         if let Some(ref mut progress) = self.state.task_progress {

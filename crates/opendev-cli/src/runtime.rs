@@ -8,22 +8,22 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use opendev_agents::llm_calls::{LlmCallConfig, LlmCaller};
-use opendev_agents::prompts::create_default_composer;
+use opendev_agents::prompts::{create_default_composer, create_thinking_composer};
 use opendev_agents::react_loop::{ReactLoop, ReactLoopConfig};
 use opendev_agents::traits::{AgentError, AgentEventCallback, AgentResult, TaskMonitor};
 use opendev_history::SessionManager;
+use opendev_http::HttpClient;
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_http::adapters::base::ProviderAdapter;
-use opendev_http::HttpClient;
-use opendev_models::message::{ChatMessage, Role};
 use opendev_models::AppConfig;
-use opendev_repl::query_enhancer::QueryEnhancer;
+use opendev_models::message::{ChatMessage, Role};
 use opendev_repl::HandlerRegistry;
+use opendev_repl::query_enhancer::QueryEnhancer;
 use opendev_runtime::CostTracker;
 use opendev_tools_core::{ToolContext, ToolRegistry};
 use opendev_tools_impl::*;
@@ -31,6 +31,7 @@ use opendev_tools_impl::*;
 /// Central orchestrator that owns all agent services.
 ///
 /// Connects: config → session → prompt → LLM → tools → response
+#[allow(dead_code)]
 pub struct AgentRuntime {
     /// Application configuration.
     pub config: AppConfig,
@@ -145,11 +146,9 @@ impl AgentRuntime {
         let query_enhancer = QueryEnhancer::new(working_dir.to_path_buf());
 
         // Configure HTTP client based on provider
-        let api_key = config
-            .get_api_key()
-            .unwrap_or_default();
+        let api_key = config.get_api_key().unwrap_or_default();
 
-        let (api_url, mut headers, adapter): (
+        let (api_url, headers, adapter): (
             String,
             HeaderMap,
             Option<Box<dyn opendev_http::adapters::base::ProviderAdapter>>,
@@ -174,7 +173,13 @@ impl AgentRuntime {
                         hdrs.insert(k, v);
                     }
                 }
-                (url, hdrs, Some(Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>))
+                (
+                    url,
+                    hdrs,
+                    Some(
+                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
+                    ),
+                )
             }
             "openai" => {
                 // OpenAI uses /v1/responses (Responses API) with Bearer auth
@@ -188,7 +193,13 @@ impl AgentRuntime {
                     hdrs.insert(AUTHORIZATION, val);
                 }
                 hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                (url, hdrs, Some(Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>))
+                (
+                    url,
+                    hdrs,
+                    Some(
+                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
+                    ),
+                )
             }
             "azure" => {
                 let base = config
@@ -242,10 +253,10 @@ impl AgentRuntime {
                     hdrs.insert(AUTHORIZATION, val);
                 }
                 hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                if provider == "openrouter" {
-                    if let Ok(val) = HeaderValue::from_str("https://opendev.ai") {
-                        hdrs.insert("HTTP-Referer", val);
-                    }
+                if provider == "openrouter"
+                    && let Ok(val) = HeaderValue::from_str("https://opendev.ai")
+                {
+                    hdrs.insert("HTTP-Referer", val);
                 }
                 (url, hdrs, None)
             }
@@ -309,7 +320,10 @@ impl AgentRuntime {
         system_prompt: &str,
         event_callback: Option<&dyn AgentEventCallback>,
     ) -> Result<AgentResult, AgentError> {
-        info!(query_len = query.len(), "Running query through agent pipeline");
+        info!(
+            query_len = query.len(),
+            "Running query through agent pipeline"
+        );
 
         // Step 1: Save user message to session
         if let Some(session) = self.session_manager.current_session_mut() {
@@ -369,14 +383,20 @@ impl AgentRuntime {
         let tool_context = ToolContext {
             working_dir: self.working_dir.clone(),
             is_subagent: false,
-            session_id: self
-                .session_manager
-                .current_session()
-                .map(|s| s.id.clone()),
+            session_id: self.session_manager.current_session().map(|s| s.id.clone()),
             values: HashMap::new(),
         };
 
-        // Step 6: Run the ReAct loop
+        // Step 6: Set thinking context for this query
+        let thinking_sys_prompt = {
+            let composer = create_thinking_composer("/dev/null");
+            let prompt = composer.compose(&HashMap::new());
+            if prompt.is_empty() { None } else { Some(prompt) }
+        };
+        self.react_loop
+            .set_thinking_context(Some(query.to_string()), thinking_sys_prompt);
+
+        // Step 7: Run the ReAct loop
         let result = self
             .react_loop
             .run(

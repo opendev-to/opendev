@@ -33,13 +33,7 @@ pub static PARALLELIZABLE_TOOLS: &[&str] = &[
     "find_referencing_symbols",
 ];
 
-/// System prompt for the critique phase.
-const CRITIQUE_SYSTEM_PROMPT: &str = "\
-You are a self-critique assistant. Analyze the provided thinking trace for:\n\
-- Logical errors or unsupported assumptions\n\
-- Missing edge cases or failure modes\n\
-- Unnecessary complexity or better alternatives\n\
-Be concise and actionable. Focus on the most impactful issues.";
+use crate::prompts::embedded;
 
 /// Extended readonly set for thinking-skip heuristic.
 /// Matches Python's `IterationMixin._READONLY_TOOLS`.
@@ -100,6 +94,11 @@ pub struct ReactLoopConfig {
     pub max_todo_nudges: usize,
     /// Thinking level — controls whether thinking/critique phases run.
     pub thinking_level: ThinkingLevel,
+    /// Pre-composed thinking system prompt (from `create_thinking_composer`).
+    /// If `None`, the thinking phase will not swap the system prompt.
+    pub thinking_system_prompt: Option<String>,
+    /// The user's original task text, used for analysis prompt construction.
+    pub original_task: Option<String>,
 }
 
 impl Default for ReactLoopConfig {
@@ -109,6 +108,8 @@ impl Default for ReactLoopConfig {
             max_nudge_attempts: 3,
             max_todo_nudges: 4,
             thinking_level: ThinkingLevel::Medium,
+            thinking_system_prompt: None,
+            original_task: None,
         }
     }
 }
@@ -141,6 +142,19 @@ impl ReactLoop {
         }
     }
 
+    /// Update per-query thinking context (original task and system prompt).
+    ///
+    /// Call this before each `run()` to set the user's original task text
+    /// and the pre-composed thinking system prompt.
+    pub fn set_thinking_context(
+        &mut self,
+        original_task: Option<String>,
+        thinking_system_prompt: Option<String>,
+    ) {
+        self.config.original_task = original_task;
+        self.config.thinking_system_prompt = thinking_system_prompt;
+    }
+
     /// Create a ReAct loop with default configuration.
     pub fn with_defaults() -> Self {
         Self::new(ReactLoopConfig::default())
@@ -170,26 +184,19 @@ impl ReactLoop {
         }
 
         // Check for tool calls
-        let tool_calls = response
-            .tool_calls
-            .as_ref()
-            .and_then(|tcs| {
-                if tcs.is_empty() {
-                    None
-                } else {
-                    Some(tcs.clone())
-                }
-            });
+        let tool_calls = response.tool_calls.as_ref().and_then(|tcs| {
+            if tcs.is_empty() {
+                None
+            } else {
+                Some(tcs.clone())
+            }
+        });
 
         match tool_calls {
             Some(tcs) => TurnResult::ToolCall { tool_calls: tcs },
             None => {
                 // No tool calls — check if we should accept completion
-                let content = response
-                    .content
-                    .as_deref()
-                    .unwrap_or("Done.")
-                    .to_string();
+                let content = response.content.as_deref().unwrap_or("Done.").to_string();
 
                 if consecutive_no_tool_calls >= self.config.max_nudge_attempts {
                     debug!("Max nudge attempts reached, accepting completion");
@@ -258,7 +265,10 @@ impl ReactLoop {
 
     /// Format a tool execution result into a string for the message history.
     pub fn format_tool_result(tool_name: &str, result: &Value) -> String {
-        let success = result.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+        let success = result
+            .get("success")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false);
 
         if success {
             let output = result
@@ -267,9 +277,7 @@ impl ReactLoop {
                 .and_then(|o| o.as_str())
                 .unwrap_or("");
 
-            let completion_status = result
-                .get("completion_status")
-                .and_then(|s| s.as_str());
+            let completion_status = result.get("completion_status").and_then(|s| s.as_str());
 
             if let Some(status) = completion_status {
                 format!("[completion_status={status}]\n{output}")
@@ -321,16 +329,13 @@ impl ReactLoop {
     pub fn should_skip_thinking(&self, messages: &[Value]) -> bool {
         let mut found_tools = false;
         // Collect tool names from the most recent assistant tool_calls
-        let mut last_assistant_tools: Vec<String> = Vec::new();
+        let _last_assistant_tools: Vec<String> = Vec::new();
 
         for msg in messages.iter().rev() {
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
             match role {
                 "tool" => {
-                    let content = msg
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("");
+                    let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
                     let tool_name = msg.get("name").and_then(|n| n.as_str()).unwrap_or("");
 
                     // If any tool errored, don't skip thinking
@@ -352,10 +357,9 @@ impl ReactLoop {
                                 .get("function")
                                 .and_then(|f| f.get("name"))
                                 .and_then(|n| n.as_str())
+                                && !self.readonly_tools.contains(name)
                             {
-                                if !self.readonly_tools.contains(name) {
-                                    return false;
-                                }
+                                return false;
                             }
                         }
                     }
@@ -416,6 +420,7 @@ impl ReactLoop {
     /// completion, interruption, or iteration limit.
     ///
     /// Tool execution is dispatched via the `ToolRegistry` with the given `ToolContext`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn run<M>(
         &self,
         caller: &LlmCaller,
@@ -446,16 +451,37 @@ impl ReactLoop {
             }
 
             // Check for interrupt
-            if let Some(monitor) = task_monitor {
-                if monitor.should_interrupt() {
-                    return Ok(AgentResult::interrupted(messages.clone()));
-                }
+            if let Some(monitor) = task_monitor
+                && monitor.should_interrupt()
+            {
+                return Ok(AgentResult::interrupted(messages.clone()));
             }
 
             // Thinking phase (before action)
+            // Mirrors Python's 3-step flow: think → critique → refine → inject
             let skip_thinking = self.should_skip_thinking(messages);
             if self.config.thinking_level.is_enabled() && !skip_thinking {
-                let thinking_payload = caller.build_thinking_payload(messages);
+                // Build analysis prompt based on original task
+                let analysis_prompt = self.config.original_task.as_deref().map(|task| {
+                    format!(
+                        "The user's original request: {task}\n\n\
+                         Analyze the full context and provide your reasoning for the \
+                         next step. Keep the user's complete original request in mind \
+                         — if it has multiple parts, ensure you are working toward ALL \
+                         parts, not just the first.\n\n\
+                         IMPORTANT: If your next step involves reading or searching \
+                         multiple files to understand code structure, architecture, or \
+                         patterns, you MUST delegate to Code-Explorer rather than doing \
+                         it yourself. Only use direct read_file/search for known, \
+                         specific targets (1-2 files)."
+                    )
+                });
+
+                let thinking_payload = caller.build_thinking_payload(
+                    messages,
+                    self.config.thinking_system_prompt.as_deref(),
+                    analysis_prompt.as_deref(),
+                );
                 debug!(iteration, "Running thinking phase");
 
                 match http_client.post_json(&thinking_payload, None).await {
@@ -467,25 +493,51 @@ impl ReactLoop {
                                     cb.on_thinking(trace);
                                 }
 
-                                // Critique phase (High level only)
+                                // The trace to inject — may be refined by critique
+                                let mut final_trace = trace.clone();
+
+                                // Critique + refinement phase (High level only)
                                 if self.config.thinking_level.use_critique() {
-                                    let critique_payload = caller.build_critique_payload(
-                                        trace,
-                                        CRITIQUE_SYSTEM_PROMPT,
-                                    );
+                                    let critique_system = embedded::SYSTEM_CRITIQUE;
+                                    let critique_payload =
+                                        caller.build_critique_payload(trace, critique_system);
+
                                     if let Ok(critique_result) =
                                         http_client.post_json(&critique_payload, None).await
+                                        && critique_result.success
+                                        && let Some(ref cbody) = critique_result.body
                                     {
-                                        if critique_result.success {
-                                            if let Some(ref cbody) = critique_result.body {
-                                                let critique_resp =
-                                                    caller.parse_critique_response(cbody);
-                                                if let Some(ref critique_text) =
-                                                    critique_resp.content
-                                                {
+                                        let critique_resp = caller.parse_critique_response(cbody);
+                                        if let Some(ref critique_text) = critique_resp.content {
+                                            if let Some(cb) = event_callback {
+                                                cb.on_critique(critique_text);
+                                            }
+
+                                            // Refinement step: use critique to
+                                            // improve the thinking trace
+                                            let thinking_sys = self
+                                                .config
+                                                .thinking_system_prompt
+                                                .as_deref()
+                                                .unwrap_or(embedded::SYSTEM_THINKING);
+                                            let refine_payload = caller.build_refinement_payload(
+                                                thinking_sys,
+                                                trace,
+                                                critique_text,
+                                            );
+
+                                            if let Ok(refine_result) =
+                                                http_client.post_json(&refine_payload, None).await
+                                                && refine_result.success
+                                                && let Some(ref rbody) = refine_result.body
+                                            {
+                                                let refine_resp =
+                                                    caller.parse_thinking_response(rbody);
+                                                if let Some(ref refined) = refine_resp.content {
                                                     if let Some(cb) = event_callback {
-                                                        cb.on_critique(critique_text);
+                                                        cb.on_thinking_refined(refined);
                                                     }
+                                                    final_trace = refined.clone();
                                                 }
                                             }
                                         }
@@ -493,13 +545,15 @@ impl ReactLoop {
                                 }
 
                                 // Inject thinking trace as context for the action call
+                                // Uses Python's stronger wording from thinking_trace_reminder
                                 messages.push(serde_json::json!({
                                     "role": "user",
                                     "content": format!(
-                                        "<thinking_trace>\n{}\n</thinking_trace>\n\n\
-                                         Use this reasoning to inform your next action. \
-                                         Do not repeat the reasoning — act on it.",
-                                        trace
+                                        "<thinking_trace>\n{final_trace}\n</thinking_trace>\n\n\
+                                         You MUST follow the action plan in your thinking \
+                                         trace above. Execute exactly the next step it \
+                                         describes — do not skip ahead or choose a \
+                                         different approach."
                                     ),
                                     "_thinking": true
                                 }));
@@ -558,12 +612,11 @@ impl ReactLoop {
             let response = caller.parse_action_response(&body);
 
             // Track token usage
-            if let Some(monitor) = task_monitor {
-                if let Some(ref usage) = response.usage {
-                    if let Some(total) = usage.get("total_tokens").and_then(|t| t.as_u64()) {
-                        monitor.update_tokens(total);
-                    }
-                }
+            if let Some(monitor) = task_monitor
+                && let Some(ref usage) = response.usage
+                && let Some(total) = usage.get("total_tokens").and_then(|t| t.as_u64())
+            {
+                monitor.update_tokens(total);
             }
 
             // Process the iteration
@@ -657,24 +710,19 @@ impl ReactLoop {
                             serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
                         let args_map: std::collections::HashMap<String, Value> = args_value
                             .as_object()
-                            .map(|obj| {
-                                obj.iter()
-                                    .map(|(k, v)| (k.clone(), v.clone()))
-                                    .collect()
-                            })
+                            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                             .unwrap_or_default();
 
-                        let tool_call_id_str = tc
-                            .get("id")
-                            .and_then(|id| id.as_str())
-                            .unwrap_or("unknown");
+                        let tool_call_id_str =
+                            tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
 
                         if let Some(cb) = event_callback {
                             cb.on_tool_started(tool_call_id_str, tool_name);
                         }
 
-                        let tool_result =
-                            tool_registry.execute(tool_name, args_map, tool_context).await;
+                        let tool_result = tool_registry
+                            .execute(tool_name, args_map, tool_context)
+                            .await;
 
                         if let Some(cb) = event_callback {
                             cb.on_tool_finished(tool_call_id_str, tool_result.success);
@@ -703,10 +751,10 @@ impl ReactLoop {
                         }));
 
                         // Check for interrupt between tool executions
-                        if let Some(monitor) = task_monitor {
-                            if monitor.should_interrupt() {
-                                return Ok(AgentResult::interrupted(messages.clone()));
-                            }
+                        if let Some(monitor) = task_monitor
+                            && monitor.should_interrupt()
+                        {
+                            return Ok(AgentResult::interrupted(messages.clone()));
                         }
                     }
                 }
@@ -753,10 +801,10 @@ impl ReactLoop {
                 "role": "assistant",
                 "content": raw_content,
             });
-            if let Some(tool_calls) = msg.get("tool_calls") {
-                if !tool_calls.is_null() {
-                    assistant_msg["tool_calls"] = tool_calls.clone();
-                }
+            if let Some(tool_calls) = msg.get("tool_calls")
+                && !tool_calls.is_null()
+            {
+                assistant_msg["tool_calls"] = tool_calls.clone();
             }
             messages.push(assistant_msg);
         }
@@ -953,7 +1001,10 @@ mod tests {
 
     #[test]
     fn test_classify_error_permission() {
-        assert_eq!(ReactLoop::classify_error("Permission denied: /etc"), "permission_error");
+        assert_eq!(
+            ReactLoop::classify_error("Permission denied: /etc"),
+            "permission_error"
+        );
     }
 
     #[test]
@@ -982,7 +1033,10 @@ mod tests {
 
     #[test]
     fn test_classify_error_rate_limit() {
-        assert_eq!(ReactLoop::classify_error("429 Too Many Requests"), "rate_limit");
+        assert_eq!(
+            ReactLoop::classify_error("429 Too Many Requests"),
+            "rate_limit"
+        );
     }
 
     #[test]
@@ -992,10 +1046,7 @@ mod tests {
 
     #[test]
     fn test_classify_error_generic() {
-        assert_eq!(
-            ReactLoop::classify_error("Something went wrong"),
-            "generic"
-        );
+        assert_eq!(ReactLoop::classify_error("Something went wrong"), "generic");
     }
 
     #[test]
@@ -1141,9 +1192,7 @@ mod tests {
     #[test]
     fn test_should_not_skip_thinking_no_tools() {
         let rl = make_loop();
-        let messages = vec![
-            serde_json::json!({"role": "user", "content": "hello"}),
-        ];
+        let messages = vec![serde_json::json!({"role": "user", "content": "hello"})];
         assert!(!rl.should_skip_thinking(&messages));
     }
 
@@ -1209,9 +1258,7 @@ mod tests {
 
     #[test]
     fn test_shallow_subagent_failed_no_warning() {
-        let messages = vec![
-            serde_json::json!({"role": "assistant", "content": "I failed."}),
-        ];
+        let messages = vec![serde_json::json!({"role": "assistant", "content": "I failed."})];
         assert!(ReactLoop::shallow_subagent_warning(&messages, false).is_none());
     }
 
@@ -1283,8 +1330,26 @@ mod tests {
     }
 
     #[test]
-    fn test_critique_system_prompt_is_valid() {
-        assert!(!CRITIQUE_SYSTEM_PROMPT.is_empty());
-        assert!(CRITIQUE_SYSTEM_PROMPT.contains("critique"));
+    fn test_critique_system_prompt_from_template() {
+        let critique_prompt = embedded::SYSTEM_CRITIQUE;
+        assert!(!critique_prompt.is_empty());
+        assert!(
+            critique_prompt.to_lowercase().contains("critique")
+                || critique_prompt.to_lowercase().contains("critic")
+        );
+    }
+
+    #[test]
+    fn test_config_thinking_system_prompt() {
+        let config = ReactLoopConfig {
+            thinking_system_prompt: Some("custom thinking prompt".into()),
+            original_task: Some("implement feature X".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.thinking_system_prompt.as_deref(),
+            Some("custom thinking prompt")
+        );
+        assert_eq!(config.original_task.as_deref(), Some("implement feature X"));
     }
 }

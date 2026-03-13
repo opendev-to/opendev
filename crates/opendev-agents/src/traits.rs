@@ -205,6 +205,8 @@ pub trait AgentEventCallback: Send + Sync {
     fn on_thinking(&self, content: &str);
     /// A self-critique was produced (High thinking level only).
     fn on_critique(&self, content: &str);
+    /// A refined thinking trace was produced after critique (High thinking level only).
+    fn on_thinking_refined(&self, content: &str);
 }
 
 /// Dependencies injected into agent runs.

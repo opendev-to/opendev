@@ -82,11 +82,63 @@ impl LlmCaller {
     }
 
     /// Build an LLM payload for a thinking call (no tools, pure reasoning).
-    pub fn build_thinking_payload(&self, messages: &[Value]) -> Value {
+    ///
+    /// Mirrors Python's thinking flow:
+    /// - Filters out nudge messages (`_nudge: true`)
+    /// - Optionally swaps the system prompt for a thinking-specific one
+    /// - Optionally appends an analysis prompt as a final user message
+    pub fn build_thinking_payload(
+        &self,
+        messages: &[Value],
+        thinking_system_prompt: Option<&str>,
+        analysis_prompt: Option<&str>,
+    ) -> Value {
         let cfg = self.thinking_config.as_ref().unwrap_or(&self.config);
+
+        // Filter nudge messages BEFORE cleaning (clean_messages strips _-prefixed keys)
+        let cleaned: Vec<Value> = messages
+            .iter()
+            .filter(|msg| !msg.get("_nudge").and_then(|v| v.as_bool()).unwrap_or(false))
+            .cloned()
+            .collect();
+        let mut cleaned = Self::clean_messages(&cleaned);
+
+        // Swap system prompt if provided
+        if let Some(sys_prompt) = thinking_system_prompt {
+            // Replace existing system message or insert at front
+            let has_system = cleaned
+                .first()
+                .and_then(|m| m.get("role"))
+                .and_then(|r| r.as_str())
+                == Some("system");
+
+            if has_system {
+                cleaned[0] = serde_json::json!({
+                    "role": "system",
+                    "content": sys_prompt,
+                });
+            } else {
+                cleaned.insert(
+                    0,
+                    serde_json::json!({
+                        "role": "system",
+                        "content": sys_prompt,
+                    }),
+                );
+            }
+        }
+
+        // Append analysis prompt as final user message
+        if let Some(analysis) = analysis_prompt {
+            cleaned.push(serde_json::json!({
+                "role": "user",
+                "content": analysis,
+            }));
+        }
+
         let mut payload = serde_json::json!({
             "model": cfg.model,
-            "messages": Self::clean_messages(messages),
+            "messages": cleaned,
         });
 
         if let Some(temp) = cfg.temperature {
@@ -94,6 +146,51 @@ impl LlmCaller {
         }
         if let Some(max) = cfg.max_tokens {
             payload["max_tokens"] = serde_json::json!(max);
+        }
+
+        payload
+    }
+
+    /// Build an LLM payload for a thinking refinement call.
+    ///
+    /// Takes the original thinking trace and critique feedback, builds
+    /// messages for the LLM to produce a refined trace.
+    pub fn build_refinement_payload(
+        &self,
+        thinking_system_prompt: &str,
+        original_trace: &str,
+        critique: &str,
+    ) -> Value {
+        let cfg = self.thinking_config.as_ref().unwrap_or(&self.config);
+
+        let messages = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": thinking_system_prompt,
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": format!(
+                    "Here is your previous thinking trace:\n\n\
+                     <original_trace>\n{original_trace}\n</original_trace>\n\n\
+                     Here is the critique of your reasoning:\n\n\
+                     <critique>\n{critique}\n</critique>\n\n\
+                     Refine your thinking trace to address the critique. \
+                     Produce an improved, concise action plan for the next step."
+                ),
+            }),
+        ];
+
+        let max_tokens = cfg.max_tokens.map(|m| m.min(4096)).unwrap_or(4096);
+
+        let mut payload = serde_json::json!({
+            "model": cfg.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        });
+
+        if let Some(temp) = cfg.temperature {
+            payload["temperature"] = serde_json::json!(temp);
         }
 
         payload
@@ -135,11 +232,7 @@ impl LlmCaller {
     }
 
     /// Build an LLM payload for an action call (with tools).
-    pub fn build_action_payload(
-        &self,
-        messages: &[Value],
-        tool_schemas: &[Value],
-    ) -> Value {
+    pub fn build_action_payload(&self, messages: &[Value], tool_schemas: &[Value]) -> Value {
         let mut payload = serde_json::json!({
             "model": self.config.model,
             "messages": Self::clean_messages(messages),
@@ -270,7 +363,7 @@ mod tests {
     fn test_build_thinking_payload() {
         let caller = make_caller();
         let messages = vec![serde_json::json!({"role": "user", "content": "think"})];
-        let payload = caller.build_thinking_payload(&messages);
+        let payload = caller.build_thinking_payload(&messages, None, None);
 
         assert_eq!(payload["model"], "gpt-4o");
         assert!(payload.get("tools").is_none());
@@ -285,12 +378,76 @@ mod tests {
             max_tokens: Some(8192),
         });
         let messages = vec![serde_json::json!({"role": "user", "content": "think"})];
-        let payload = caller.build_thinking_payload(&messages);
+        let payload = caller.build_thinking_payload(&messages, None, None);
 
         assert_eq!(payload["model"], "o1-preview");
         assert_eq!(payload["max_tokens"], 8192);
         // temperature should not appear (None)
         assert!(payload.get("temperature").is_none());
+    }
+
+    #[test]
+    fn test_build_thinking_payload_filters_nudges() {
+        let caller = make_caller();
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "hello"}),
+            serde_json::json!({"role": "user", "content": "nudge msg", "_nudge": true}),
+            serde_json::json!({"role": "assistant", "content": "reply"}),
+        ];
+        let payload = caller.build_thinking_payload(&messages, None, None);
+        let msgs = payload["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2); // nudge filtered out
+        assert_eq!(msgs[0]["content"], "hello");
+        assert_eq!(msgs[1]["content"], "reply");
+    }
+
+    #[test]
+    fn test_build_thinking_payload_swaps_system_prompt() {
+        let caller = make_caller();
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": "original system"}),
+            serde_json::json!({"role": "user", "content": "hello"}),
+        ];
+        let payload = caller.build_thinking_payload(&messages, Some("thinking system"), None);
+        let msgs = payload["messages"].as_array().unwrap();
+        assert_eq!(msgs[0]["content"], "thinking system");
+        assert_eq!(msgs[1]["content"], "hello");
+    }
+
+    #[test]
+    fn test_build_thinking_payload_inserts_system_prompt() {
+        let caller = make_caller();
+        let messages = vec![serde_json::json!({"role": "user", "content": "hello"})];
+        let payload = caller.build_thinking_payload(&messages, Some("thinking system"), None);
+        let msgs = payload["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[0]["content"], "thinking system");
+    }
+
+    #[test]
+    fn test_build_thinking_payload_appends_analysis_prompt() {
+        let caller = make_caller();
+        let messages = vec![serde_json::json!({"role": "user", "content": "hello"})];
+        let payload = caller.build_thinking_payload(&messages, None, Some("analyze this"));
+        let msgs = payload["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1]["role"], "user");
+        assert_eq!(msgs[1]["content"], "analyze this");
+    }
+
+    #[test]
+    fn test_build_refinement_payload() {
+        let caller = make_caller();
+        let payload =
+            caller.build_refinement_payload("sys prompt", "original trace", "critique text");
+        let msgs = payload["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[0]["content"], "sys prompt");
+        let user_content = msgs[1]["content"].as_str().unwrap();
+        assert!(user_content.contains("original trace"));
+        assert!(user_content.contains("critique text"));
     }
 
     #[test]

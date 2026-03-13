@@ -5,13 +5,11 @@
 
 use std::collections::HashMap;
 
-use opendev_agents::{
-    LlmCaller, PromptComposer, ReactLoop, ResponseCleaner, TurnResult,
-};
 use opendev_agents::llm_calls::LlmCallConfig;
 use opendev_agents::prompts::composer::ctx_bool;
 use opendev_agents::react_loop::ReactLoopConfig;
 use opendev_agents::traits::{AgentDeps, AgentError, AgentResult, LlmResponse};
+use opendev_agents::{LlmCaller, PromptComposer, ReactLoop, ResponseCleaner, TurnResult};
 
 // ========================================================================
 // process_response tests
@@ -187,8 +185,14 @@ fn extract_task_complete_defaults() {
 /// Error classification covers all known patterns.
 #[test]
 fn error_classification_covers_patterns() {
-    assert_eq!(ReactLoop::classify_error("Permission denied"), "permission_error");
-    assert_eq!(ReactLoop::classify_error("old_content mismatch"), "edit_mismatch");
+    assert_eq!(
+        ReactLoop::classify_error("Permission denied"),
+        "permission_error"
+    );
+    assert_eq!(
+        ReactLoop::classify_error("old_content mismatch"),
+        "edit_mismatch"
+    );
     assert_eq!(ReactLoop::classify_error("No such file"), "file_not_found");
     assert_eq!(ReactLoop::classify_error("SyntaxError"), "syntax_error");
     assert_eq!(ReactLoop::classify_error("429 Rate Limit"), "rate_limit");
@@ -332,7 +336,7 @@ fn action_payload_includes_tools() {
 fn thinking_payload_has_no_tools() {
     let caller = make_caller();
     let messages = vec![serde_json::json!({"role": "user", "content": "think"})];
-    let payload = caller.build_thinking_payload(&messages);
+    let payload = caller.build_thinking_payload(&messages, None, None);
 
     assert!(payload.get("tools").is_none());
     assert!(payload.get("tool_choice").is_none());
@@ -347,7 +351,7 @@ fn thinking_payload_uses_thinking_model() {
         max_tokens: Some(8192),
     });
     let messages = vec![serde_json::json!({"role": "user", "content": "think"})];
-    let payload = caller.build_thinking_payload(&messages);
+    let payload = caller.build_thinking_payload(&messages, None, None);
 
     assert_eq!(payload["model"], "o1-preview");
     assert_eq!(payload["max_tokens"], 8192);
@@ -494,7 +498,10 @@ fn prompt_composer_assembles_in_priority_order() {
     let identity_pos = prompt.find("You are an AI assistant.").unwrap();
     let security_pos = prompt.find("Security rules here.").unwrap();
     let tools_pos = prompt.find("Tool instructions here.").unwrap();
-    assert!(identity_pos < security_pos, "identity (1) before security (10)");
+    assert!(
+        identity_pos < security_pos,
+        "identity (1) before security (10)"
+    );
     assert!(security_pos < tools_pos, "security (10) before tools (50)");
 }
 
@@ -507,7 +514,13 @@ fn prompt_composer_excludes_conditional_section() {
 
     let mut composer = PromptComposer::new(tmp.path());
     composer.register_section("always", "always.md", None, 1, true);
-    composer.register_section("conditional", "conditional.md", Some(ctx_bool("plan_mode")), 2, true);
+    composer.register_section(
+        "conditional",
+        "conditional.md",
+        Some(ctx_bool("plan_mode")),
+        2,
+        true,
+    );
 
     // Without the condition key
     let prompt = composer.compose(&HashMap::new());
@@ -551,7 +564,10 @@ fn agent_deps_builder() {
         .with_context("session_id", serde_json::json!("s-123"));
 
     assert_eq!(deps.context.get("model"), Some(&serde_json::json!("gpt-4")));
-    assert_eq!(deps.context.get("session_id"), Some(&serde_json::json!("s-123")));
+    assert_eq!(
+        deps.context.get("session_id"),
+        Some(&serde_json::json!("s-123"))
+    );
 }
 
 // ========================================================================
@@ -652,7 +668,11 @@ fn doom_loop_varied_calls_no_detection() {
             "function": {"name": "read_file", "arguments": format!("{{\"path\": \"file{i}.rs\"}}")}
         });
         let (action, _) = det.check(&[tc]);
-        assert_eq!(action, DoomLoopAction::None, "varied calls should not trigger");
+        assert_eq!(
+            action,
+            DoomLoopAction::None,
+            "varied calls should not trigger"
+        );
     }
 }
 
@@ -754,7 +774,10 @@ fn all_embedded_templates_load() {
     use opendev_agents::prompts::embedded::{TEMPLATE_COUNT, TEMPLATES};
 
     assert_eq!(TEMPLATE_COUNT, TEMPLATES.len());
-    assert!(TEMPLATE_COUNT >= 91, "expected at least 91 templates, got {TEMPLATE_COUNT}");
+    assert!(
+        TEMPLATE_COUNT >= 91,
+        "expected at least 91 templates, got {TEMPLATE_COUNT}"
+    );
 
     for (key, content) in TEMPLATES.iter() {
         assert!(
@@ -822,7 +845,10 @@ fn prompt_variable_substitution() {
     let template = "Session: {{session_id}}, Model: {{model}}, Unknown: {{unknown}}";
     let result = substitute_variables(template, &vars);
 
-    assert_eq!(result, "Session: abc-123, Model: gpt-4o, Unknown: {{unknown}}");
+    assert_eq!(
+        result,
+        "Session: abc-123, Model: gpt-4o, Unknown: {{unknown}}"
+    );
 }
 
 // ========================================================================
@@ -862,7 +888,10 @@ fn load_builtin_skill_strips_frontmatter() {
     let skill = loader.load_skill("commit").unwrap();
     assert_eq!(skill.metadata.name, "commit");
     assert!(!skill.content.is_empty());
-    assert!(!skill.content.starts_with("---"), "frontmatter should be stripped");
+    assert!(
+        !skill.content.starts_with("---"),
+        "frontmatter should be stripped"
+    );
 }
 
 /// Project-local skills override builtins with the same name.

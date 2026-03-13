@@ -47,6 +47,12 @@ impl AgentEventCallback for TuiEventCallback {
     fn on_critique(&self, content: &str) {
         let _ = self.tx.send(AppEvent::CritiqueTrace(content.to_string()));
     }
+
+    fn on_thinking_refined(&self, content: &str) {
+        let _ = self
+            .tx
+            .send(AppEvent::RefinedThinkingTrace(content.to_string()));
+    }
 }
 
 /// Bridges the TUI event loop with the AgentRuntime.

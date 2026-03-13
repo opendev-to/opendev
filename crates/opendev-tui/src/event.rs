@@ -11,6 +11,7 @@ use opendev_models::message::ChatMessage;
 
 /// Application-level events consumed by the main event loop.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum AppEvent {
     /// Raw terminal event from crossterm.
     Terminal(CrosstermEvent),
@@ -37,20 +38,11 @@ pub enum AppEvent {
 
     // -- Tool events --
     /// A tool execution started.
-    ToolStarted {
-        tool_id: String,
-        tool_name: String,
-    },
+    ToolStarted { tool_id: String, tool_name: String },
     /// A tool produced output.
-    ToolOutput {
-        tool_id: String,
-        output: String,
-    },
+    ToolOutput { tool_id: String, output: String },
     /// A tool execution completed.
-    ToolFinished {
-        tool_id: String,
-        success: bool,
-    },
+    ToolFinished { tool_id: String, success: bool },
     /// Tool requires user approval.
     ToolApprovalRequired {
         tool_id: String,
@@ -60,10 +52,7 @@ pub enum AppEvent {
 
     // -- Subagent events --
     /// A subagent started executing.
-    SubagentStarted {
-        subagent_name: String,
-        task: String,
-    },
+    SubagentStarted { subagent_name: String, task: String },
     /// A subagent made a tool call (for nested display).
     SubagentToolCall {
         subagent_name: String,
@@ -91,6 +80,8 @@ pub enum AppEvent {
     ThinkingTrace(String),
     /// A self-critique was produced (High thinking level only).
     CritiqueTrace(String),
+    /// A refined thinking trace was produced after critique (High thinking level only).
+    RefinedThinkingTrace(String),
 
     // -- Task progress events --
     /// Agent started working on a task (shows progress bar).
