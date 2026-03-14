@@ -784,7 +784,7 @@ impl App {
         use crate::formatters::markdown::MarkdownRenderer;
         use crate::formatters::style_tokens::{self, Indent};
         use crate::formatters::tool_registry::{
-            categorize_tool, format_tool_call_display, tool_color,
+            categorize_tool, format_tool_call_parts,
         };
         use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR};
         use ratatui::style::{Modifier, Style};
@@ -904,20 +904,21 @@ impl App {
 
         // Tool call summary
         if let Some(ref tc) = msg.tool_call {
-            let category = categorize_tool(&tc.name);
-            let color = tool_color(category);
             let (icon, icon_color) = if tc.success {
                 (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
             } else {
                 (COMPLETED_CHAR, style_tokens::ERROR)
             };
-            let display = format_tool_call_display(&tc.name, &tc.arguments);
+            let (verb, arg) = format_tool_call_parts(&tc.name, &tc.arguments);
             lines.push(Line::from(vec![
                 Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
                 Span::styled(
-                    display,
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    verb,
+                    Style::default()
+                        .fg(style_tokens::PRIMARY)
+                        .add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(format!("({arg})"), Style::default().fg(style_tokens::SUBTLE)),
             ]));
 
             // Diff tools are never collapsed
@@ -974,21 +975,29 @@ impl App {
             }
 
             for nested in &tc.nested_calls {
-                let n_category = categorize_tool(&nested.name);
-                let n_color = tool_color(n_category);
                 let (n_icon, n_icon_color) = if nested.success {
                     (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
                 } else {
                     (COMPLETED_CHAR, style_tokens::ERROR)
                 };
-                let n_display = format_tool_call_display(&nested.name, &nested.arguments);
+                let (n_verb, n_arg) =
+                    format_tool_call_parts(&nested.name, &nested.arguments);
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("{}\u{2514}\u{2500} ", Indent::CONT),
                         Style::default().fg(style_tokens::SUBTLE),
                     ),
                     Span::styled(format!("{n_icon} "), Style::default().fg(n_icon_color)),
-                    Span::styled(n_display, Style::default().fg(n_color)),
+                    Span::styled(
+                        n_verb,
+                        Style::default()
+                            .fg(style_tokens::PRIMARY)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("({n_arg})"),
+                        Style::default().fg(style_tokens::SUBTLE),
+                    ),
                 ]));
             }
         }
@@ -2045,6 +2054,7 @@ impl App {
                 KeyCode::Esc => {
                     self.ask_user_controller.cancel();
                     self.ask_user_response_tx.take();
+                    let _ = self.event_tx.send(AppEvent::Interrupt);
                 }
                 _ => {}
             }
@@ -2079,6 +2089,7 @@ impl App {
                     // The controller already sent via its own oneshot in cancel(),
                     // so just clean up our stored tx (it's already consumed by cancel).
                     self.plan_approval_response_tx.take();
+                    let _ = self.event_tx.send(AppEvent::Interrupt);
                 }
                 _ => {}
             }
@@ -2099,6 +2110,7 @@ impl App {
                 KeyCode::Esc => {
                     self.approval_controller.cancel();
                     self.approval_response_tx.take();
+                    let _ = self.event_tx.send(AppEvent::Interrupt);
                 }
                 _ => {}
             }
