@@ -427,6 +427,11 @@ impl ReactLoop {
         let _last_assistant_tools: Vec<String> = Vec::new();
 
         for msg in messages.iter().rev() {
+            // Skip injected thinking trace messages (fake assistant-user pair)
+            if msg.get("_thinking").and_then(|v| v.as_bool()) == Some(true) {
+                continue;
+            }
+
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
             match role {
                 "tool" => {
@@ -650,7 +655,14 @@ impl ReactLoop {
 
             // Thinking phase (before action)
             // Mirrors Python's 3-step flow: think → critique → refine → inject
-            let skip_thinking = self.should_skip_thinking(messages);
+            // Also skip if the last message is a thinking trace (fake pair already injected,
+            // e.g. after a retryable action failure — avoids duplicate thinking runs).
+            let thinking_already_injected = messages
+                .last()
+                .and_then(|m| m.get("_thinking"))
+                .and_then(|v| v.as_bool())
+                == Some(true);
+            let skip_thinking = thinking_already_injected || self.should_skip_thinking(messages);
             let effective_level = self.config.effective_thinking_level();
             if effective_level.is_enabled() && !skip_thinking {
                 let _thinking_span = info_span!(
@@ -2099,6 +2111,56 @@ mod tests {
             serde_json::json!({"role": "tool", "name": "read_file", "content": "ok", "tool_call_id": "1"}),
         ];
         assert!(rl.should_skip_thinking(&messages));
+    }
+
+    #[test]
+    fn test_should_skip_thinking_ignores_thinking_pair() {
+        // The fake assistant-user pair (_thinking: true) should be invisible
+        // to should_skip_thinking — it should look through them at the real messages.
+        let rl = make_loop();
+        // Readonly tools followed by thinking pair → still skip
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "read something"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{"id": "1", "function": {"name": "read_file", "arguments": "{}"}}]
+            }),
+            serde_json::json!({"role": "tool", "name": "read_file", "content": "ok", "tool_call_id": "1"}),
+            serde_json::json!({"role": "assistant", "content": "I'll read the file", "_thinking": true}),
+            serde_json::json!({"role": "user", "content": "Proceed.", "_thinking": true}),
+        ];
+        assert!(rl.should_skip_thinking(&messages));
+    }
+
+    #[test]
+    fn test_should_not_skip_thinking_with_pair_after_write() {
+        // Write tool followed by thinking pair → don't skip
+        let rl = make_loop();
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "edit something"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{"id": "1", "function": {"name": "edit_file", "arguments": "{}"}}]
+            }),
+            serde_json::json!({"role": "tool", "name": "edit_file", "content": "ok", "tool_call_id": "1"}),
+            serde_json::json!({"role": "assistant", "content": "I'll edit", "_thinking": true}),
+            serde_json::json!({"role": "user", "content": "Proceed.", "_thinking": true}),
+        ];
+        assert!(!rl.should_skip_thinking(&messages));
+    }
+
+    #[test]
+    fn test_should_not_skip_thinking_only_pair_no_tools() {
+        // Only thinking pair, no tool results → don't skip (retryable failure case)
+        let rl = make_loop();
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "hello"}),
+            serde_json::json!({"role": "assistant", "content": "I should respond", "_thinking": true}),
+            serde_json::json!({"role": "user", "content": "Proceed.", "_thinking": true}),
+        ];
+        assert!(!rl.should_skip_thinking(&messages));
     }
 
     #[test]
