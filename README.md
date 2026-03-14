@@ -11,6 +11,10 @@
 </p>
 
 <p align="center">
+  <strong>Website and documentation coming soon!</strong>
+</p>
+
+<p align="center">
   <img src="figures/introduction.png" alt="OpenDev Introduction" width="800"/>
 </p>
 
