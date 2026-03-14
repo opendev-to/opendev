@@ -60,6 +60,19 @@ struct Cli {
     #[arg(long)]
     dangerously_skip_permissions: bool,
 
+    /// Color theme for the TUI (dark, light, dracula). Auto-detected if not set.
+    #[arg(long, value_name = "THEME")]
+    theme: Option<String>,
+
+    /// Configuration profile to use (dev, prod, fast).
+    #[arg(long, value_name = "PROFILE")]
+    profile: Option<String>,
+
+    /// Replay a recorded event JSONL file for debugging.
+    /// Record events by setting OPENDEV_DEBUG_EVENTS=1.
+    #[arg(long, value_name = "JSONL_FILE")]
+    replay: Option<PathBuf>,
+
     /// Initial message to start the session with (positional).
     #[arg(value_name = "MESSAGE")]
     message: Option<String>,
@@ -326,6 +339,12 @@ async fn main() {
             handle_run(action, &working_dir).await;
         }
         None => {
+            // Replay mode
+            if let Some(ref replay_path) = cli.replay {
+                run_replay(replay_path).await;
+                return;
+            }
+
             // Interactive or non-interactive mode
             if let Some(prompt) = cli.prompt {
                 run_non_interactive(&working_dir, &prompt).await;
@@ -336,6 +355,8 @@ async fn main() {
                     cli.resume,
                     cli.message,
                     cli.dangerously_skip_permissions,
+                    cli.theme,
+                    cli.profile,
                 )
                 .await;
             }
@@ -667,6 +688,8 @@ async fn run_interactive(
     resume: Option<Option<String>>,
     initial_message: Option<String>,
     dangerously_skip_permissions: bool,
+    theme_name: Option<String>,
+    profile_name: Option<String>,
 ) {
     use opendev_history::{SessionListing, SessionManager};
 
@@ -682,7 +705,7 @@ async fn run_interactive(
     let config = load_app_config(working_dir);
 
     // First-run detection: if no settings file exists, run setup wizard
-    let config = if !setup::config_exists() {
+    let mut config = if !setup::config_exists() {
         println!("No configuration found. Starting first-time setup...");
         match setup::run_setup_wizard().await {
             Ok(wizard_config) => wizard_config,
@@ -694,6 +717,12 @@ async fn run_interactive(
     } else {
         config
     };
+
+    // Apply profile overrides (from --profile flag or OPENDEV_PROFILE env var)
+    let effective_profile = profile_name.or_else(|| std::env::var("OPENDEV_PROFILE").ok());
+    if let Some(ref profile) = effective_profile {
+        opendev_config::apply_profile(&mut config, profile);
+    }
 
     let mut session_manager = match SessionManager::new(session_dir.clone()) {
         Ok(sm) => sm,
@@ -797,12 +826,20 @@ async fn run_interactive(
             }
         };
 
+    // Resolve theme: CLI flag > auto-detect from terminal background
+    let resolved_theme = theme_name
+        .as_deref()
+        .and_then(opendev_tui::ThemeName::from_str_loose)
+        .unwrap_or_else(opendev_tui::auto_detect_theme);
+
     // Populate initial TUI state from config
     let mut app_state = opendev_tui::AppState {
         model: config.model.clone(),
         working_dir: shorten_working_dir(working_dir),
         git_branch: detect_git_branch(working_dir),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        theme: resolved_theme.theme(),
+        theme_name: resolved_theme,
         ..opendev_tui::AppState::default()
     };
 
@@ -833,6 +870,48 @@ fn shorten_working_dir(path: &std::path::Path) -> String {
         return format!("~/{}", rest.display());
     }
     path.display().to_string()
+}
+
+/// Replay recorded events from a JSONL file for debugging.
+///
+/// Loads a JSONL event file produced by `EventRecorder` (set `OPENDEV_DEBUG_EVENTS=1`)
+/// and prints each event to stdout. This allows debugging event sequences without
+/// a running LLM.
+async fn run_replay(path: &std::path::Path) {
+    use opendev_tui::event::load_recorded_events;
+
+    if !path.exists() {
+        eprintln!("Error: replay file not found: {}", path.display());
+        std::process::exit(1);
+    }
+
+    match load_recorded_events(path) {
+        Ok(events) => {
+            println!("Replaying {} events from {}", events.len(), path.display());
+            println!("{}", "-".repeat(60));
+            for event in &events {
+                let reconstructable = if event.to_app_event().is_some() {
+                    ""
+                } else {
+                    " [not reconstructable]"
+                };
+                println!(
+                    "[seq={:>5} t={:>8}ms] {}{}: {}",
+                    event.seq,
+                    event.timestamp_ms,
+                    event.variant,
+                    reconstructable,
+                    serde_json::to_string(&event.payload).unwrap_or_default(),
+                );
+            }
+            println!("{}", "-".repeat(60));
+            println!("Replay complete: {} events", events.len());
+        }
+        Err(e) => {
+            eprintln!("Error reading replay file: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Detect the current git branch for the given directory.
