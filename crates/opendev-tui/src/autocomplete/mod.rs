@@ -45,10 +45,14 @@ pub struct CompletionItem {
 // ── Trigger detection ──────────────────────────────────────────────
 
 /// Trigger character that activated autocompletion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trigger {
     /// `/` at the beginning or after whitespace (slash commands).
     Slash,
+    /// Slash command argument: the command name has been typed and the user
+    /// is now typing an argument. `command` is the command name (without `/`),
+    /// and the query is the partial argument text.
+    SlashArg { command: String },
     /// `@` for file mentions.
     At,
     /// Tab key for general completion.
@@ -79,9 +83,14 @@ pub fn detect_trigger(text_before_cursor: &str) -> Option<(Trigger, String)> {
                 .unwrap_or(false);
         if valid_start {
             let after_slash = &text_before_cursor[pos + 1..];
-            if !after_slash.contains(' ') {
-                return Some((Trigger::Slash, after_slash.to_string()));
+            if after_slash.contains(' ') {
+                // User has typed a command and a space — argument mode
+                let parts: Vec<&str> = after_slash.splitn(2, ' ').collect();
+                let command = parts[0].to_string();
+                let arg_query = parts.get(1).copied().unwrap_or("").to_string();
+                return Some((Trigger::SlashArg { command }, arg_query));
             }
+            return Some((Trigger::Slash, after_slash.to_string()));
         }
     }
 
@@ -143,6 +152,14 @@ impl AutocompleteEngine {
                 self.selected = 0;
                 self.visible = !self.items.is_empty();
                 self.trigger_len = 1 + query.len(); // '/' + query
+            }
+            Some((Trigger::SlashArg { ref command }, ref query)) => {
+                self.items = self.command_completer.complete_args(command, query);
+                self.strategy.sort(&mut self.items);
+                self.selected = 0;
+                self.visible = !self.items.is_empty();
+                // Delete only the argument portion (not the command)
+                self.trigger_len = query.len();
             }
             Some((Trigger::At, ref query)) => {
                 self.items = self.file_completer.complete(query);
@@ -366,5 +383,72 @@ mod tests {
         let mut engine = AutocompleteEngine::new(engine_dir);
         let result = engine.accept();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_detect_trigger_slash_arg() {
+        let result = detect_trigger("/mode pl");
+        assert_eq!(
+            result,
+            Some((
+                Trigger::SlashArg {
+                    command: "mode".to_string()
+                },
+                "pl".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_detect_trigger_slash_arg_empty() {
+        let result = detect_trigger("/mode ");
+        assert_eq!(
+            result,
+            Some((
+                Trigger::SlashArg {
+                    command: "mode".to_string()
+                },
+                String::new()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_engine_arg_completion_mode() {
+        let engine_dir = std::env::temp_dir();
+        let mut engine = AutocompleteEngine::new(engine_dir);
+        engine.update("/mode pl");
+        assert!(engine.is_visible());
+        assert_eq!(engine.items().len(), 1);
+        assert_eq!(engine.items()[0].label, "plan");
+    }
+
+    #[test]
+    fn test_engine_arg_completion_thinking() {
+        let engine_dir = std::env::temp_dir();
+        let mut engine = AutocompleteEngine::new(engine_dir);
+        engine.update("/thinking ");
+        assert!(engine.is_visible());
+        assert_eq!(engine.items().len(), 4);
+    }
+
+    #[test]
+    fn test_engine_arg_completion_model_names() {
+        let engine_dir = std::env::temp_dir();
+        let mut engine = AutocompleteEngine::new(engine_dir);
+        engine.update("/model gpt");
+        assert!(engine.is_visible());
+        assert!(engine.items().len() >= 2);
+        for item in engine.items() {
+            assert!(item.label.starts_with("gpt"));
+        }
+    }
+
+    #[test]
+    fn test_engine_arg_completion_unknown_command() {
+        let engine_dir = std::env::temp_dir();
+        let mut engine = AutocompleteEngine::new(engine_dir);
+        engine.update("/unknowncmd ");
+        assert!(!engine.is_visible());
     }
 }

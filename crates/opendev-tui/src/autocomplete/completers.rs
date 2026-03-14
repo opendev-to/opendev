@@ -47,6 +47,69 @@ impl CommandCompleter {
     }
 }
 
+impl CommandCompleter {
+    /// Provide argument completions for a specific slash command.
+    ///
+    /// For example, `/mode` suggests `plan` and `normal`, `/thinking` suggests
+    /// thinking levels, `/models` or `/session-models` suggests model names.
+    pub fn complete_args(&self, command: &str, query: &str) -> Vec<CompletionItem> {
+        let candidates = match command {
+            "mode" => vec![
+                ("plan", "Read-only tools, planning mode"),
+                ("normal", "Full tool access, normal mode"),
+            ],
+            "thinking" => vec![
+                ("off", "Disable thinking"),
+                ("low", "Basic reasoning"),
+                ("medium", "Standard reasoning"),
+                ("high", "Deep reasoning with critique"),
+            ],
+            "autonomy" => vec![
+                ("manual", "All commands require approval"),
+                ("semi-auto", "Safe commands auto-approved"),
+                ("auto", "All commands auto-approved"),
+            ],
+            "model" | "models" | "session-models" => vec![
+                ("gpt-4o", "OpenAI GPT-4o"),
+                ("gpt-4o-mini", "OpenAI GPT-4o Mini"),
+                ("claude-sonnet-4", "Anthropic Claude Sonnet 4"),
+                ("claude-3-opus", "Anthropic Claude 3 Opus"),
+                ("claude-3-haiku", "Anthropic Claude 3 Haiku"),
+                ("gemini-1.5-pro", "Google Gemini 1.5 Pro"),
+                ("deepseek-chat", "DeepSeek Chat"),
+            ],
+            "mcp" => vec![
+                ("list", "List MCP servers"),
+                ("add", "Add an MCP server"),
+                ("remove", "Remove an MCP server"),
+                ("enable", "Enable an MCP server"),
+                ("disable", "Disable an MCP server"),
+            ],
+            "plugins" => vec![
+                ("list", "List installed plugins"),
+                ("install", "Install a plugin"),
+                ("remove", "Remove a plugin"),
+            ],
+            "agents" => vec![("list", "List available agents")],
+            "skills" => vec![("list", "List available skills")],
+            _ => vec![],
+        };
+
+        let query_lower = query.to_lowercase();
+        candidates
+            .into_iter()
+            .filter(|(name, _)| name.starts_with(&query_lower))
+            .map(|(name, desc)| CompletionItem {
+                insert_text: name.to_string(),
+                label: name.to_string(),
+                description: desc.to_string(),
+                kind: CompletionKind::Command,
+                score: 0.0,
+            })
+            .collect()
+    }
+}
+
 impl Completer for CommandCompleter {
     fn complete(&self, query: &str) -> Vec<CompletionItem> {
         let query_lower = query.to_lowercase();
@@ -248,5 +311,63 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].kind, CompletionKind::File);
         assert!(results[0].label.contains("hello.txt"));
+    }
+
+    // --- Argument completion tests ---
+
+    #[test]
+    fn test_arg_completion_mode() {
+        let c = CommandCompleter::new(None);
+        let results = c.complete_args("mode", "");
+        assert_eq!(results.len(), 2);
+        let labels: Vec<&str> = results.iter().map(|r| r.label.as_str()).collect();
+        assert!(labels.contains(&"plan"));
+        assert!(labels.contains(&"normal"));
+    }
+
+    #[test]
+    fn test_arg_completion_mode_prefix() {
+        let c = CommandCompleter::new(None);
+        let results = c.complete_args("mode", "pl");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].label, "plan");
+    }
+
+    #[test]
+    fn test_arg_completion_thinking() {
+        let c = CommandCompleter::new(None);
+        let results = c.complete_args("thinking", "");
+        assert_eq!(results.len(), 4);
+    }
+
+    #[test]
+    fn test_arg_completion_autonomy() {
+        let c = CommandCompleter::new(None);
+        let results = c.complete_args("autonomy", "");
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_arg_completion_model_names() {
+        let c = CommandCompleter::new(None);
+        let results = c.complete_args("model", "claude");
+        assert!(results.len() >= 2);
+        for r in &results {
+            assert!(r.label.starts_with("claude"));
+        }
+    }
+
+    #[test]
+    fn test_arg_completion_mcp() {
+        let c = CommandCompleter::new(None);
+        let results = c.complete_args("mcp", "");
+        assert_eq!(results.len(), 5);
+    }
+
+    #[test]
+    fn test_arg_completion_unknown_command() {
+        let c = CommandCompleter::new(None);
+        let results = c.complete_args("nonexistent", "");
+        assert!(results.is_empty());
     }
 }
