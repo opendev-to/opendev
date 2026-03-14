@@ -16,7 +16,7 @@ use crate::llm_calls::LlmCaller;
 use crate::response::ResponseCleaner;
 use crate::traits::{AgentError, AgentResult, LlmResponse, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
-use opendev_context::ArtifactIndex;
+use opendev_context::{ArtifactIndex, ContextCompactor, OptimizationLevel};
 use opendev_runtime::{CostTracker, TokenUsage, play_finish_sound, ThinkingLevel};
 use opendev_tools_core::{ToolContext, ToolRegistry, ToolResult};
 
@@ -514,6 +514,7 @@ impl ReactLoop {
         event_callback: Option<&dyn crate::traits::AgentEventCallback>,
         cost_tracker: Option<&Mutex<CostTracker>>,
         artifact_index: Option<&Mutex<ArtifactIndex>>,
+        compactor: Option<&Mutex<ContextCompactor>>,
     ) -> Result<AgentResult, AgentError>
     where
         M: TaskMonitor + ?Sized,
@@ -543,6 +544,11 @@ impl ReactLoop {
                 && monitor.should_interrupt()
             {
                 return Ok(AgentResult::interrupted(messages.clone()));
+            }
+
+            // Auto-compaction: check context usage and apply staged optimization
+            if let Some(comp) = compactor {
+                apply_staged_compaction(comp, messages);
             }
 
             // Thinking phase (before action)
@@ -745,6 +751,14 @@ impl ReactLoop {
                 if let Ok(mut tracker) = ct.lock() {
                     tracker.record_usage(&token_usage, None);
                 }
+            }
+
+            // Calibrate compactor with real API token counts
+            if let Some(comp) = compactor
+                && input_tokens > 0
+                && let Ok(mut c) = comp.lock()
+            {
+                c.update_from_api_usage(input_tokens, messages.len());
             }
 
             // Initialize per-iteration metrics
@@ -1060,6 +1074,76 @@ impl ReactLoop {
         }
 
         Ok(turn)
+    }
+}
+
+/// Convert `Vec<Value>` messages to `Vec<ApiMessage>` for the compactor.
+///
+/// Only includes `Value::Object` entries; non-object values are skipped.
+fn values_to_api_messages(values: &[Value]) -> Vec<opendev_context::compaction::ApiMessage> {
+    values
+        .iter()
+        .filter_map(|v| v.as_object().cloned())
+        .collect()
+}
+
+/// Apply staged context compaction based on current usage level.
+///
+/// Mirrors Python's `_maybe_compact()` — checks context usage percentage
+/// and applies the appropriate optimization strategy:
+/// - 70%: Warning only
+/// - 80%: Mask old tool results with compact refs
+/// - 85%: Prune old tool outputs
+/// - 90%: Aggressive masking (fewer recent results preserved)
+/// - 99%: Full compaction (summarize middle messages)
+fn apply_staged_compaction(compactor: &Mutex<ContextCompactor>, messages: &mut Vec<Value>) {
+    let api_msgs = values_to_api_messages(messages);
+    let level = if let Ok(mut comp) = compactor.lock() {
+        comp.check_usage(&api_msgs, "")
+    } else {
+        return;
+    };
+
+    match level {
+        OptimizationLevel::None | OptimizationLevel::Warning => {}
+        OptimizationLevel::Mask | OptimizationLevel::Aggressive => {
+            // Convert to ApiMessage, apply masking, convert back
+            let mut api_msgs = values_to_api_messages(messages);
+            if let Ok(comp) = compactor.lock() {
+                comp.mask_old_observations(&mut api_msgs, level);
+            }
+            // Write masked messages back
+            let mut api_idx = 0;
+            for msg in messages.iter_mut() {
+                if msg.is_object() && api_idx < api_msgs.len() {
+                    *msg = Value::Object(api_msgs[api_idx].clone());
+                    api_idx += 1;
+                }
+            }
+        }
+        OptimizationLevel::Prune => {
+            let mut api_msgs = values_to_api_messages(messages);
+            if let Ok(comp) = compactor.lock() {
+                comp.mask_old_observations(&mut api_msgs, OptimizationLevel::Mask);
+                comp.prune_old_tool_outputs(&mut api_msgs);
+            }
+            let mut api_idx = 0;
+            for msg in messages.iter_mut() {
+                if msg.is_object() && api_idx < api_msgs.len() {
+                    *msg = Value::Object(api_msgs[api_idx].clone());
+                    api_idx += 1;
+                }
+            }
+        }
+        OptimizationLevel::Compact => {
+            let api_msgs = values_to_api_messages(messages);
+            if let Ok(mut comp) = compactor.lock() {
+                let compacted = comp.compact(api_msgs, "");
+                // Replace messages with compacted version
+                messages.clear();
+                messages.extend(compacted.into_iter().map(Value::Object));
+            }
+        }
     }
 }
 

@@ -24,7 +24,7 @@ use opendev_models::AppConfig;
 use opendev_models::message::{ChatMessage, Role};
 use opendev_repl::HandlerRegistry;
 use opendev_repl::query_enhancer::QueryEnhancer;
-use opendev_context::ArtifactIndex;
+use opendev_context::{ArtifactIndex, ContextCompactor};
 use opendev_runtime::CostTracker;
 use opendev_tools_core::{ToolContext, ToolRegistry};
 use opendev_tools_impl::*;
@@ -56,6 +56,8 @@ pub struct AgentRuntime {
     pub cost_tracker: Mutex<CostTracker>,
     /// Artifact index tracking file operations (survives compaction).
     pub artifact_index: Mutex<ArtifactIndex>,
+    /// Context compactor for auto-compaction when approaching context limits.
+    pub compactor: Mutex<ContextCompactor>,
 }
 
 /// Register all built-in tools into the registry.
@@ -340,6 +342,7 @@ impl AgentRuntime {
 
         let cost_tracker = Mutex::new(CostTracker::new());
         let artifact_index = Mutex::new(ArtifactIndex::new());
+        let compactor = Mutex::new(ContextCompactor::new(config.max_context_tokens));
 
         Ok(Self {
             config,
@@ -353,6 +356,7 @@ impl AgentRuntime {
             react_loop,
             cost_tracker,
             artifact_index,
+            compactor,
         })
     }
 
@@ -461,6 +465,7 @@ impl AgentRuntime {
                 event_callback,
                 Some(&self.cost_tracker),
                 Some(&self.artifact_index),
+                Some(&self.compactor),
             )
             .await?;
 
