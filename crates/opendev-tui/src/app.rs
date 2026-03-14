@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 use crate::controllers::{ApprovalController, MessageController, PlanApprovalController};
 use crate::event::{AppEvent, EventHandler};
 use crate::history::CommandHistory;
-use crate::managers::InterruptManager;
 use crate::widgets::{
     ConversationWidget, InputWidget, NestedToolWidget, StatusBarWidget, TodoDisplayItem,
     TodoDisplayStatus, TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
@@ -189,6 +188,7 @@ fn display_message_hash(msg: &DisplayMessage) -> u64 {
     let mut hasher = DefaultHasher::new();
     std::mem::discriminant(&msg.role).hash(&mut hasher);
     msg.content.hash(&mut hasher);
+    msg.collapsed.hash(&mut hasher);
     if let Some(ref tc) = msg.tool_call {
         tc.name.hash(&mut hasher);
         format!("{:?}", tc.arguments).hash(&mut hasher);
@@ -213,6 +213,8 @@ pub struct DisplayMessage {
     pub content: String,
     /// Optional tool call info for assistant messages.
     pub tool_call: Option<DisplayToolCall>,
+    /// Whether this message is collapsed (used for Thinking role).
+    pub collapsed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +223,8 @@ pub enum DisplayRole {
     Assistant,
     System,
     Thinking,
+    /// Interrupted feedback — rendered with ⎿ in red.
+    Interrupt,
 }
 
 /// Tool call display info.
@@ -376,8 +380,8 @@ pub struct App {
     plan_approval_controller: PlanApprovalController,
     /// Oneshot sender to forward the plan decision back to the tool.
     plan_approval_response_tx: Option<tokio::sync::oneshot::Sender<opendev_runtime::PlanDecision>>,
-    /// Interrupt manager for signaling cancellation to the agent.
-    interrupt_manager: InterruptManager,
+    /// Interrupt token for signaling cancellation to the agent (set per-query).
+    interrupt_token: Option<opendev_runtime::InterruptToken>,
     /// Optional channel for forwarding user messages to the agent backend.
     user_message_tx: Option<mpsc::UnboundedSender<String>>,
 }
@@ -401,7 +405,7 @@ impl App {
             approval_controller: ApprovalController::new(),
             plan_approval_controller: PlanApprovalController::new(),
             plan_approval_response_tx: None,
-            interrupt_manager: InterruptManager::new(),
+            interrupt_token: None,
             user_message_tx: None,
         }
     }
@@ -772,30 +776,47 @@ impl App {
                 }
             }
             DisplayRole::Thinking => {
-                for (i, content_line) in content.lines().enumerate() {
-                    if i == 0 {
-                        lines.push(Line::from(vec![
-                            Span::styled(
-                                format!("{} ", style_tokens::THINKING_ICON),
-                                Style::default().fg(style_tokens::THINKING_BG),
-                            ),
-                            Span::styled(
-                                content_line.to_string(),
-                                Style::default()
-                                    .fg(style_tokens::THINKING_BG)
-                                    .add_modifier(Modifier::ITALIC),
-                            ),
-                        ]));
-                    } else {
-                        lines.push(Line::from(vec![
-                            Span::raw(Indent::CONT),
-                            Span::styled(
-                                content_line.to_string(),
-                                Style::default()
-                                    .fg(style_tokens::THINKING_BG)
-                                    .add_modifier(Modifier::ITALIC),
-                            ),
-                        ]));
+                if msg.collapsed {
+                    let first = content.lines().next().unwrap_or("");
+                    let count = content.lines().count();
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("{} ", style_tokens::THINKING_ICON),
+                            Style::default().fg(style_tokens::THINKING_BG),
+                        ),
+                        Span::styled(
+                            format!("+ {first}... ({count} lines, Ctrl+O to expand)"),
+                            Style::default()
+                                .fg(style_tokens::THINKING_BG)
+                                .add_modifier(Modifier::ITALIC),
+                        ),
+                    ]));
+                } else {
+                    for (i, content_line) in content.lines().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("{} ", style_tokens::THINKING_ICON),
+                                    Style::default().fg(style_tokens::THINKING_BG),
+                                ),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default()
+                                        .fg(style_tokens::THINKING_BG)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::raw(Indent::CONT),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default()
+                                        .fg(style_tokens::THINKING_BG)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            ]));
+                        }
                     }
                 }
             }
@@ -1092,12 +1113,10 @@ impl App {
         let selected = self.plan_approval_controller.selected_action();
 
         // Build lines: header hint + options
-        let mut lines = vec![
-            Line::from(Span::styled(
-                " \u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
-                Style::default().fg(style_tokens::SUBTLE),
-            )),
-        ];
+        let mut lines = vec![Line::from(Span::styled(
+            " \u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
+            Style::default().fg(style_tokens::SUBTLE),
+        ))];
 
         for (i, opt) in options.iter().enumerate() {
             let is_selected = i == selected;
@@ -1201,6 +1220,7 @@ impl App {
                         cost_usd, budget_usd
                     ),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.dirty = true;
                 self.state.message_generation += 1;
@@ -1240,6 +1260,7 @@ impl App {
                     role: DisplayRole::System,
                     content: format!("Error: {err}"),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.dirty = true;
                 self.state.message_generation += 1;
@@ -1249,42 +1270,50 @@ impl App {
 
             // Thinking events
             AppEvent::ThinkingTrace(content) => {
+                let auto_collapse = content.lines().count() > 5;
                 // Replace previous thinking message if present (completion nudge
                 // can trigger thinking phase again in the same agent turn).
                 if let Some(last) = self.state.messages.last_mut()
                     && last.role == DisplayRole::Thinking
                 {
+                    last.collapsed = auto_collapse;
                     last.content = content;
                 } else {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Thinking,
                         content,
                         tool_call: None,
+                        collapsed: auto_collapse,
                     });
                 }
                 self.state.dirty = true;
                 self.state.message_generation += 1;
             }
             AppEvent::CritiqueTrace(content) => {
+                let auto_collapse = content.lines().count() > 5;
                 self.state.messages.push(DisplayMessage {
                     role: DisplayRole::Thinking,
                     content,
                     tool_call: None,
+                    collapsed: auto_collapse,
                 });
                 self.state.dirty = true;
                 self.state.message_generation += 1;
             }
             AppEvent::RefinedThinkingTrace(content) => {
+                let auto_collapse = content.lines().count() > 5;
                 // Replace previous thinking/critique if the refinement supersedes them
                 if let Some(last) = self.state.messages.last_mut()
                     && last.role == DisplayRole::Thinking
                 {
+                    last.collapsed = auto_collapse;
                     last.content = content;
                 } else {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Thinking,
                         content,
                         tool_call: None,
+                        collapsed: auto_collapse,
                     });
                 }
                 self.state.dirty = true;
@@ -1370,6 +1399,7 @@ impl App {
                             result_lines: display_lines,
                             nested_calls: Vec::new(),
                         }),
+                        collapsed: false,
                     });
                 }
 
@@ -1528,6 +1558,7 @@ impl App {
                     role: DisplayRole::System,
                     content: format!("── Plan ──\n{plan_content}"),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.message_generation += 1;
                 // Start the plan approval controller
@@ -1554,11 +1585,31 @@ impl App {
                     self.plan_approval_response_tx.take();
                 }
                 if self.state.agent_active {
-                    self.interrupt_manager.interrupt();
+                    if let Some(ref token) = self.interrupt_token {
+                        token.request(); // Signals all layers simultaneously
+                    }
                     self.state.agent_active = false;
                     self.state.pending_messages.clear();
                 }
                 self.state.dirty = true;
+            }
+            AppEvent::SetInterruptToken(token) => {
+                self.interrupt_token = Some(token);
+            }
+            AppEvent::AgentInterrupted => {
+                self.state.agent_active = false;
+                self.state.task_progress = None;
+                // Clear active tools
+                self.state.active_tools.clear();
+                // Show interrupt feedback in the conversation
+                self.state.messages.push(DisplayMessage {
+                    role: DisplayRole::Interrupt,
+                    content: "Interrupted".to_string(),
+                    tool_call: None,
+                    collapsed: false,
+                });
+                self.state.dirty = true;
+                self.state.message_generation += 1;
             }
             AppEvent::ModeChanged(mode) => {
                 self.state.mode = match mode.as_str() {
@@ -1891,13 +1942,26 @@ impl App {
             }
             // Ctrl+O — toggle collapsed state on the most recent collapsible tool result
             (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                // Priority 1: Most recent collapsible tool result
+                let mut toggled = false;
                 for msg in self.state.messages.iter_mut().rev() {
                     if let Some(ref mut tc) = msg.tool_call
                         && !tc.result_lines.is_empty()
                     {
                         tc.collapsed = !tc.collapsed;
                         self.state.message_generation += 1;
+                        toggled = true;
                         break;
+                    }
+                }
+                // Priority 2: Most recent thinking block
+                if !toggled {
+                    for msg in self.state.messages.iter_mut().rev() {
+                        if msg.role == DisplayRole::Thinking && !msg.content.is_empty() {
+                            msg.collapsed = !msg.collapsed;
+                            self.state.message_generation += 1;
+                            break;
+                        }
                     }
                 }
             }
@@ -1917,12 +1981,14 @@ impl App {
                         role: DisplayRole::System,
                         content: format!("{count} background {task_word} running."),
                         tool_call: None,
+                        collapsed: false,
                     });
                 } else {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::System,
                         content: "No background tasks running.".to_string(),
                         tool_call: None,
+                        collapsed: false,
                     });
                 }
                 self.state.message_generation += 1;
@@ -2001,6 +2067,7 @@ impl App {
                     role: DisplayRole::System,
                     content: format!("Mode: {}", self.state.mode),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.message_generation += 1;
             }
@@ -2015,6 +2082,7 @@ impl App {
                     role: DisplayRole::System,
                     content: format!("Thinking: {}", self.state.thinking_level),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.message_generation += 1;
             }
@@ -2028,6 +2096,7 @@ impl App {
                     role: DisplayRole::System,
                     content: format!("Autonomy: {}", self.state.autonomy),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.message_generation += 1;
             }
@@ -2037,6 +2106,7 @@ impl App {
                     role: DisplayRole::System,
                     content: "Playing test sound...".to_string(),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.message_generation += 1;
             }
@@ -2046,6 +2116,7 @@ impl App {
                         role: DisplayRole::System,
                         content: "Not enough messages to compact (need at least 5).".to_string(),
                         tool_call: None,
+                        collapsed: false,
                     });
                 } else {
                     self.state.compact_requested = true;
@@ -2054,6 +2125,7 @@ impl App {
                         content: "Context compaction triggered. Will compact on next query."
                             .to_string(),
                         tool_call: None,
+                        collapsed: false,
                     });
                 }
                 self.state.message_generation += 1;
@@ -2080,6 +2152,7 @@ impl App {
                     ]
                     .join("\n"),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.message_generation += 1;
             }
@@ -2090,6 +2163,7 @@ impl App {
                         "Unknown command: /{name}. Type /help for available commands."
                     ),
                     tool_call: None,
+                    collapsed: false,
                 });
                 self.state.message_generation += 1;
             }
@@ -2306,6 +2380,7 @@ mod tests {
                 role: DisplayRole::User,
                 content: format!("Message {i}"),
                 tool_call: None,
+                collapsed: false,
             });
         }
         app.state.message_generation = 1;
@@ -2333,6 +2408,7 @@ mod tests {
             role: DisplayRole::Assistant,
             content: "Hello **world**".into(),
             tool_call: None,
+            collapsed: false,
         });
         app.state.terminal_height = 24;
         app.rebuild_cached_lines();
@@ -2353,6 +2429,7 @@ mod tests {
             role: DisplayRole::Assistant,
             content: "Hello **world**".into(),
             tool_call: None,
+            collapsed: false,
         });
         app.state.terminal_height = 24;
         app.rebuild_cached_lines();
@@ -2369,6 +2446,7 @@ mod tests {
             role: DisplayRole::Assistant,
             content: "# Title\nSome text".into(),
             tool_call: None,
+            collapsed: false,
         });
         app.state.terminal_height = 24;
         app.rebuild_cached_lines();
@@ -2385,6 +2463,7 @@ mod tests {
             role: DisplayRole::User,
             content: "First message".into(),
             tool_call: None,
+            collapsed: false,
         });
         app.rebuild_cached_lines();
         let lines_after_first = app.state.cached_lines.len();
@@ -2399,6 +2478,7 @@ mod tests {
             role: DisplayRole::User,
             content: "Second message".into(),
             tool_call: None,
+            collapsed: false,
         });
         app.rebuild_cached_lines();
         assert_eq!(
@@ -2425,6 +2505,7 @@ mod tests {
                 role: DisplayRole::User,
                 content: content.to_string(),
                 tool_call: None,
+                collapsed: false,
             });
         }
         app.rebuild_cached_lines();
@@ -2448,6 +2529,7 @@ mod tests {
                 role: DisplayRole::User,
                 content: "Second".into(),
                 tool_call: None,
+                collapsed: false,
             }),
         );
         assert_eq!(app.state.cached_lines.len(), original_lines);
@@ -2476,6 +2558,7 @@ mod tests {
                 },
                 content: format!("Message {i}"),
                 tool_call: None,
+                collapsed: false,
             });
             app.rebuild_cached_lines();
             assert_eq!(app.state.per_message_hashes.len(), (i + 1) as usize);
@@ -2509,6 +2592,7 @@ mod tests {
             role: DisplayRole::User,
             content: "Hello".into(),
             tool_call: None,
+            collapsed: false,
         });
         app.rebuild_cached_lines();
         let lines_after = app.state.cached_lines.clone();
@@ -2525,11 +2609,13 @@ mod tests {
             role: DisplayRole::User,
             content: "First".into(),
             tool_call: None,
+            collapsed: false,
         });
         app.state.messages.push(DisplayMessage {
             role: DisplayRole::User,
             content: "Second".into(),
             tool_call: None,
+            collapsed: false,
         });
         app.rebuild_cached_lines();
         assert_eq!(app.state.per_message_hashes.len(), 2);

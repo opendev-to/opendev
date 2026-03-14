@@ -202,32 +202,49 @@ impl<'a> ConversationWidget<'a> {
                     }
                 }
                 DisplayRole::Thinking => {
-                    for (i, content_line) in content.lines().enumerate() {
-                        if i == 0 {
-                            // First line: ⟡ icon at same indent as ⏺ / > / !
-                            lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!("{} ", style_tokens::THINKING_ICON),
-                                    Style::default().fg(style_tokens::THINKING_BG),
-                                ),
-                                Span::styled(
-                                    content_line.to_string(),
-                                    Style::default()
-                                        .fg(style_tokens::THINKING_BG)
-                                        .add_modifier(Modifier::ITALIC),
-                                ),
-                            ]));
-                        } else {
-                            // Continuation: 2-char indent matching other roles
-                            lines.push(Line::from(vec![
-                                Span::raw(Indent::CONT),
-                                Span::styled(
-                                    content_line.to_string(),
-                                    Style::default()
-                                        .fg(style_tokens::THINKING_BG)
-                                        .add_modifier(Modifier::ITALIC),
-                                ),
-                            ]));
+                    if msg.collapsed {
+                        let first = content.lines().next().unwrap_or("");
+                        let count = content.lines().count();
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("{} ", style_tokens::THINKING_ICON),
+                                Style::default().fg(style_tokens::THINKING_BG),
+                            ),
+                            Span::styled(
+                                format!("+ {first}... ({count} lines, Ctrl+O to expand)"),
+                                Style::default()
+                                    .fg(style_tokens::THINKING_BG)
+                                    .add_modifier(Modifier::ITALIC),
+                            ),
+                        ]));
+                    } else {
+                        for (i, content_line) in content.lines().enumerate() {
+                            if i == 0 {
+                                // First line: ⟡ icon at same indent as ⏺ / > / !
+                                lines.push(Line::from(vec![
+                                    Span::styled(
+                                        format!("{} ", style_tokens::THINKING_ICON),
+                                        Style::default().fg(style_tokens::THINKING_BG),
+                                    ),
+                                    Span::styled(
+                                        content_line.to_string(),
+                                        Style::default()
+                                            .fg(style_tokens::THINKING_BG)
+                                            .add_modifier(Modifier::ITALIC),
+                                    ),
+                                ]));
+                            } else {
+                                // Continuation: 2-char indent matching other roles
+                                lines.push(Line::from(vec![
+                                    Span::raw(Indent::CONT),
+                                    Span::styled(
+                                        content_line.to_string(),
+                                        Style::default()
+                                            .fg(style_tokens::THINKING_BG)
+                                            .add_modifier(Modifier::ITALIC),
+                                    ),
+                                ]));
+                            }
                         }
                     }
                 }
@@ -498,6 +515,7 @@ mod tests {
             role: DisplayRole::User,
             content: "Hello".into(),
             tool_call: None,
+            collapsed: false,
         }];
         let widget = ConversationWidget::new(&msgs, 0);
         let lines = widget.build_lines();
@@ -518,6 +536,7 @@ mod tests {
                 result_lines: vec!["file1.rs".into(), "file2.rs".into()],
                 nested_calls: vec![],
             }),
+            collapsed: false,
         }];
         let widget = ConversationWidget::new(&msgs, 0);
         let lines = widget.build_lines();
@@ -531,6 +550,7 @@ mod tests {
             role: DisplayRole::Assistant,
             content: "Hello<system-reminder>secret</system-reminder> world".into(),
             tool_call: None,
+            collapsed: false,
         }];
         let widget = ConversationWidget::new(&msgs, 0);
         let lines = widget.build_lines();
@@ -559,6 +579,7 @@ mod tests {
                 result_lines: vec!["line1".into(), "line2".into()],
                 nested_calls: vec![],
             }),
+            collapsed: false,
         }];
         let widget = ConversationWidget::new(&msgs, 0);
         let lines = widget.build_lines();
@@ -576,6 +597,7 @@ mod tests {
             role: DisplayRole::User,
             content: "Do something".into(),
             tool_call: None,
+            collapsed: false,
         }];
         let tools = vec![ToolExecution {
             id: "t1".into(),
@@ -615,6 +637,7 @@ mod tests {
             role: DisplayRole::User,
             content: "Hello".into(),
             tool_call: None,
+            collapsed: false,
         }];
         let progress = TaskProgress {
             description: "Thinking".to_string(),
@@ -640,6 +663,7 @@ mod tests {
             role: DisplayRole::User,
             content: "Hello".into(),
             tool_call: None,
+            collapsed: false,
         }];
         let tools = vec![ToolExecution {
             id: "t1".into(),
@@ -680,6 +704,7 @@ mod tests {
             role: DisplayRole::User,
             content: "Hello".into(),
             tool_call: None,
+            collapsed: false,
         }];
         let widget = ConversationWidget::new(&msgs, 0);
         let spinner = widget.build_spinner_lines();
@@ -711,6 +736,7 @@ mod tests {
                     nested_calls: vec![],
                 }],
             }),
+            collapsed: false,
         }];
         let widget = ConversationWidget::new(&msgs, 0);
         let lines = widget.build_lines();
@@ -732,6 +758,7 @@ mod tests {
             role: DisplayRole::User,
             content: "Hello".into(),
             tool_call: None,
+            collapsed: false,
         }];
         let widget = ConversationWidget::new(&msgs, 0);
 
@@ -806,6 +833,7 @@ mod tests {
             role: DisplayRole::User,
             content: "What is Rust?".into(),
             tool_call: None,
+            collapsed: false,
         }];
 
         terminal
@@ -838,6 +866,7 @@ mod tests {
                 role: DisplayRole::User,
                 content: "List files".into(),
                 tool_call: None,
+                collapsed: false,
             },
             DisplayMessage {
                 role: DisplayRole::Assistant,
@@ -851,11 +880,13 @@ mod tests {
                     result_lines: vec!["main.rs".into(), "lib.rs".into()],
                     nested_calls: vec![],
                 }),
+                collapsed: false,
             },
             DisplayMessage {
                 role: DisplayRole::Assistant,
                 content: "Here are the files.".into(),
                 tool_call: None,
+                collapsed: false,
             },
         ];
 
@@ -902,16 +933,19 @@ mod tests {
                 role: DisplayRole::User,
                 content: "Explain closures".into(),
                 tool_call: None,
+                collapsed: false,
             },
             DisplayMessage {
                 role: DisplayRole::Thinking,
                 content: "Let me think about closures in Rust...".into(),
                 tool_call: None,
+                collapsed: false,
             },
             DisplayMessage {
                 role: DisplayRole::Assistant,
                 content: "Closures capture variables from their scope.".into(),
                 tool_call: None,
+                collapsed: false,
             },
         ];
 
@@ -954,6 +988,7 @@ mod tests {
                 },
                 content: format!("Message number {i} with enough text to occupy a line"),
                 tool_call: None,
+                collapsed: false,
             })
             .collect();
 
@@ -977,6 +1012,68 @@ mod tests {
         assert!(
             first_row.contains('%'),
             "Expected scroll indicator with % on first row when scrolled, got: {first_row:?}"
+        );
+    }
+
+    #[test]
+    fn test_collapsed_thinking_block() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::Thinking,
+            content: "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6".into(),
+            tool_call: None,
+            collapsed: true,
+        }];
+        let widget = ConversationWidget::new(&msgs, 0);
+        let lines = widget.build_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+        // Should show collapsed summary with Ctrl+O hint
+        assert!(
+            text.contains("Ctrl+O to expand"),
+            "Collapsed thinking should show Ctrl+O hint, got: {text}"
+        );
+        assert!(
+            text.contains("6 lines"),
+            "Collapsed thinking should show line count, got: {text}"
+        );
+        // Should NOT show all lines
+        assert!(
+            !text.contains("Line 6"),
+            "Collapsed thinking should not show all content"
+        );
+    }
+
+    #[test]
+    fn test_expanded_thinking_block() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::Thinking,
+            content: "Line 1\nLine 2\nLine 3".into(),
+            tool_call: None,
+            collapsed: false,
+        }];
+        let widget = ConversationWidget::new(&msgs, 0);
+        let lines = widget.build_lines();
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+        // Should show all lines
+        assert!(
+            text.contains("Line 1"),
+            "Expanded thinking should show first line"
+        );
+        assert!(
+            text.contains("Line 3"),
+            "Expanded thinking should show last line"
+        );
+        // Should NOT show collapse hint
+        assert!(
+            !text.contains("Ctrl+O"),
+            "Expanded thinking should not show Ctrl+O hint"
         );
     }
 }

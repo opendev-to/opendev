@@ -19,6 +19,7 @@ fn make_user_message(content: &str) -> DisplayMessage {
         role: DisplayRole::User,
         content: content.to_string(),
         tool_call: None,
+        collapsed: false,
     }
 }
 
@@ -27,6 +28,7 @@ fn make_assistant_message(content: &str) -> DisplayMessage {
         role: DisplayRole::Assistant,
         content: content.to_string(),
         tool_call: None,
+        collapsed: false,
     }
 }
 
@@ -43,6 +45,7 @@ fn make_assistant_with_tool(content: &str, tool_name: &str) -> DisplayMessage {
             result_lines: vec!["output line 1".into(), "output line 2".into()],
             nested_calls: vec![],
         }),
+        collapsed: false,
     }
 }
 

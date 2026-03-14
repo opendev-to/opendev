@@ -25,6 +25,7 @@ impl MessageController {
             role: DisplayRole::User,
             content: text.to_string(),
             tool_call: None,
+            collapsed: false,
         });
         // Reset scroll to follow new content
         state.scroll_offset = 0;
@@ -47,6 +48,7 @@ impl MessageController {
             role: DisplayRole::Assistant,
             content: text.to_string(),
             tool_call: None,
+            collapsed: false,
         });
     }
 
@@ -86,6 +88,7 @@ impl MessageController {
             role,
             content: msg.content.clone(),
             tool_call,
+            collapsed: false,
         });
 
         // Auto-scroll to latest message
