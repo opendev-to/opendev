@@ -8,10 +8,11 @@ version: 2.0.0
 
 Tool schemas are provided separately. Key categories:
 
-**File**: read_file, write_file, edit_file
-**Search**: list_files (glob patterns), search (regex with `type="text"` or AST with `type="ast"`)
+**File**: read_file (files AND directories), write_file, edit_file, multi_edit (multiple edits to one file atomically)
+**Search**: list_files (glob patterns), search (regex with `type="text"` or AST with `type="ast"`, results sorted by mtime)
 **Symbols**: find_symbol, find_referencing_symbols, rename_symbol, replace_symbol_body
-**Commands**: run_command, list_processes, get_process_output, kill_process
+**Commands**: run_command (with optional `description` and `workdir` params)
+**Patch**: patch (unified diffs and structured `*** Begin Patch` format)
 **User Interaction**: ask_user (ask clarifying questions when implementing technical tasks with unclear requirements. Do NOT use for greetings, social messages, or simple conversations)
 **Web**: fetch_url (use `deep_crawl=true` for crawling), capture_web_screenshot, capture_screenshot, analyze_image, open_browser
 **MCP**: search_tools (keyword query) → discover MCP tools, then call them with data queries

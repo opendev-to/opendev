@@ -39,14 +39,14 @@ pub struct AgentRuntime {
     pub working_dir: PathBuf,
     /// Session manager for conversation persistence.
     pub session_manager: SessionManager,
-    /// Tool registry with all available tools.
-    pub tool_registry: ToolRegistry,
+    /// Tool registry with all available tools (Arc for sharing with subagents).
+    pub tool_registry: Arc<ToolRegistry>,
     /// Handler middleware for pre/post tool processing.
     pub handler_registry: HandlerRegistry,
     /// Query enhancer for @ file injection and message preparation.
     pub query_enhancer: QueryEnhancer,
-    /// HTTP client for LLM API calls (with provider adapter).
-    pub http_client: AdaptedClient,
+    /// HTTP client for LLM API calls (Arc for sharing with subagents).
+    pub http_client: Arc<AdaptedClient>,
     /// LLM caller configuration.
     pub llm_caller: LlmCaller,
     /// ReAct loop.
@@ -74,24 +74,20 @@ pub struct ToolChannelReceivers {
 
 /// Register all built-in tools into the registry.
 fn register_default_tools(
-    registry: &mut ToolRegistry,
+    registry: &ToolRegistry,
 ) -> (
     Arc<Mutex<opendev_runtime::TodoManager>>,
     ToolChannelReceivers,
     opendev_runtime::ToolApprovalSender,
 ) {
     // Process execution
-    let bash_tool = BashTool::new();
-    let bg_store = bash_tool.background_store();
-    registry.register(Arc::new(bash_tool));
-    registry.register(Arc::new(ListProcessesTool::new(Arc::clone(&bg_store))));
-    registry.register(Arc::new(GetProcessOutputTool::new(Arc::clone(&bg_store))));
-    registry.register(Arc::new(KillProcessTool::new(bg_store)));
+    registry.register(Arc::new(BashTool::new()));
 
     // File operations
     registry.register(Arc::new(FileReadTool));
     registry.register(Arc::new(FileWriteTool));
     registry.register(Arc::new(FileEditTool));
+    registry.register(Arc::new(MultiEditTool));
     registry.register(Arc::new(FileListTool));
     registry.register(Arc::new(FileSearchTool));
 
@@ -117,7 +113,6 @@ fn register_default_tools(
 
     // Scheduling & misc
     registry.register(Arc::new(ScheduleTool));
-    registry.register(Arc::new(PdfTool));
     registry.register(Arc::new(BatchTool));
     registry.register(Arc::new(NotebookEditTool));
     registry.register(Arc::new(TaskCompleteTool));
@@ -197,9 +192,9 @@ impl AgentRuntime {
         working_dir: &Path,
         session_manager: SessionManager,
     ) -> Result<Self, String> {
-        let mut tool_registry = ToolRegistry::new();
+        let tool_registry = Arc::new(ToolRegistry::new());
         let (todo_manager, channel_receivers, tool_approval_tx) =
-            register_default_tools(&mut tool_registry);
+            register_default_tools(&tool_registry);
 
         // Register invoke_skill tool with project-local and user-global skill dirs
         let mut skill_dirs = Vec::new();
@@ -211,7 +206,7 @@ impl AgentRuntime {
         tool_registry.register(Arc::new(InvokeSkillTool::new(skill_loader)));
         info!(
             tool_count = tool_registry.tool_names().len(),
-            "Registered default tools"
+            "Registered default tools (before subagent)"
         );
 
         let handler_registry = HandlerRegistry::new();
@@ -372,10 +367,28 @@ impl AgentRuntime {
             .map_err(|e| format!("Failed to create HTTP client: {e}"))?
             .with_circuit_breaker(circuit_breaker);
 
-        let http_client = match adapter {
+        let http_client = Arc::new(match adapter {
             Some(a) => AdaptedClient::with_adapter(raw_http_client, a),
             None => AdaptedClient::new(raw_http_client),
-        };
+        });
+
+        // Register SpawnSubagentTool now that we have Arc<ToolRegistry> and Arc<HttpClient>
+        let session_dir = session_manager.session_dir().to_path_buf();
+        let subagent_manager = Arc::new(
+            opendev_agents::SubagentManager::with_builtins_and_custom(working_dir),
+        );
+        tool_registry.register(Arc::new(SpawnSubagentTool::new(
+            subagent_manager,
+            Arc::clone(&tool_registry),
+            Arc::clone(&http_client),
+            session_dir,
+            &config.model,
+            working_dir.display().to_string(),
+        )));
+        info!(
+            tool_count = tool_registry.tool_names().len(),
+            "Registered all tools including spawn_subagent"
+        );
 
         // Check if model supports temperature via models.dev metadata
         let supports_temperature = {

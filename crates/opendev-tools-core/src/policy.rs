@@ -40,9 +40,6 @@ fn tool_groups() -> HashMap<&'static str, HashSet<&'static str>> {
         "group:process",
         HashSet::from([
             "run_command",
-            "list_processes",
-            "get_process_output",
-            "kill_process",
         ]),
     );
 

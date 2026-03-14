@@ -8,7 +8,7 @@ version: 2.0.0
 
 When choosing tools, prefer the more specific option:
 - **Reading files**: read_file (NOT run_command with cat/head/tail)
-- **Editing files**: edit_file (NOT run_command with sed/awk)
+- **Editing files**: edit_file for single edits, multi_edit for multiple edits to the same file (NOT run_command with sed/awk)
 - **Creating files**: write_file (NOT run_command with echo/cat heredoc)
 - **Searching code**: search (NOT run_command with grep/rg)
 - **Listing files**: list_files (NOT run_command with find/ls)
@@ -44,3 +44,7 @@ When choosing tools, prefer the more specific option:
 - **You already have the file path** → **Direct** (read it yourself, don't delegate)
 - **Parallel subagents**: When the user requests multiple agents or the task has independent parts, make multiple spawn_subagent calls in a single response. They execute concurrently.
 - **Parallel read-only tools**: When you need to read multiple files, search for multiple patterns, or fetch multiple URLs, make all the calls in a single response. Independent read-only tools (read_file, list_files, search, fetch_url, web_search) execute concurrently when batched together.
+
+## Skills (`invoke_skill`) — slash commands only
+
+`invoke_skill` is **only** for loading predefined skills that the user explicitly mentions by name in their prompt (e.g., `/commit`, "run review-pr", "use the deploy skill"). Do NOT use `invoke_skill` for general tasks like code exploration, summarization, architecture questions, or any work where the user did not reference a specific skill name. For those tasks, use direct tools or subagents as described above.

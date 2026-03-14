@@ -17,8 +17,9 @@ Execute a bash/shell command with optional timeout.
 
 - Commands are subject to safety checks and may require user approval
 - Output is capped at 30,000 characters. If the output exceeds this limit, content is middle-truncated before being returned
-- Working directory persists between commands. Prefer absolute paths over cd
+- Use the `workdir` parameter to set the working directory for a command instead of `cd <dir> && <command>`. AVOID using `cd` — use `workdir` instead
 - You can specify an optional timeout in seconds (default 120s, max 600s). Long commands may need a longer timeout
+- Include a `description` parameter (5-10 words) explaining what the command does — this improves audit trails and TUI display
 - Use background=true for long-running servers (Flask, Django, npm start, dev servers). You will be notified when background commands complete. You do not need to add '&' when using background mode
 - IMPORTANT: Do NOT use run_command for file operations when a dedicated tool exists. Specifically:
   - Use read_file instead of cat, head, tail

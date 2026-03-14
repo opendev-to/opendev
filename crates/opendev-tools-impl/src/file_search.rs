@@ -3,10 +3,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 use tokio::process::Command;
+
+use crate::path_utils::resolve_dir_path;
 
 /// Default directories to exclude from search and file listing.
 /// Covers 20+ programming languages and ecosystems.
@@ -359,6 +361,7 @@ impl BaseTool for FileSearchTool {
 
     fn description(&self) -> &str {
         "Search file contents using regex patterns (ripgrep) or AST structural patterns (ast-grep). \
+         Results in files_with_matches mode are sorted by modification time (newest first). \
          Set search_type to 'ast' for syntax-aware matching with $VAR wildcards."
     }
 
@@ -454,14 +457,7 @@ impl BaseTool for FileSearchTool {
         let search_path = search_args
             .path
             .as_deref()
-            .map(|p| {
-                let path = Path::new(p);
-                if path.is_absolute() {
-                    path.to_path_buf()
-                } else {
-                    ctx.working_dir.join(path)
-                }
-            })
+            .map(|p| resolve_dir_path(p, &ctx.working_dir))
             .unwrap_or_else(|| ctx.working_dir.clone());
 
         if !search_path.exists() {
@@ -640,7 +636,15 @@ impl FileSearchTool {
         match output.status.code() {
             Some(0) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let result = Self::apply_pagination(&stdout, args.offset, args.head_limit);
+                // Sort by mtime (newest first) for files_with_matches mode
+                let sorted;
+                let output_str = if args.output_mode == OutputMode::FilesWithMatches {
+                    sorted = sort_lines_by_mtime(&stdout, search_path);
+                    sorted.as_str()
+                } else {
+                    &stdout
+                };
+                let result = Self::apply_pagination(output_str, args.offset, args.head_limit);
 
                 if result.trim().is_empty() {
                     return Ok(ToolResult::ok(format!(
@@ -723,13 +727,20 @@ impl FileSearchTool {
         match args.output_mode {
             OutputMode::FilesWithMatches => {
                 let mut seen = std::collections::HashSet::new();
+                let mut unique_paths: Vec<(String, Option<SystemTime>)> = Vec::new();
                 for m in &matches {
                     let rel = m.path.strip_prefix(search_path).unwrap_or(&m.path);
                     let key = rel.display().to_string();
                     if seen.insert(key.clone()) {
-                        output.push_str(&key);
-                        output.push('\n');
+                        let mtime = std::fs::metadata(&m.path).and_then(|md| md.modified()).ok();
+                        unique_paths.push((key, mtime));
                     }
+                }
+                // Sort by mtime descending (newest first); files without mtime sort last
+                unique_paths.sort_by(|a, b| b.1.cmp(&a.1));
+                for (key, _) in &unique_paths {
+                    output.push_str(key);
+                    output.push('\n');
                 }
             }
             OutputMode::Count => {
@@ -773,6 +784,33 @@ impl FileSearchTool {
 
         ToolResult::ok_with_metadata(output, metadata)
     }
+}
+
+/// Sort file path lines by modification time (newest first).
+/// Files whose metadata cannot be read sort last.
+fn sort_lines_by_mtime(lines: &str, search_path: &Path) -> String {
+    let mut paths: Vec<&str> = lines.lines().filter(|l| !l.is_empty()).collect();
+    paths.sort_by(|a, b| {
+        let mtime_a = get_mtime(a, search_path);
+        let mtime_b = get_mtime(b, search_path);
+        mtime_b.cmp(&mtime_a)
+    });
+    let mut result = paths.join("\n");
+    if !result.is_empty() {
+        result.push('\n');
+    }
+    result
+}
+
+/// Get the modification time for a path, resolving relative paths against search_path.
+fn get_mtime(file_path: &str, search_path: &Path) -> Option<SystemTime> {
+    let p = Path::new(file_path);
+    let full = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        search_path.join(p)
+    };
+    std::fs::metadata(full).and_then(|m| m.modified()).ok()
 }
 
 struct FallbackMatch {
@@ -1155,6 +1193,67 @@ mod tests {
         assert!(output.contains("b.rs"));
         // files_with_matches should not include line content
         assert!(!output.contains("foo"));
+    }
+
+    #[tokio::test]
+    async fn test_search_files_with_matches_sorted_by_mtime() {
+        use std::fs::FileTimes;
+        use std::time::SystemTime;
+
+        let tmp = TempDir::new().unwrap();
+
+        // Create files with distinct modification times (oldest first, newest last).
+        let now = SystemTime::now();
+
+        fs::write(tmp.path().join("old.rs"), "fn target() {}\n").unwrap();
+        let old_time = now - Duration::from_secs(60);
+        let f = fs::File::options()
+            .write(true)
+            .open(tmp.path().join("old.rs"))
+            .unwrap();
+        f.set_times(FileTimes::new().set_modified(old_time))
+            .unwrap();
+
+        fs::write(tmp.path().join("mid.rs"), "fn target() {}\n").unwrap();
+        let mid_time = now - Duration::from_secs(30);
+        let f = fs::File::options()
+            .write(true)
+            .open(tmp.path().join("mid.rs"))
+            .unwrap();
+        f.set_times(FileTimes::new().set_modified(mid_time))
+            .unwrap();
+
+        fs::write(tmp.path().join("new.rs"), "fn target() {}\n").unwrap();
+        // new.rs keeps current mtime (newest)
+
+        let tool = FileSearchTool;
+        let ctx = ToolContext::new(tmp.path());
+        let args = make_args(&[
+            ("pattern", serde_json::json!("target")),
+            ("output_mode", serde_json::json!("files_with_matches")),
+        ]);
+
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        let output = result.output.unwrap();
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 3, "should have 3 files, got: {output}");
+        // Newest first
+        assert!(
+            lines[0].contains("new.rs"),
+            "first should be new.rs, got: {}",
+            lines[0]
+        );
+        assert!(
+            lines[1].contains("mid.rs"),
+            "second should be mid.rs, got: {}",
+            lines[1]
+        );
+        assert!(
+            lines[2].contains("old.rs"),
+            "third should be old.rs, got: {}",
+            lines[2]
+        );
     }
 
     #[tokio::test]

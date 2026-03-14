@@ -110,6 +110,14 @@ static TOOL_REGISTRY: &[ToolDisplayEntry] = &[
         result_format: ResultFormat::File,
     },
     ToolDisplayEntry {
+        names: &["multi_edit"],
+        category: ToolCategory::FileWrite,
+        verb: "Multi-Edit",
+        label: "file",
+        primary_arg_keys: &["file_path", "path"],
+        result_format: ResultFormat::File,
+    },
+    ToolDisplayEntry {
         names: &["patch_file"],
         category: ToolCategory::FileWrite,
         verb: "Patch",
@@ -125,30 +133,6 @@ static TOOL_REGISTRY: &[ToolDisplayEntry] = &[
         label: "command",
         primary_arg_keys: &["command"],
         result_format: ResultFormat::Bash,
-    },
-    ToolDisplayEntry {
-        names: &["get_process_output"],
-        category: ToolCategory::Bash,
-        verb: "Get Process Output",
-        label: "process",
-        primary_arg_keys: &["process_id", "id"],
-        result_format: ResultFormat::Bash,
-    },
-    ToolDisplayEntry {
-        names: &["list_processes"],
-        category: ToolCategory::Bash,
-        verb: "List Processes",
-        label: "processes",
-        primary_arg_keys: &[],
-        result_format: ResultFormat::Generic,
-    },
-    ToolDisplayEntry {
-        names: &["kill_process"],
-        category: ToolCategory::Bash,
-        verb: "Kill Process",
-        label: "process",
-        primary_arg_keys: &["process_id", "id"],
-        result_format: ResultFormat::Generic,
     },
     // Search tools
     ToolDisplayEntry {

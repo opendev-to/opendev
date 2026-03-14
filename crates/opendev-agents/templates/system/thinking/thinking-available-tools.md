@@ -9,10 +9,11 @@ priority: 45
 
 Use this list to reason about what actions are possible. Suggest which tools to use in your reasoning.
 
-- **File Operations**: `read_file`, `write_file`, `edit_file`
-- **Search & Navigation**: `list_files`, `search` (regex/ast)
+- **File Operations**: `read_file` (files & dirs), `write_file`, `edit_file`, `multi_edit` (multiple edits to one file)
+- **Search & Navigation**: `list_files`, `search` (regex/ast, sorted by mtime)
 - **Symbol Operations**: `find_symbol`, `find_referencing_symbols`, `rename_symbol`
-- **Command Execution**: `run_command`, `list_processes`, `kill_process`
+- **Command Execution**: `run_command` (with `workdir` and `description` params)
+- **Patch**: `patch` (unified diffs and structured `*** Begin Patch` format)
 - **Web**: `fetch_url`, `capture_web_screenshot`, `open_browser`, `analyze_image`
 - **MCP**: `search_tools` (find tools by keyword then use them)
 - **Task Tracking**: `write_todos`, `update_todo`, `complete_todo`, `clear_todos`

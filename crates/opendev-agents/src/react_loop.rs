@@ -61,8 +61,6 @@ pub static PARALLELIZABLE_TOOLS: &[&str] = &[
     "web_search",
     "capture_web_screenshot",
     "analyze_image",
-    "list_processes",
-    "get_process_output",
     "list_todos",
     "search_tools",
     "find_symbol",
@@ -86,12 +84,9 @@ static READONLY_TOOLS: &[&str] = &[
     "find_referencing_symbols",
     "list_todos",
     "search_tools",
-    "list_processes",
-    "get_process_output",
     "analyze_image",
     "capture_screenshot",
     "capture_web_screenshot",
-    "read_pdf",
     "list_sessions",
     "get_session_history",
     "list_subagents",
@@ -1160,7 +1155,7 @@ impl ReactLoop {
                         };
 
                         let tool_start = Instant::now();
-                        let tool_result = {
+                        let (tool_result, was_interrupted) = {
                             let exec_fut = async {
                                 tool_registry
                                     .execute(tool_name, args_map, &exec_tool_context)
@@ -1176,13 +1171,13 @@ impl ReactLoop {
                             match cancel {
                                 Some(ct) => {
                                     tokio::select! {
-                                        result = exec_fut => result,
+                                        result = exec_fut => (result, false),
                                         _ = ct.cancelled() => {
-                                            ToolResult::fail("Interrupted by user")
+                                            (ToolResult::fail("Interrupted by user"), true)
                                         }
                                     }
                                 }
-                                None => exec_fut.await,
+                                None => (exec_fut.await, false),
                             }
                         };
                         let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
@@ -1201,20 +1196,24 @@ impl ReactLoop {
                         }
 
                         if let Some(cb) = event_callback {
-                            let output_str = if tool_result.success {
-                                tool_result.output.as_deref().unwrap_or("")
-                            } else {
-                                tool_result
-                                    .error
-                                    .as_deref()
-                                    .unwrap_or("Tool execution failed")
-                            };
-                            cb.on_tool_result(
-                                tool_call_id_str,
-                                tool_name,
-                                output_str,
-                                tool_result.success,
-                            );
+                            // Skip emitting the tool result to the TUI when interrupted —
+                            // the AgentInterrupted event already shows the message.
+                            if !was_interrupted {
+                                let output_str = if tool_result.success {
+                                    tool_result.output.as_deref().unwrap_or("")
+                                } else {
+                                    tool_result
+                                        .error
+                                        .as_deref()
+                                        .unwrap_or("Tool execution failed")
+                                };
+                                cb.on_tool_result(
+                                    tool_call_id_str,
+                                    tool_name,
+                                    output_str,
+                                    tool_result.success,
+                                );
+                            }
                             cb.on_tool_finished(tool_call_id_str, tool_result.success);
                         }
 

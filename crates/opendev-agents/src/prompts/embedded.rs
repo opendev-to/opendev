@@ -127,8 +127,6 @@ pub const TOOLS_TOOL_FETCH_URL: &str = include_str!("../../templates/tools/tool-
 pub const TOOLS_TOOL_FIND_REFERENCING_SYMBOLS: &str =
     include_str!("../../templates/tools/tool-find-referencing-symbols.md");
 pub const TOOLS_TOOL_FIND_SYMBOL: &str = include_str!("../../templates/tools/tool-find-symbol.md");
-pub const TOOLS_TOOL_GET_PROCESS_OUTPUT: &str =
-    include_str!("../../templates/tools/tool-get-process-output.md");
 pub const TOOLS_TOOL_GET_SESSION_HISTORY: &str =
     include_str!("../../templates/tools/tool-get-session-history.md");
 pub const TOOLS_TOOL_GET_SUBAGENT_OUTPUT: &str =
@@ -140,12 +138,10 @@ pub const TOOLS_TOOL_INSERT_BEFORE_SYMBOL: &str =
     include_str!("../../templates/tools/tool-insert-before-symbol.md");
 pub const TOOLS_TOOL_INVOKE_SKILL: &str =
     include_str!("../../templates/tools/tool-invoke-skill.md");
-pub const TOOLS_TOOL_KILL_PROCESS: &str =
-    include_str!("../../templates/tools/tool-kill-process.md");
 pub const TOOLS_TOOL_LIST_AGENTS: &str = include_str!("../../templates/tools/tool-list-agents.md");
 pub const TOOLS_TOOL_LIST_FILES: &str = include_str!("../../templates/tools/tool-list-files.md");
-pub const TOOLS_TOOL_LIST_PROCESSES: &str =
-    include_str!("../../templates/tools/tool-list-processes.md");
+pub const TOOLS_TOOL_MULTI_EDIT: &str =
+    include_str!("../../templates/tools/tool-multi-edit.md");
 pub const TOOLS_TOOL_LIST_SESSIONS: &str =
     include_str!("../../templates/tools/tool-list-sessions.md");
 pub const TOOLS_TOOL_LIST_SUBAGENTS: &str =
@@ -162,7 +158,6 @@ pub const TOOLS_TOOL_OPEN_BROWSER: &str =
 pub const TOOLS_TOOL_PRESENT_PLAN: &str =
     include_str!("../../templates/tools/tool-present-plan.md");
 pub const TOOLS_TOOL_READ_FILE: &str = include_str!("../../templates/tools/tool-read-file.md");
-pub const TOOLS_TOOL_READ_PDF: &str = include_str!("../../templates/tools/tool-read-pdf.md");
 pub const TOOLS_TOOL_RENAME_SYMBOL: &str =
     include_str!("../../templates/tools/tool-rename-symbol.md");
 pub const TOOLS_TOOL_REPLACE_SYMBOL_BODY: &str =
@@ -186,7 +181,7 @@ pub const TOOLS_TOOL_WRITE_TODOS: &str = include_str!("../../templates/tools/too
 // ---------------------------------------------------------------------------
 
 /// Total number of embedded templates.
-pub const TEMPLATE_COUNT: usize = 91;
+pub const TEMPLATE_COUNT: usize = 88;
 
 /// All embedded templates indexed by their relative path.
 ///
@@ -386,10 +381,6 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     );
     m.insert("tools/tool-find-symbol.md", TOOLS_TOOL_FIND_SYMBOL);
     m.insert(
-        "tools/tool-get-process-output.md",
-        TOOLS_TOOL_GET_PROCESS_OUTPUT,
-    );
-    m.insert(
         "tools/tool-get-session-history.md",
         TOOLS_TOOL_GET_SESSION_HISTORY,
     );
@@ -407,10 +398,9 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
         TOOLS_TOOL_INSERT_BEFORE_SYMBOL,
     );
     m.insert("tools/tool-invoke-skill.md", TOOLS_TOOL_INVOKE_SKILL);
-    m.insert("tools/tool-kill-process.md", TOOLS_TOOL_KILL_PROCESS);
     m.insert("tools/tool-list-agents.md", TOOLS_TOOL_LIST_AGENTS);
     m.insert("tools/tool-list-files.md", TOOLS_TOOL_LIST_FILES);
-    m.insert("tools/tool-list-processes.md", TOOLS_TOOL_LIST_PROCESSES);
+    m.insert("tools/tool-multi-edit.md", TOOLS_TOOL_MULTI_EDIT);
     m.insert("tools/tool-list-sessions.md", TOOLS_TOOL_LIST_SESSIONS);
     m.insert("tools/tool-list-subagents.md", TOOLS_TOOL_LIST_SUBAGENTS);
     m.insert("tools/tool-list-todos.md", TOOLS_TOOL_LIST_TODOS);
@@ -420,7 +410,6 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     m.insert("tools/tool-open-browser.md", TOOLS_TOOL_OPEN_BROWSER);
     m.insert("tools/tool-present-plan.md", TOOLS_TOOL_PRESENT_PLAN);
     m.insert("tools/tool-read-file.md", TOOLS_TOOL_READ_FILE);
-    m.insert("tools/tool-read-pdf.md", TOOLS_TOOL_READ_PDF);
     m.insert("tools/tool-rename-symbol.md", TOOLS_TOOL_RENAME_SYMBOL);
     m.insert(
         "tools/tool-replace-symbol-body.md",

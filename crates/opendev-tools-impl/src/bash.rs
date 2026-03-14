@@ -152,9 +152,10 @@ fn safe_slice(s: &str, start: usize, end: usize) -> &str {
 // Background process info
 // ---------------------------------------------------------------------------
 
-/// Tracked background process (fields are intentionally private).
+/// Tracked background process.
 #[derive(Debug)]
-pub struct BackgroundProcess {
+#[allow(dead_code)]
+struct BackgroundProcess {
     /// Unique ID for this background process.
     id: u32,
     /// Original command string.
@@ -174,7 +175,7 @@ pub struct BackgroundProcess {
 }
 
 /// Shared state for background processes.
-pub type BackgroundStore = Arc<Mutex<HashMap<u32, BackgroundProcess>>>;
+type BackgroundStore = Arc<Mutex<HashMap<u32, BackgroundProcess>>>;
 
 // ---------------------------------------------------------------------------
 // Regex cache helpers
@@ -295,11 +296,6 @@ impl BashTool {
             next_bg_id: Arc::new(Mutex::new(1)),
             background: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    /// Get a shared reference to the background process store.
-    pub fn background_store(&self) -> BackgroundStore {
-        Arc::clone(&self.background)
     }
 
     /// Allocate the next background process ID.
@@ -700,7 +696,8 @@ impl BaseTool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command with timeout, streaming output, and background support."
+        "Execute a shell command with timeout, streaming output, background support, \
+         optional workdir, and description for audit trails."
     }
 
     fn parameter_schema(&self) -> serde_json::Value {
@@ -718,6 +715,14 @@ impl BaseTool for BashTool {
                 "run_in_background": {
                     "type": "boolean",
                     "description": "Run in background and return immediately"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description of what the command does (5-10 words)"
+                },
+                "workdir": {
+                    "type": "string",
+                    "description": "Absolute path to use as the working directory for the command"
                 }
             },
             "required": ["command"]
@@ -745,6 +750,26 @@ impl BaseTool for BashTool {
             .unwrap_or(DEFAULT_TIMEOUT_SECS)
             .min(max_allowed);
 
+        // Extract optional description
+        let description = args
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // Resolve working directory: use `workdir` param if provided, else ctx.working_dir
+        let working_dir = if let Some(wd) = args.get("workdir").and_then(|v| v.as_str()) {
+            let path = std::path::PathBuf::from(wd);
+            if !path.is_absolute() {
+                return ToolResult::fail(format!("workdir must be an absolute path, got: {wd}"));
+            }
+            if !path.exists() {
+                return ToolResult::fail(format!("workdir path does not exist: {wd}"));
+            }
+            path
+        } else {
+            ctx.working_dir.clone()
+        };
+
         // Security check
         if is_dangerous(command) {
             return ToolResult::fail(format!(
@@ -759,9 +784,7 @@ impl BaseTool for BashTool {
             .unwrap_or(false)
             || is_server_command(command);
 
-        let working_dir = ctx.working_dir.clone();
-
-        if run_in_background {
+        let mut result = if run_in_background {
             self.run_background(command, &working_dir).await
         } else {
             self.run_foreground(
@@ -772,217 +795,16 @@ impl BaseTool for BashTool {
                 ctx.cancel_token.as_ref(),
             )
             .await
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Free functions for background process management (shared by new tools)
-// ---------------------------------------------------------------------------
-
-async fn list_bg_processes(store: &BackgroundStore) -> ToolResult {
-    let guard = store.lock().await;
-    if guard.is_empty() {
-        return ToolResult::ok("No background processes running.");
-    }
-    let mut lines = Vec::new();
-    for bp in guard.values() {
-        let elapsed = bp.started_at.elapsed().as_secs();
-        let status = match bp.child.id() {
-            Some(_) => "running",
-            None => "unknown",
         };
-        lines.push(format!(
-            "  [{}] pid={} status={} runtime={}s cmd={}",
-            bp.id, bp.pid, status, elapsed, bp.command
-        ));
-    }
-    ToolResult::ok(format!("Background processes:\n{}", lines.join("\n")))
-}
 
-async fn get_bg_output(store: &BackgroundStore, bg_id: u32) -> ToolResult {
-    let guard = store.lock().await;
-    match guard.get(&bg_id) {
-        None => ToolResult::fail(format!("Background process {bg_id} not found")),
-        Some(bp) => {
-            let stdout = bp.stdout_lines.join("\n");
-            let stderr = bp.stderr_lines.join("\n");
-            let elapsed = bp.started_at.elapsed().as_secs();
-            let mut out = format!(
-                "Process {} (pid={}, runtime={}s, cmd={}):\n",
-                bp.id, bp.pid, elapsed, bp.command
-            );
-            if !stdout.is_empty() {
-                out.push_str(&format!("[stdout]\n{stdout}\n"));
-            }
-            if !stderr.is_empty() {
-                out.push_str(&format!("[stderr]\n{stderr}\n"));
-            }
-            if stdout.is_empty() && stderr.is_empty() {
-                out.push_str("(no output captured)\n");
-            }
-            ToolResult::ok(out)
+        // Attach description to result metadata if provided
+        if let Some(desc) = description {
+            result
+                .metadata
+                .insert("description".into(), serde_json::json!(desc));
         }
-    }
-}
 
-async fn kill_bg_process(store: &BackgroundStore, bg_id: u32) -> ToolResult {
-    let mut guard = store.lock().await;
-    match guard.remove(&bg_id) {
-        None => ToolResult::fail(format!("Background process {bg_id} not found")),
-        Some(bp) => {
-            kill_process_group(bp.pgid);
-            ToolResult::ok(format!(
-                "Killed background process {} (pid={}, cmd={})",
-                bp.id, bp.pid, bp.command
-            ))
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ListProcessesTool
-// ---------------------------------------------------------------------------
-
-/// Tool to list background processes.
-#[derive(Debug, Clone)]
-pub struct ListProcessesTool {
-    background: BackgroundStore,
-}
-
-impl ListProcessesTool {
-    pub fn new(background: BackgroundStore) -> Self {
-        Self { background }
-    }
-}
-
-#[async_trait::async_trait]
-impl BaseTool for ListProcessesTool {
-    fn name(&self) -> &str {
-        "list_processes"
-    }
-
-    fn description(&self) -> &str {
-        "List all running background processes."
-    }
-
-    fn parameter_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {}
-        })
-    }
-
-    async fn execute(
-        &self,
-        _args: HashMap<String, serde_json::Value>,
-        _ctx: &ToolContext,
-    ) -> ToolResult {
-        list_bg_processes(&self.background).await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GetProcessOutputTool
-// ---------------------------------------------------------------------------
-
-/// Tool to get output from a background process.
-#[derive(Debug, Clone)]
-pub struct GetProcessOutputTool {
-    background: BackgroundStore,
-}
-
-impl GetProcessOutputTool {
-    pub fn new(background: BackgroundStore) -> Self {
-        Self { background }
-    }
-}
-
-#[async_trait::async_trait]
-impl BaseTool for GetProcessOutputTool {
-    fn name(&self) -> &str {
-        "get_process_output"
-    }
-
-    fn description(&self) -> &str {
-        "Get the stdout/stderr output of a background process."
-    }
-
-    fn parameter_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "background_id": {
-                    "type": "integer",
-                    "description": "Background process ID"
-                }
-            },
-            "required": ["background_id"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        args: HashMap<String, serde_json::Value>,
-        _ctx: &ToolContext,
-    ) -> ToolResult {
-        let bg_id = args
-            .get("background_id")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        get_bg_output(&self.background, bg_id).await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// KillProcessTool
-// ---------------------------------------------------------------------------
-
-/// Tool to kill a background process.
-#[derive(Debug, Clone)]
-pub struct KillProcessTool {
-    background: BackgroundStore,
-}
-
-impl KillProcessTool {
-    pub fn new(background: BackgroundStore) -> Self {
-        Self { background }
-    }
-}
-
-#[async_trait::async_trait]
-impl BaseTool for KillProcessTool {
-    fn name(&self) -> &str {
-        "kill_process"
-    }
-
-    fn description(&self) -> &str {
-        "Kill a running background process."
-    }
-
-    fn parameter_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "background_id": {
-                    "type": "integer",
-                    "description": "Background process ID"
-                }
-            },
-            "required": ["background_id"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        args: HashMap<String, serde_json::Value>,
-        _ctx: &ToolContext,
-    ) -> ToolResult {
-        let bg_id = args
-            .get("background_id")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        kill_bg_process(&self.background, bg_id).await
+        result
     }
 }
 
@@ -1312,38 +1134,6 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn test_list_processes_empty() {
-        let bash = BashTool::new();
-        let tool = ListProcessesTool::new(bash.background_store());
-        let ctx = ToolContext::new("/tmp");
-        let result = tool.execute(HashMap::new(), &ctx).await;
-        assert!(result.success);
-        assert!(result.output.unwrap().contains("No background processes"));
-    }
-
-    #[tokio::test]
-    async fn test_get_process_output_not_found() {
-        let bash = BashTool::new();
-        let tool = GetProcessOutputTool::new(bash.background_store());
-        let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("background_id", serde_json::json!(999))]);
-        let result = tool.execute(args, &ctx).await;
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("not found"));
-    }
-
-    #[tokio::test]
-    async fn test_kill_process_not_found() {
-        let bash = BashTool::new();
-        let tool = KillProcessTool::new(bash.background_store());
-        let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("background_id", serde_json::json!(999))]);
-        let result = tool.execute(args, &ctx).await;
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("not found"));
-    }
-
-    #[tokio::test]
     async fn test_background_fast_command() {
         // A fast command that finishes during startup capture
         let tool = BashTool::new();
@@ -1361,7 +1151,6 @@ mod tests {
     async fn test_background_sleep_starts() {
         // A slow command should be stored as background process
         let tool = BashTool::new();
-        let kill_tool = KillProcessTool::new(tool.background_store());
         let ctx = ToolContext::new("/tmp");
         let args = make_args(&[
             ("command", serde_json::json!("sleep 60")),
@@ -1376,10 +1165,9 @@ mod tests {
             .unwrap();
         assert!(bg_id > 0);
 
-        // Kill the background process to clean up
-        let kill_args = make_args(&[("background_id", serde_json::json!(bg_id))]);
-        let kill_result = kill_tool.execute(kill_args, &ctx).await;
-        assert!(kill_result.success);
+        // Kill the background process to clean up via pid
+        let pid = result.metadata.get("pid").and_then(|v| v.as_u64()).unwrap() as u32;
+        kill_process_group(pid);
     }
 
     #[tokio::test]
@@ -1432,9 +1220,6 @@ mod tests {
     async fn test_process_group_cleanup() {
         // Start a background process and kill it via process group
         let tool = BashTool::new();
-        let bg_store = tool.background_store();
-        let kill_tool = KillProcessTool::new(Arc::clone(&bg_store));
-        let list_tool = ListProcessesTool::new(bg_store);
         let ctx = ToolContext::new("/tmp");
         let args = make_args(&[
             (
@@ -1446,30 +1231,95 @@ mod tests {
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
 
-        let bg_id = result
-            .metadata
-            .get("background_id")
-            .and_then(|v| v.as_u64())
-            .unwrap();
+        let pid = result.metadata.get("pid").and_then(|v| v.as_u64()).unwrap() as u32;
 
-        // Kill it
-        let kill_args = make_args(&[("background_id", serde_json::json!(bg_id))]);
-        let kill_result = kill_tool.execute(kill_args, &ctx).await;
-        assert!(kill_result.success);
-        assert!(kill_result.output.unwrap().contains("Killed"));
-
-        // Verify it's removed from the store
-        let list_result = list_tool.execute(HashMap::new(), &ctx).await;
-        assert!(
-            list_result
-                .output
-                .unwrap()
-                .contains("No background processes")
-        );
+        // Kill it via process group
+        kill_process_group(pid);
     }
 
     // -----------------------------------------------------------------------
     // Property-based tests for dangerous command detection (fuzzing #71)
+    // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Description parameter
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_description_in_metadata() {
+        let tool = BashTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[
+            ("command", serde_json::json!("echo hello")),
+            ("description", serde_json::json!("Print hello to stdout")),
+        ]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        assert_eq!(
+            result.metadata.get("description"),
+            Some(&serde_json::json!("Print hello to stdout"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_description_no_metadata_key() {
+        let tool = BashTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[("command", serde_json::json!("echo hello"))]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        assert!(result.metadata.get("description").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Workdir parameter
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_custom_workdir() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let canonical = tmp.path().canonicalize().unwrap();
+        std::fs::write(canonical.join("workdir_test.txt"), "workdir-ok").unwrap();
+
+        let tool = BashTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[
+            ("command", serde_json::json!("cat workdir_test.txt")),
+            ("workdir", serde_json::json!(canonical.to_str().unwrap())),
+        ]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        assert!(result.output.unwrap().contains("workdir-ok"));
+    }
+
+    #[tokio::test]
+    async fn test_workdir_relative_path_rejected() {
+        let tool = BashTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[
+            ("command", serde_json::json!("echo hello")),
+            ("workdir", serde_json::json!("relative/path")),
+        ]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("absolute path"));
+    }
+
+    #[tokio::test]
+    async fn test_workdir_nonexistent_rejected() {
+        let tool = BashTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[
+            ("command", serde_json::json!("echo hello")),
+            ("workdir", serde_json::json!("/nonexistent/path/xyz123")),
+        ]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("does not exist"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Property-based tests
     // -----------------------------------------------------------------------
 
     mod proptest_dangerous {

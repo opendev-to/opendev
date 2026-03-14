@@ -14,11 +14,7 @@ fn read_only_tools() -> HashSet<&'static str> {
         "search",
         "find_symbol",
         "find_referencing_symbols",
-        "read_pdf",
         "analyze_image",
-        // Process inspection
-        "list_processes",
-        "get_process_output",
         // Web (read-only)
         "fetch_url",
         "web_search",
@@ -50,6 +46,7 @@ fn write_tools() -> HashSet<&'static str> {
     HashSet::from([
         "write_file",
         "edit_file",
+        "multi_edit",
         "run_command",
         "insert_before_symbol",
         "insert_after_symbol",
@@ -58,7 +55,6 @@ fn write_tools() -> HashSet<&'static str> {
         "notebook_edit",
         "apply_patch",
         "memory_write",
-        "kill_process",
         "write_todos",
         "update_todo",
         "complete_todo",

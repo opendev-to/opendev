@@ -15,7 +15,8 @@ Read a file from the local filesystem. Returns content with line numbers in cat 
 - This tool can read images (PNG, JPG, etc.) — image contents are presented visually since the model is multimodal
 - This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), provide the pages parameter to read specific page ranges (e.g., pages: "1-5"). Maximum 20 pages per request
 - This tool can read Jupyter notebooks (.ipynb) and returns all cells with their outputs, combining code, text, and visualizations
-- This tool can only read files, not directories. To list directory contents, use list_files
+- This tool can read both files AND directories. When given a directory path, it lists entries alphabetically with `/` suffix for subdirectories, supporting offset/limit pagination. For detailed directory listings with glob patterns, use list_files instead
+- When a file is not found, up to 3 similar filenames from the same directory are suggested
 - If you read a file that exists but has empty contents, you will receive a warning in place of file contents
 - IMPORTANT: Always read a file before editing it. edit_file will fail if old_content doesn't match the actual file content
 - Prefer read_file over run_command with cat/head/tail
