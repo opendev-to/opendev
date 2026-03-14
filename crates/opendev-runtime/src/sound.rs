@@ -119,7 +119,8 @@ mod tests {
     fn test_cooldown_logic() {
         // Test that the cooldown mechanism works
         let now = now_ms();
-        assert!(now >= 0);
+        let later = now_ms();
+        assert!(later >= now);
 
         // If LAST_PLAYED is set to now, subsequent calls within 30s should be blocked
         LAST_PLAYED_MS.store(now, Ordering::Relaxed);

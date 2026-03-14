@@ -88,8 +88,8 @@ mod tests {
     fn test_elapsed_increases() {
         let mut svc = SpinnerService::new();
         svc.start("Working".into());
-        // elapsed should be non-negative (just a sanity check)
+        std::thread::sleep(Duration::from_millis(1));
         let e = svc.elapsed();
-        assert!(e.as_nanos() >= 0);
+        assert!(e >= Duration::from_millis(1));
     }
 }
