@@ -500,3 +500,204 @@ fn snapshot_track_and_patch() {
         "patch should detect changed file"
     );
 }
+
+// ========================================================================
+// Session persistence round-trip tests
+// ========================================================================
+
+/// Empty session survives save/load round-trip.
+#[test]
+fn session_roundtrip_empty() {
+    let tmp = TempDir::new().unwrap();
+    let mgr = SessionManager::new(tmp.path().to_path_buf()).unwrap();
+
+    let mut session = Session::new();
+    session.id = "empty-rt".to_string();
+    // No messages, no metadata beyond defaults
+    mgr.save_session(&session).unwrap();
+
+    let loaded = mgr.load_session("empty-rt").unwrap();
+    assert_eq!(loaded.id, "empty-rt");
+    assert!(loaded.messages.is_empty());
+}
+
+/// Unicode content in messages survives round-trip.
+#[test]
+fn session_roundtrip_unicode() {
+    let tmp = TempDir::new().unwrap();
+    let mgr = SessionManager::new(tmp.path().to_path_buf()).unwrap();
+
+    let unicode_texts = vec![
+        "\u{1F600} Emoji test \u{1F680}\u{1F30D}",
+        "\u{4F60}\u{597D}\u{4E16}\u{754C} - Chinese",
+        "\u{0410}\u{043B}\u{0435}\u{043A}\u{0441}\u{0430}\u{043D}\u{0434}\u{0440} - Russian",
+        "\u{3053}\u{3093}\u{306B}\u{3061}\u{306F} - Japanese",
+        "Caf\u{00E9} na\u{00EF}ve r\u{00E9}sum\u{00E9} - French accents",
+        "Line1\nLine2\n\tTabbed\n\r\nWindows newline",
+    ];
+
+    let mut session = Session::new();
+    session.id = "unicode-rt".to_string();
+    for text in &unicode_texts {
+        session.messages.push(make_msg(Role::User, text));
+    }
+    mgr.save_session(&session).unwrap();
+
+    let loaded = mgr.load_session("unicode-rt").unwrap();
+    assert_eq!(loaded.messages.len(), unicode_texts.len());
+    for (i, text) in unicode_texts.iter().enumerate() {
+        assert_eq!(
+            loaded.messages[i].content, *text,
+            "Unicode mismatch at index {i}"
+        );
+    }
+}
+
+/// Large message count survives round-trip without data loss.
+#[test]
+fn session_roundtrip_large_message_count() {
+    let tmp = TempDir::new().unwrap();
+    let mgr = SessionManager::new(tmp.path().to_path_buf()).unwrap();
+
+    let msg_count = 500;
+    let mut session = Session::new();
+    session.id = "large-rt".to_string();
+    for i in 0..msg_count {
+        let role = if i % 2 == 0 {
+            Role::User
+        } else {
+            Role::Assistant
+        };
+        session.messages.push(make_msg(
+            role,
+            &format!(
+                "Message number {i} with some content to make it realistic. \
+             This includes details about the task at hand."
+            ),
+        ));
+    }
+    mgr.save_session(&session).unwrap();
+
+    let loaded = mgr.load_session("large-rt").unwrap();
+    assert_eq!(loaded.messages.len(), msg_count);
+
+    // Spot check first, middle, and last messages
+    assert!(loaded.messages[0].content.contains("Message number 0"));
+    assert!(loaded.messages[250].content.contains("Message number 250"));
+    assert!(loaded.messages[499].content.contains("Message number 499"));
+
+    // Verify roles alternate correctly
+    for (i, msg) in loaded.messages.iter().enumerate() {
+        let expected_role = if i % 2 == 0 {
+            Role::User
+        } else {
+            Role::Assistant
+        };
+        assert_eq!(msg.role, expected_role, "Role mismatch at message {i}");
+    }
+}
+
+/// Sessions with tool results survive round-trip.
+#[test]
+fn session_roundtrip_with_tool_results() {
+    use opendev_models::ToolCall;
+
+    let tmp = TempDir::new().unwrap();
+    let mgr = SessionManager::new(tmp.path().to_path_buf()).unwrap();
+
+    let mut session = Session::new();
+    session.id = "tool-rt".to_string();
+
+    // User message
+    session
+        .messages
+        .push(make_msg(Role::User, "Read the config file"));
+
+    // Assistant message with tool call
+    let mut assistant_msg = make_msg(Role::Assistant, "I'll read the file.");
+    let mut params = HashMap::new();
+    params.insert("path".to_string(), serde_json::json!("/etc/config.toml"));
+    assistant_msg.tool_calls.push(ToolCall {
+        id: "tc-001".to_string(),
+        name: "read_file".to_string(),
+        parameters: params,
+        result: Some(serde_json::json!({
+            "success": true,
+            "output": "[database]\nhost = localhost\nport = 5432"
+        })),
+        result_summary: Some("Read 3 lines from config.toml".to_string()),
+        timestamp: Utc::now(),
+        approved: true,
+        error: None,
+        nested_tool_calls: vec![],
+    });
+    session.messages.push(assistant_msg);
+
+    // Another assistant message with a failed tool call
+    let mut fail_msg = make_msg(Role::Assistant, "Let me try writing.");
+    fail_msg.tool_calls.push(ToolCall {
+        id: "tc-002".to_string(),
+        name: "write_file".to_string(),
+        parameters: HashMap::new(),
+        result: None,
+        result_summary: None,
+        timestamp: Utc::now(),
+        approved: false,
+        error: Some("Permission denied".to_string()),
+        nested_tool_calls: vec![],
+    });
+    session.messages.push(fail_msg);
+
+    mgr.save_session(&session).unwrap();
+
+    let loaded = mgr.load_session("tool-rt").unwrap();
+    assert_eq!(loaded.messages.len(), 3);
+
+    // Verify tool call data survived
+    let tc = &loaded.messages[1].tool_calls[0];
+    assert_eq!(tc.id, "tc-001");
+    assert_eq!(tc.name, "read_file");
+    assert!(tc.result.is_some());
+    assert_eq!(
+        tc.result_summary.as_deref(),
+        Some("Read 3 lines from config.toml")
+    );
+    assert!(tc.approved);
+    assert!(tc.error.is_none());
+
+    // Verify failed tool call
+    let fail_tc = &loaded.messages[2].tool_calls[0];
+    assert_eq!(fail_tc.id, "tc-002");
+    assert!(!fail_tc.approved);
+    assert_eq!(fail_tc.error.as_deref(), Some("Permission denied"));
+}
+
+/// Session with thinking trace and reasoning content survives round-trip.
+#[test]
+fn session_roundtrip_thinking_metadata() {
+    let tmp = TempDir::new().unwrap();
+    let mgr = SessionManager::new(tmp.path().to_path_buf()).unwrap();
+
+    let mut session = Session::new();
+    session.id = "thinking-rt".to_string();
+
+    let mut msg = make_msg(Role::Assistant, "The answer is 42.");
+    msg.thinking_trace = Some("Let me reason through this step by step...".to_string());
+    msg.reasoning_content = Some("Considering the question carefully...".to_string());
+    msg.tokens = Some(150);
+    session.messages.push(msg);
+
+    mgr.save_session(&session).unwrap();
+
+    let loaded = mgr.load_session("thinking-rt").unwrap();
+    assert_eq!(loaded.messages.len(), 1);
+    assert_eq!(
+        loaded.messages[0].thinking_trace.as_deref(),
+        Some("Let me reason through this step by step...")
+    );
+    assert_eq!(
+        loaded.messages[0].reasoning_content.as_deref(),
+        Some("Considering the question carefully...")
+    );
+    assert_eq!(loaded.messages[0].tokens, Some(150));
+}

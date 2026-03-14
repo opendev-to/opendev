@@ -67,12 +67,23 @@ impl SessionManager {
     /// Save a session to disk.
     ///
     /// Writes session metadata to `{id}.json` and messages to `{id}.jsonl`.
+    /// If the session has no title in its metadata, one is auto-generated
+    /// from the first user message.
     pub fn save_session(&self, session: &Session) -> std::io::Result<()> {
         let json_path = self.session_dir.join(format!("{}.json", session.id));
         let jsonl_path = self.session_dir.join(format!("{}.jsonl", session.id));
 
         // Write metadata (session without messages for the JSON file)
         let mut session_for_json = session.clone();
+
+        // Auto-generate title if not set
+        if !session_for_json.metadata.contains_key("title")
+            && let Some(title) = generate_title_from_messages(&session.messages)
+        {
+            session_for_json
+                .metadata
+                .insert("title".to_string(), serde_json::Value::String(title));
+        }
         session_for_json.messages.clear();
 
         let json_content =
@@ -794,13 +805,9 @@ mod tests {
         let mut session = Session::new();
         session.id = "revert-test".to_string();
         session.messages.push(make_msg(Role::User, "step 0"));
-        session
-            .messages
-            .push(make_msg(Role::Assistant, "step 1"));
+        session.messages.push(make_msg(Role::Assistant, "step 1"));
         session.messages.push(make_msg(Role::User, "step 2"));
-        session
-            .messages
-            .push(make_msg(Role::Assistant, "step 3"));
+        session.messages.push(make_msg(Role::Assistant, "step 3"));
         mgr.save_session(&session).unwrap();
 
         mgr.revert_session("revert-test", 2).unwrap();
@@ -857,16 +864,14 @@ mod tests {
 
         let mut s1 = Session::new();
         s1.id = "search-1".to_string();
-        s1.messages
-            .push(make_msg(Role::User, "Fix the login bug"));
+        s1.messages.push(make_msg(Role::User, "Fix the login bug"));
         s1.messages
             .push(make_msg(Role::Assistant, "I will fix that"));
         mgr.save_session(&s1).unwrap();
 
         let mut s2 = Session::new();
         s2.id = "search-2".to_string();
-        s2.messages
-            .push(make_msg(Role::User, "Add a new feature"));
+        s2.messages.push(make_msg(Role::User, "Add a new feature"));
         mgr.save_session(&s2).unwrap();
 
         let mut s3 = Session::new();
@@ -891,8 +896,7 @@ mod tests {
 
         let mut s1 = Session::new();
         s1.id = "case-test".to_string();
-        s1.messages
-            .push(make_msg(Role::User, "Fix the LOGIN bug"));
+        s1.messages.push(make_msg(Role::User, "Fix the LOGIN bug"));
         mgr.save_session(&s1).unwrap();
 
         let results = mgr.search_sessions("login");
@@ -907,8 +911,7 @@ mod tests {
 
         let mut s1 = Session::new();
         s1.id = "idx-test".to_string();
-        s1.messages
-            .push(make_msg(Role::User, "first message"));
+        s1.messages.push(make_msg(Role::User, "first message"));
         s1.messages
             .push(make_msg(Role::Assistant, "target keyword here"));
         s1.messages
