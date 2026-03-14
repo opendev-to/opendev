@@ -16,8 +16,9 @@ use crate::llm_calls::LlmCaller;
 use crate::response::ResponseCleaner;
 use crate::traits::{AgentError, AgentResult, LlmResponse, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
+use opendev_context::ArtifactIndex;
 use opendev_runtime::{CostTracker, TokenUsage, play_finish_sound, ThinkingLevel};
-use opendev_tools_core::{ToolContext, ToolRegistry};
+use opendev_tools_core::{ToolContext, ToolRegistry, ToolResult};
 
 /// Metrics for a single tool call execution.
 #[derive(Debug, Clone)]
@@ -512,6 +513,7 @@ impl ReactLoop {
         task_monitor: Option<&M>,
         event_callback: Option<&dyn crate::traits::AgentEventCallback>,
         cost_tracker: Option<&Mutex<CostTracker>>,
+        artifact_index: Option<&Mutex<ArtifactIndex>>,
     ) -> Result<AgentResult, AgentError>
     where
         M: TaskMonitor + ?Sized,
@@ -906,6 +908,13 @@ impl ReactLoop {
                             success: tool_result.success,
                         });
 
+                        // Record file operations in the artifact index
+                        if tool_result.success
+                            && let Some(ai) = artifact_index
+                        {
+                            record_artifact(ai, tool_name, &args_value, &tool_result);
+                        }
+
                         if let Some(cb) = event_callback {
                             let output_str = if tool_result.success {
                                 tool_result.output.as_deref().unwrap_or("")
@@ -1051,6 +1060,47 @@ impl ReactLoop {
         }
 
         Ok(turn)
+    }
+}
+
+/// Record file operations in the artifact index after successful tool execution.
+///
+/// Mirrors Python's `_record_artifact()` — tracks read/write/edit operations
+/// so the artifact index survives compaction and the agent retains file awareness.
+fn record_artifact(
+    artifact_index: &Mutex<ArtifactIndex>,
+    tool_name: &str,
+    args: &Value,
+    result: &ToolResult,
+) {
+    let file_path = match args.get("file_path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let (operation, details) = match tool_name {
+        "read_file" => {
+            let line_count = result
+                .output
+                .as_deref()
+                .map(|o| o.lines().count())
+                .unwrap_or(0);
+            ("read", format!("{line_count} lines"))
+        }
+        "write_file" => {
+            let line_count = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| c.lines().count())
+                .unwrap_or(0);
+            ("created", format!("{line_count} lines"))
+        }
+        "edit_file" => ("modified", "edit".to_string()),
+        _ => return,
+    };
+
+    if let Ok(mut index) = artifact_index.lock() {
+        index.record(file_path, operation, &details);
     }
 }
 

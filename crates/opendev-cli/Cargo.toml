@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 opendev-models = { workspace = true }
+opendev-context = { workspace = true }
 opendev-config = { workspace = true }
 opendev-history = { workspace = true }
 opendev-repl = { workspace = true }

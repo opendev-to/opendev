@@ -24,6 +24,7 @@ use opendev_models::AppConfig;
 use opendev_models::message::{ChatMessage, Role};
 use opendev_repl::HandlerRegistry;
 use opendev_repl::query_enhancer::QueryEnhancer;
+use opendev_context::ArtifactIndex;
 use opendev_runtime::CostTracker;
 use opendev_tools_core::{ToolContext, ToolRegistry};
 use opendev_tools_impl::*;
@@ -53,6 +54,8 @@ pub struct AgentRuntime {
     pub react_loop: ReactLoop,
     /// Cost tracker (shared with the react loop for per-call recording).
     pub cost_tracker: Mutex<CostTracker>,
+    /// Artifact index tracking file operations (survives compaction).
+    pub artifact_index: Mutex<ArtifactIndex>,
 }
 
 /// Register all built-in tools into the registry.
@@ -336,6 +339,7 @@ impl AgentRuntime {
         let react_loop = ReactLoop::new(ReactLoopConfig::default());
 
         let cost_tracker = Mutex::new(CostTracker::new());
+        let artifact_index = Mutex::new(ArtifactIndex::new());
 
         Ok(Self {
             config,
@@ -348,6 +352,7 @@ impl AgentRuntime {
             llm_caller,
             react_loop,
             cost_tracker,
+            artifact_index,
         })
     }
 
@@ -455,6 +460,7 @@ impl AgentRuntime {
                 None::<&dyn TaskMonitor>,
                 event_callback,
                 Some(&self.cost_tracker),
+                Some(&self.artifact_index),
             )
             .await?;
 
