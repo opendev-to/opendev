@@ -22,6 +22,7 @@ use opendev_runtime::{
     summarize_tool_result,
 };
 use opendev_tools_core::{ToolContext, ToolRegistry, ToolResult};
+use tokio_util::sync::CancellationToken;
 
 /// Metrics for a single tool call execution.
 #[derive(Debug, Clone)]
@@ -544,6 +545,7 @@ impl ReactLoop {
         artifact_index: Option<&Mutex<ArtifactIndex>>,
         compactor: Option<&Mutex<ContextCompactor>>,
         todo_manager: Option<&Mutex<TodoManager>>,
+        cancel: Option<&CancellationToken>,
     ) -> Result<AgentResult, AgentError>
     where
         M: TaskMonitor + ?Sized,
@@ -567,6 +569,7 @@ impl ReactLoop {
                 artifact_index,
                 compactor,
                 todo_manager,
+                cancel,
             )
             .await;
 
@@ -599,6 +602,7 @@ impl ReactLoop {
         artifact_index: Option<&Mutex<ArtifactIndex>>,
         compactor: Option<&Mutex<ContextCompactor>>,
         todo_manager: Option<&Mutex<TodoManager>>,
+        cancel: Option<&CancellationToken>,
     ) -> Result<AgentResult, AgentError>
     where
         M: TaskMonitor + ?Sized,
@@ -634,7 +638,10 @@ impl ReactLoop {
 
             // Auto-compaction: check context usage and apply staged optimization
             if let Some(comp) = compactor {
-                apply_staged_compaction(comp, messages);
+                let needs_llm = apply_staged_compaction(comp, messages);
+                if needs_llm {
+                    do_llm_compaction(comp, messages, caller, http_client).await;
+                }
             }
 
             // Thinking phase (before action)
@@ -677,7 +684,7 @@ impl ReactLoop {
                 );
                 debug!(iteration, "Running thinking phase");
 
-                match http_client.post_json(&thinking_payload, None).await {
+                match http_client.post_json(&thinking_payload, cancel).await {
                     Ok(thinking_result) if thinking_result.success => {
                         if let Some(ref body) = thinking_result.body {
                             let thinking_resp = caller.parse_thinking_response(body);
@@ -696,7 +703,7 @@ impl ReactLoop {
                                         caller.build_critique_payload(trace, critique_system);
 
                                     if let Ok(critique_result) =
-                                        http_client.post_json(&critique_payload, None).await
+                                        http_client.post_json(&critique_payload, cancel).await
                                         && critique_result.success
                                         && let Some(ref cbody) = critique_result.body
                                     {
@@ -720,7 +727,7 @@ impl ReactLoop {
                                             );
 
                                             if let Ok(refine_result) =
-                                                http_client.post_json(&refine_payload, None).await
+                                                http_client.post_json(&refine_payload, cancel).await
                                                 && refine_result.success
                                                 && let Some(ref rbody) = refine_result.body
                                             {
@@ -763,7 +770,7 @@ impl ReactLoop {
             let llm_start = Instant::now();
             let http_result = async {
                 http_client
-                    .post_json(&payload, None)
+                    .post_json(&payload, cancel)
                     .await
                     .map_err(|e| AgentError::LlmError(e.to_string()))
             }
@@ -957,11 +964,7 @@ impl ReactLoop {
                         }
                         DoomLoopAction::Redirect | DoomLoopAction::Notify => {
                             // Log raw diagnostic as Internal (never reaches any model)
-                            inject_system_message(
-                                messages,
-                                &doom_warning,
-                                MessageClass::Internal,
-                            );
+                            inject_system_message(messages, &doom_warning, MessageClass::Internal);
                             let recovery = doom_detector.recovery_action(&doom_action);
                             match recovery {
                                 RecoveryAction::Nudge(nudge_msg) => {
@@ -975,10 +978,7 @@ impl ReactLoop {
                                     append_directive(messages, &step_msg);
                                 }
                                 RecoveryAction::CompactContext => {
-                                    warn!(
-                                        "Doom loop context compaction: {}",
-                                        doom_warning
-                                    );
+                                    warn!("Doom loop context compaction: {}", doom_warning);
                                     append_directive(
                                         messages,
                                         "You appear to be stuck in a repeating loop. \
@@ -1046,8 +1046,7 @@ impl ReactLoop {
                                 iter_start.elapsed().as_millis() as u64;
                             self.push_metrics(iter_metrics);
                             play_finish_sound();
-                            let mut result =
-                                AgentResult::ok(display_text, messages.clone());
+                            let mut result = AgentResult::ok(display_text, messages.clone());
                             result.completion_status = Some(status);
                             return Ok(result);
                         }
@@ -1079,19 +1078,42 @@ impl ReactLoop {
                             cb.on_tool_started(tool_call_id_str, tool_name, &args_map);
                         }
 
+                        // Build tool context with cancel token for this execution
+                        let exec_tool_context = match cancel {
+                            Some(ct) => {
+                                let mut ctx = tool_context.clone();
+                                ctx.cancel_token = Some(ct.child_token());
+                                ctx
+                            }
+                            None => tool_context.clone(),
+                        };
+
                         let tool_start = Instant::now();
-                        let tool_result = async {
-                            tool_registry
-                                .execute(tool_name, args_map, tool_context)
-                                .await
-                        }
-                        .instrument(info_span!(
-                            "tool_execution",
-                            tool_name = tool_name,
-                            tool_call_id = tool_call_id_str,
-                            iteration = iteration,
-                        ))
-                        .await;
+                        let tool_result = {
+                            let exec_fut = async {
+                                tool_registry
+                                    .execute(tool_name, args_map, &exec_tool_context)
+                                    .await
+                            }
+                            .instrument(info_span!(
+                                "tool_execution",
+                                tool_name = tool_name,
+                                tool_call_id = tool_call_id_str,
+                                iteration = iteration,
+                            ));
+
+                            match cancel {
+                                Some(ct) => {
+                                    tokio::select! {
+                                        result = exec_fut => result,
+                                        _ = ct.cancelled() => {
+                                            ToolResult::fail("Interrupted by user")
+                                        }
+                                    }
+                                }
+                                None => exec_fut.await,
+                            }
+                        };
                         let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
 
                         iter_metrics.tool_calls.push(ToolCallMetric {
@@ -1185,9 +1207,30 @@ impl ReactLoop {
                         // Check for interrupt between tool executions —
                         // preserve partial work (completed tool results
                         // already appended to messages above).
-                        if let Some(monitor) = task_monitor
-                            && monitor.should_interrupt()
-                        {
+                        let interrupted_by_monitor =
+                            task_monitor.is_some_and(|m| m.should_interrupt());
+                        let interrupted_by_cancel = cancel.is_some_and(|c| c.is_cancelled());
+                        if interrupted_by_monitor || interrupted_by_cancel {
+                            // Append stub results for remaining unexecuted tool calls
+                            // so message history doesn't have dangling tool_calls
+                            for remaining_tc in &tool_calls[completed_tool_count..] {
+                                let tc_id = remaining_tc
+                                    .get("id")
+                                    .and_then(|id| id.as_str())
+                                    .unwrap_or("");
+                                let tc_name = remaining_tc
+                                    .get("function")
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("unknown");
+                                messages.push(serde_json::json!({
+                                    "role": "tool",
+                                    "tool_call_id": tc_id,
+                                    "name": tc_name,
+                                    "content": "[Interrupted by user]",
+                                }));
+                            }
+
                             // Collect partial assistant text from this iteration
                             let partial_content =
                                 response.content.as_deref().unwrap_or("").to_string();
@@ -1343,16 +1386,19 @@ fn values_to_api_messages(values: &[Value]) -> Vec<opendev_context::compaction::
 /// - 85%: Prune old tool outputs
 /// - 90%: Aggressive masking (fewer recent results preserved)
 /// - 99%: Full compaction (summarize middle messages)
-fn apply_staged_compaction(compactor: &Mutex<ContextCompactor>, messages: &mut Vec<Value>) {
+///
+/// Returns `true` if LLM-powered compaction is needed (99% stage).
+#[allow(clippy::ptr_arg)] // needs Vec for clear()/extend() in Compact branch caller
+fn apply_staged_compaction(compactor: &Mutex<ContextCompactor>, messages: &mut Vec<Value>) -> bool {
     let api_msgs = values_to_api_messages(messages);
     let level = if let Ok(mut comp) = compactor.lock() {
         comp.check_usage(&api_msgs, "")
     } else {
-        return;
+        return false;
     };
 
     match level {
-        OptimizationLevel::None | OptimizationLevel::Warning => {}
+        OptimizationLevel::None | OptimizationLevel::Warning => false,
         OptimizationLevel::Mask | OptimizationLevel::Aggressive => {
             // Convert to ApiMessage, apply masking, convert back
             let mut api_msgs = values_to_api_messages(messages);
@@ -1367,6 +1413,7 @@ fn apply_staged_compaction(compactor: &Mutex<ContextCompactor>, messages: &mut V
                     api_idx += 1;
                 }
             }
+            false
         }
         OptimizationLevel::Prune => {
             let mut api_msgs = values_to_api_messages(messages);
@@ -1381,16 +1428,79 @@ fn apply_staged_compaction(compactor: &Mutex<ContextCompactor>, messages: &mut V
                     api_idx += 1;
                 }
             }
+            false
         }
-        OptimizationLevel::Compact => {
-            let api_msgs = values_to_api_messages(messages);
-            if let Ok(mut comp) = compactor.lock() {
-                let compacted = comp.compact(api_msgs, "");
-                // Replace messages with compacted version
-                messages.clear();
-                messages.extend(compacted.into_iter().map(Value::Object));
-            }
+        OptimizationLevel::Compact => true,
+    }
+}
+
+/// Perform LLM-powered compaction: build payload, call the compact model,
+/// and replace messages with the summarized version.
+///
+/// Falls back to `compact()` (basic string summarization) if the LLM call
+/// fails or if no compact model is configured.
+async fn do_llm_compaction(
+    compactor: &Mutex<ContextCompactor>,
+    messages: &mut Vec<Value>,
+    caller: &LlmCaller,
+    http_client: &AdaptedClient,
+) {
+    use crate::prompts::embedded::SYSTEM_COMPACTION;
+
+    let api_msgs = values_to_api_messages(messages);
+    let compact_model = &caller.config.model;
+
+    // Try to build the LLM compaction payload
+    let build_result = if let Ok(comp) = compactor.lock() {
+        comp.build_compaction_payload(&api_msgs, SYSTEM_COMPACTION, compact_model)
+    } else {
+        None
+    };
+
+    let Some((payload, _middle_count, keep_recent)) = build_result else {
+        // Too few messages or lock failed — fallback to basic compact
+        if let Ok(mut comp) = compactor.lock() {
+            let compacted = comp.compact(api_msgs, "");
+            messages.clear();
+            messages.extend(compacted.into_iter().map(Value::Object));
         }
+        return;
+    };
+
+    // Call the LLM via the adapted client (uses provider adapters, auth, retries)
+    let summary_text: Option<String> = match http_client.post_json(&payload, None).await {
+        Ok(result) => result
+            .body
+            .as_ref()
+            .and_then(|body| body.pointer("/choices/0/message/content"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        Err(e) => {
+            warn!("LLM compaction request failed: {e}, using fallback");
+            None
+        }
+    };
+
+    let summary = match summary_text {
+        Some(text) if !text.is_empty() => {
+            info!(
+                model = compact_model,
+                summary_len = text.len(),
+                "LLM compaction succeeded"
+            );
+            text
+        }
+        _ => {
+            warn!("LLM compaction returned empty or failed, using fallback");
+            ContextCompactor::fallback_summary(&api_msgs[1..api_msgs.len().saturating_sub(keep_recent)])
+        }
+    };
+
+    // Apply the compaction
+    if let Ok(mut comp) = compactor.lock() {
+        let compacted = comp.apply_llm_compaction(api_msgs, &summary, keep_recent);
+        messages.clear();
+        messages.extend(compacted.into_iter().map(Value::Object));
     }
 }
 
