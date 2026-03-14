@@ -12,6 +12,7 @@
 
 pub mod action_summarizer;
 pub mod approval;
+pub mod ask_user_channel;
 pub mod constants;
 pub mod cost_tracker;
 pub mod custom_commands;
@@ -35,6 +36,7 @@ pub mod sound;
 pub mod state_snapshot;
 pub mod task_scheduler;
 pub mod todo;
+pub mod tool_approval_channel;
 pub mod tool_summarizer;
 
 // Re-export key types at crate root for convenience.
@@ -50,6 +52,7 @@ pub use session_model::SessionModelManager;
 pub use todo::{TodoItem, TodoManager, TodoStatus, parse_plan_steps, parse_status, strip_markdown};
 
 pub use action_summarizer::summarize_action;
+pub use ask_user_channel::{AskUserReceiver, AskUserRequest, AskUserSender, ask_user_channel};
 pub use custom_commands::{CustomCommand, CustomCommandLoader};
 pub use debug_logger::SessionDebugLogger;
 pub use event_bus::{
@@ -72,4 +75,8 @@ pub use snapshot::SnapshotManager;
 pub use sound::play_finish_sound;
 pub use state_snapshot::{AppStateSnapshot, SnapshotPersistence, ToolResultEntry};
 pub use task_scheduler::TaskScheduler;
+pub use tool_approval_channel::{
+    ToolApprovalDecision, ToolApprovalReceiver, ToolApprovalRequest, ToolApprovalSender,
+    tool_approval_channel,
+};
 pub use tool_summarizer::summarize_tool_result;

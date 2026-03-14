@@ -546,6 +546,7 @@ impl ReactLoop {
         compactor: Option<&Mutex<ContextCompactor>>,
         todo_manager: Option<&Mutex<TodoManager>>,
         cancel: Option<&CancellationToken>,
+        tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
     ) -> Result<AgentResult, AgentError>
     where
         M: TaskMonitor + ?Sized,
@@ -570,6 +571,7 @@ impl ReactLoop {
                 compactor,
                 todo_manager,
                 cancel,
+                tool_approval_tx,
             )
             .await;
 
@@ -603,6 +605,7 @@ impl ReactLoop {
         compactor: Option<&Mutex<ContextCompactor>>,
         todo_manager: Option<&Mutex<TodoManager>>,
         cancel: Option<&CancellationToken>,
+        tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
     ) -> Result<AgentResult, AgentError>
     where
         M: TaskMonitor + ?Sized,
@@ -744,11 +747,18 @@ impl ReactLoop {
                                     }
                                 }
 
-                                // Inject thinking trace as context for the action call
-                                // Uses Python's stronger wording from thinking_trace_reminder
+                                // Inject thinking trace as a fake assistant-user conversation pair.
+                                // The assistant message makes the action model see this as its own
+                                // prior commitment; the user confirmation reinforces it via
+                                // self-consistency bias.
+                                messages.push(serde_json::json!({
+                                    "role": "assistant",
+                                    "content": final_trace,
+                                    "_thinking": true
+                                }));
                                 messages.push(serde_json::json!({
                                     "role": "user",
-                                    "content": get_reminder("thinking_trace_reminder", &[("thinking_trace", &final_trace)]),
+                                    "content": "Proceed.",
                                     "_thinking": true
                                 }));
                             }
@@ -1066,7 +1076,7 @@ impl ReactLoop {
                         // Parse args JSON string into a HashMap for the registry
                         let args_value: Value =
                             serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-                        let args_map: std::collections::HashMap<String, Value> = args_value
+                        let mut args_map: std::collections::HashMap<String, Value> = args_value
                             .as_object()
                             .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                             .unwrap_or_default();
@@ -1076,6 +1086,63 @@ impl ReactLoop {
 
                         if let Some(cb) = event_callback {
                             cb.on_tool_started(tool_call_id_str, tool_name, &args_map);
+                        }
+
+                        // Tool approval gate for bash/run_command
+                        if tool_name == "run_command"
+                            && let Some(approval_tx) = tool_approval_tx
+                        {
+                            let command = args_map
+                                .get("command")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                            let req = opendev_runtime::ToolApprovalRequest {
+                                tool_name: tool_name.to_string(),
+                                command: command.clone(),
+                                working_dir: tool_context.working_dir.display().to_string(),
+                                response_tx: resp_tx,
+                            };
+                            if approval_tx.send(req).is_ok() {
+                                match resp_rx.await {
+                                    Ok(d) if !d.approved => {
+                                        // Push denial as tool result
+                                        let result_content = Self::format_tool_result(
+                                            tool_name,
+                                            &serde_json::json!({"success": false, "error": "Command denied by user"}),
+                                        );
+                                        messages.push(serde_json::json!({
+                                            "role": "tool",
+                                            "tool_call_id": tool_call_id_str,
+                                            "name": tool_name,
+                                            "content": result_content,
+                                        }));
+                                        if let Some(cb) = event_callback {
+                                            cb.on_tool_result(
+                                                tool_call_id_str,
+                                                tool_name,
+                                                "Command denied by user",
+                                                false,
+                                            );
+                                            cb.on_tool_finished(tool_call_id_str, false);
+                                        }
+                                        continue;
+                                    }
+                                    Ok(d) => {
+                                        // Update command if edited by user
+                                        if d.command != command {
+                                            args_map.insert(
+                                                "command".to_string(),
+                                                serde_json::json!(d.command),
+                                            );
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // Channel dropped — proceed without approval
+                                    }
+                                }
+                            }
                         }
 
                         // Build tool context with cancel token for this execution
@@ -1492,7 +1559,9 @@ async fn do_llm_compaction(
         }
         _ => {
             warn!("LLM compaction returned empty or failed, using fallback");
-            ContextCompactor::fallback_summary(&api_msgs[1..api_msgs.len().saturating_sub(keep_recent)])
+            ContextCompactor::fallback_summary(
+                &api_msgs[1..api_msgs.len().saturating_sub(keep_recent)],
+            )
         }
     };
 

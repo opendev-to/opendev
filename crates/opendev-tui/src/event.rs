@@ -504,11 +504,20 @@ impl RecordedEvent {
             AppEvent::ContextUsage(pct) => {
                 ("ContextUsage".to_string(), serde_json::json!({"pct": pct}))
             }
-            AppEvent::ToolApprovalRequested { command, working_dir, .. } => (
+            AppEvent::ToolApprovalRequested {
+                command,
+                working_dir,
+                ..
+            } => (
                 "ToolApprovalRequested".to_string(),
                 serde_json::json!({"command": command, "working_dir": working_dir}),
             ),
-            AppEvent::AskUserRequested { question, options, default, .. } => (
+            AppEvent::AskUserRequested {
+                question,
+                options,
+                default,
+                ..
+            } => (
                 "AskUserRequested".to_string(),
                 serde_json::json!({"question": question, "options": options, "default": default}),
             ),

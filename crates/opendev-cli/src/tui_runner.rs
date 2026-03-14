@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use opendev_agents::traits::AgentEventCallback;
+use opendev_runtime::InterruptToken;
 use opendev_tui::app::AppState;
 use opendev_tui::{App, AppEvent};
 
@@ -103,7 +104,7 @@ impl TuiRunner {
     ///
     /// Sets up message forwarding between the TUI and the AgentRuntime,
     /// then runs the TUI event loop.
-    pub async fn run(self, mut state: AppState) -> io::Result<()> {
+    pub async fn run(mut self, mut state: AppState) -> io::Result<()> {
         // Channel for forwarding user messages from TUI to agent task
         let (user_tx, mut user_rx) = mpsc::unbounded_channel::<String>();
 
@@ -115,6 +116,48 @@ impl TuiRunner {
 
         // Get event sender so the agent task can push UI updates
         let event_tx = app.event_sender();
+
+        // Bridge channel receivers to AppEvents
+        if let Some(receivers) = self.runtime.channel_receivers.take() {
+            // Ask-user channel bridge
+            let ask_tx = event_tx.clone();
+            let mut ask_rx = receivers.ask_user_rx;
+            tokio::spawn(async move {
+                while let Some(req) = ask_rx.recv().await {
+                    let _ = ask_tx.send(AppEvent::AskUserRequested {
+                        question: req.question,
+                        options: req.options,
+                        default: req.default,
+                        response_tx: req.response_tx,
+                    });
+                }
+            });
+
+            // Plan-approval channel bridge
+            let plan_tx = event_tx.clone();
+            let mut plan_rx = receivers.plan_approval_rx;
+            tokio::spawn(async move {
+                while let Some(req) = plan_rx.recv().await {
+                    let _ = plan_tx.send(AppEvent::PlanApprovalRequested {
+                        plan_content: req.plan_content,
+                        response_tx: req.response_tx,
+                    });
+                }
+            });
+
+            // Tool-approval channel bridge
+            let approval_tx = event_tx.clone();
+            let mut tool_rx = receivers.tool_approval_rx;
+            tokio::spawn(async move {
+                while let Some(req) = tool_rx.recv().await {
+                    let _ = approval_tx.send(AppEvent::ToolApprovalRequested {
+                        command: req.command,
+                        working_dir: req.working_dir,
+                        response_tx: req.response_tx,
+                    });
+                }
+            });
+        }
 
         // Create the event callback for tool/agent events
         let callback = TuiEventCallback {
@@ -129,6 +172,10 @@ impl TuiRunner {
             while let Some(msg) = user_rx.recv().await {
                 info!(msg_len = msg.len(), "TUI: user submitted message");
 
+                // Create fresh interrupt token for this query
+                let interrupt_token = InterruptToken::new();
+                let _ = event_tx.send(AppEvent::SetInterruptToken(interrupt_token.clone()));
+
                 // Signal agent started
                 let _ = event_tx.send(AppEvent::AgentStarted);
                 let _ = event_tx.send(AppEvent::TaskProgressStarted {
@@ -137,19 +184,25 @@ impl TuiRunner {
 
                 // Run the query through the agent pipeline with event callback
                 match runtime
-                    .run_query(&msg, &system_prompt, Some(&callback))
+                    .run_query(
+                        &msg,
+                        &system_prompt,
+                        Some(&callback),
+                        Some(&interrupt_token),
+                    )
                     .await
                 {
                     Ok(result) => {
                         let _ = event_tx.send(AppEvent::TaskProgressFinished);
-                        // The callback already sent AgentChunk for the final content.
-                        // Just signal completion.
-                        let _ = event_tx.send(AppEvent::AgentFinished);
-
-                        if !result.success {
-                            let _ = event_tx.send(AppEvent::AgentError(
-                                "Agent completed with errors".to_string(),
-                            ));
+                        if result.interrupted {
+                            let _ = event_tx.send(AppEvent::AgentInterrupted);
+                        } else {
+                            let _ = event_tx.send(AppEvent::AgentFinished);
+                            if !result.success {
+                                let _ = event_tx.send(AppEvent::AgentError(
+                                    "Agent completed with errors".to_string(),
+                                ));
+                            }
                         }
                     }
                     Err(e) => {

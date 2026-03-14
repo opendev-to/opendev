@@ -15,8 +15,8 @@ use crate::controllers::{
     PlanApprovalController,
 };
 use crate::event::{AppEvent, EventHandler};
-use crate::managers::BackgroundTaskManager;
 use crate::history::CommandHistory;
+use crate::managers::BackgroundTaskManager;
 use crate::widgets::{
     ConversationWidget, InputWidget, NestedToolWidget, StatusBarWidget, TodoDisplayItem,
     TodoDisplayStatus, TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
@@ -463,7 +463,8 @@ pub struct App {
     /// Approval controller for inline command approval prompts.
     approval_controller: ApprovalController,
     /// Oneshot sender to forward the approval decision back to the react loop.
-    approval_response_tx: Option<tokio::sync::oneshot::Sender<opendev_runtime::ToolApprovalDecision>>,
+    approval_response_tx:
+        Option<tokio::sync::oneshot::Sender<opendev_runtime::ToolApprovalDecision>>,
     /// Plan approval controller for plan review prompts.
     plan_approval_controller: PlanApprovalController,
     /// Oneshot sender to forward the plan decision back to the tool.
@@ -755,17 +756,12 @@ impl App {
                     self.state.cached_lines.push(ratatui::text::Line::from(""));
                 }
             } else {
-                let next_role = self
-                    .state
-                    .messages
-                    .get(msg_idx + 1)
-                    .map(|m| &m.role);
+                let next_role = self.state.messages.get(msg_idx + 1).map(|m| &m.role);
                 Self::render_single_message(
                     msg,
                     next_role,
                     &mut self.state.cached_lines,
                     &mut self.state.markdown_cache,
-                    self.state.terminal_width,
                 );
             }
 
@@ -783,7 +779,6 @@ impl App {
         next_role: Option<&DisplayRole>,
         lines: &mut Vec<ratatui::text::Line<'static>>,
         markdown_cache: &mut HashMap<u64, Vec<ratatui::text::Line<'static>>>,
-        terminal_width: u16,
     ) {
         use crate::formatters::display::strip_system_reminders;
         use crate::formatters::markdown::MarkdownRenderer;
@@ -850,18 +845,12 @@ impl App {
                     if i == 0 {
                         lines.push(Line::from(vec![
                             Span::styled(rs.icon.clone(), rs.icon_style),
-                            Span::styled(
-                                line_text.to_string(),
-                                Style::default().fg(rs.text_color),
-                            ),
+                            Span::styled(line_text.to_string(), Style::default().fg(rs.text_color)),
                         ]));
                     } else {
                         lines.push(Line::from(vec![
                             Span::raw(rs.continuation),
-                            Span::styled(
-                                line_text.to_string(),
-                                Style::default().fg(rs.text_color),
-                            ),
+                            Span::styled(line_text.to_string(), Style::default().fg(rs.text_color)),
                         ]));
                     }
                 }
@@ -932,7 +921,9 @@ impl App {
             ]));
 
             // Diff tools are never collapsed
-            use crate::widgets::conversation::{is_diff_tool, parse_unified_diff, render_diff_entries};
+            use crate::widgets::conversation::{
+                is_diff_tool, parse_unified_diff, render_diff_entries,
+            };
             let effective_collapsed = tc.collapsed && !is_diff_tool(&tc.name);
             if !effective_collapsed && !tc.result_lines.is_empty() {
                 let use_diff = is_diff_tool(&tc.name);
@@ -944,13 +935,10 @@ impl App {
                                 format!("  {}  ", CONTINUATION_CHAR),
                                 Style::default().fg(style_tokens::GREY),
                             ),
-                            Span::styled(
-                                summary,
-                                Style::default().fg(style_tokens::SUBTLE),
-                            ),
+                            Span::styled(summary, Style::default().fg(style_tokens::SUBTLE)),
                         ]));
                     }
-                    render_diff_entries(&entries, lines, terminal_width);
+                    render_diff_entries(&entries, lines);
                 } else {
                     for (i, result_line) in tc.result_lines.iter().enumerate() {
                         let prefix_char: Cow<'static, str> = if i == 0 {
@@ -959,10 +947,7 @@ impl App {
                             Cow::Borrowed(Indent::RESULT_CONT)
                         };
                         lines.push(Line::from(vec![
-                            Span::styled(
-                                prefix_char,
-                                Style::default().fg(style_tokens::SUBTLE),
-                            ),
+                            Span::styled(prefix_char, Style::default().fg(style_tokens::SUBTLE)),
                             Span::styled(
                                 result_line.clone(),
                                 Style::default().fg(style_tokens::SUBTLE),
@@ -1077,7 +1062,6 @@ impl App {
         } else {
             let mut conversation =
                 ConversationWidget::new(&self.state.messages, self.state.scroll_offset)
-                    .terminal_width(area.width)
                     .version(&self.state.version)
                     .working_dir(&self.state.working_dir)
                     .mode(mode_str)
@@ -1404,7 +1388,10 @@ impl App {
             };
 
             lines.push(Line::from(vec![
-                Span::styled(format!("  {pointer} {}. {}", opt.choice, opt.label), label_style),
+                Span::styled(
+                    format!("  {pointer} {}. {}", opt.choice, opt.label),
+                    label_style,
+                ),
                 Span::styled(format!("  {}", opt.description), desc_style),
             ]));
         }
@@ -3141,7 +3128,14 @@ mod tests {
         // Mode should not change
         assert_eq!(app.state.mode, OperationMode::Normal);
         // Should have an error message
-        assert!(app.state.messages.last().unwrap().content.contains("Unknown mode"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Unknown mode")
+        );
     }
 
     #[test]
@@ -3168,7 +3162,14 @@ mod tests {
         let original = app.state.thinking_level;
         app.execute_slash_command("/thinking bogus");
         assert_eq!(app.state.thinking_level, original);
-        assert!(app.state.messages.last().unwrap().content.contains("Unknown thinking"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Unknown thinking")
+        );
     }
 
     #[test]
@@ -3198,14 +3199,28 @@ mod tests {
         let mut app = App::new();
         app.execute_slash_command("/autonomy bogus");
         assert_eq!(app.state.autonomy, AutonomyLevel::Manual);
-        assert!(app.state.messages.last().unwrap().content.contains("Unknown autonomy"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Unknown autonomy")
+        );
     }
 
     #[test]
     fn test_slash_models_show_current() {
         let mut app = App::new();
         app.execute_slash_command("/models");
-        assert!(app.state.messages.last().unwrap().content.contains("claude-sonnet-4"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("claude-sonnet-4")
+        );
     }
 
     #[test]
@@ -3213,14 +3228,28 @@ mod tests {
         let mut app = App::new();
         app.execute_slash_command("/models gpt-4o");
         assert_eq!(app.state.model, "gpt-4o");
-        assert!(app.state.messages.last().unwrap().content.contains("gpt-4o"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("gpt-4o")
+        );
     }
 
     #[test]
     fn test_slash_tasks_empty() {
         let mut app = App::new();
         app.execute_slash_command("/tasks");
-        assert!(app.state.messages.last().unwrap().content.contains("No background tasks"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("No background tasks")
+        );
     }
 
     #[test]
@@ -3241,35 +3270,70 @@ mod tests {
     fn test_slash_mcp_list_empty() {
         let mut app = App::new();
         app.execute_slash_command("/mcp list");
-        assert!(app.state.messages.last().unwrap().content.contains("No MCP servers"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("No MCP servers")
+        );
     }
 
     #[test]
     fn test_slash_init() {
         let mut app = App::new();
         app.execute_slash_command("/init");
-        assert!(app.state.messages.last().unwrap().content.contains("OPENDEV.md"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("OPENDEV.md")
+        );
     }
 
     #[test]
     fn test_slash_agents() {
         let mut app = App::new();
         app.execute_slash_command("/agents");
-        assert!(app.state.messages.last().unwrap().content.contains("No custom agents"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("No custom agents")
+        );
     }
 
     #[test]
     fn test_slash_skills() {
         let mut app = App::new();
         app.execute_slash_command("/skills");
-        assert!(app.state.messages.last().unwrap().content.contains("No custom skills"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("No custom skills")
+        );
     }
 
     #[test]
     fn test_slash_plugins() {
         let mut app = App::new();
         app.execute_slash_command("/plugins");
-        assert!(app.state.messages.last().unwrap().content.contains("No plugins"));
+        assert!(
+            app.state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("No plugins")
+        );
     }
 
     #[test]
@@ -3278,23 +3342,41 @@ mod tests {
         app.execute_slash_command("/help");
         let help = &app.state.messages.last().unwrap().content;
         // Check that all major commands appear
-        for cmd in &["mode", "thinking", "autonomy", "models", "mcp", "tasks", "task", "kill", "agents", "skills", "plugins"] {
+        for cmd in &[
+            "mode", "thinking", "autonomy", "models", "mcp", "tasks", "task", "kill", "agents",
+            "skills", "plugins",
+        ] {
             assert!(help.contains(cmd), "Help text missing /{cmd}");
         }
     }
 
     #[test]
     fn test_operation_mode_from_str_loose() {
-        assert_eq!(OperationMode::from_str_loose("plan"), Some(OperationMode::Plan));
-        assert_eq!(OperationMode::from_str_loose("Normal"), Some(OperationMode::Normal));
+        assert_eq!(
+            OperationMode::from_str_loose("plan"),
+            Some(OperationMode::Plan)
+        );
+        assert_eq!(
+            OperationMode::from_str_loose("Normal"),
+            Some(OperationMode::Normal)
+        );
         assert_eq!(OperationMode::from_str_loose("bogus"), None);
     }
 
     #[test]
     fn test_autonomy_level_from_str_loose() {
-        assert_eq!(AutonomyLevel::from_str_loose("auto"), Some(AutonomyLevel::Auto));
-        assert_eq!(AutonomyLevel::from_str_loose("Semi-Auto"), Some(AutonomyLevel::SemiAuto));
-        assert_eq!(AutonomyLevel::from_str_loose("manual"), Some(AutonomyLevel::Manual));
+        assert_eq!(
+            AutonomyLevel::from_str_loose("auto"),
+            Some(AutonomyLevel::Auto)
+        );
+        assert_eq!(
+            AutonomyLevel::from_str_loose("Semi-Auto"),
+            Some(AutonomyLevel::SemiAuto)
+        );
+        assert_eq!(
+            AutonomyLevel::from_str_loose("manual"),
+            Some(AutonomyLevel::Manual)
+        );
         assert_eq!(AutonomyLevel::from_str_loose("bogus"), None);
     }
 }

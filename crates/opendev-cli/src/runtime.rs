@@ -59,10 +59,27 @@ pub struct AgentRuntime {
     pub compactor: Mutex<ContextCompactor>,
     /// Shared todo manager for TUI panel synchronization.
     pub todo_manager: Arc<Mutex<opendev_runtime::TodoManager>>,
+    /// Tool approval sender — passed to react loop for gating bash execution.
+    pub tool_approval_tx: Option<opendev_runtime::ToolApprovalSender>,
+    /// Channel receivers for TUI bridging (taken once by tui_runner).
+    pub channel_receivers: Option<ToolChannelReceivers>,
+}
+
+/// Receivers returned from tool registration for TUI bridging.
+pub struct ToolChannelReceivers {
+    pub ask_user_rx: opendev_runtime::AskUserReceiver,
+    pub plan_approval_rx: opendev_runtime::PlanApprovalReceiver,
+    pub tool_approval_rx: opendev_runtime::ToolApprovalReceiver,
 }
 
 /// Register all built-in tools into the registry.
-fn register_default_tools(registry: &mut ToolRegistry) -> Arc<Mutex<opendev_runtime::TodoManager>> {
+fn register_default_tools(
+    registry: &mut ToolRegistry,
+) -> (
+    Arc<Mutex<opendev_runtime::TodoManager>>,
+    ToolChannelReceivers,
+    opendev_runtime::ToolApprovalSender,
+) {
     // Process execution
     let bash_tool = BashTool::new();
     let bg_store = bash_tool.background_store();
@@ -89,8 +106,9 @@ fn register_default_tools(registry: &mut ToolRegistry) -> Arc<Mutex<opendev_runt
     registry.register(Arc::new(BrowserTool));
     registry.register(Arc::new(OpenBrowserTool));
 
-    // User interaction
-    registry.register(Arc::new(AskUserTool));
+    // User interaction — with channel for TUI mode
+    let (ask_user_tx, ask_user_rx) = opendev_runtime::ask_user_channel();
+    registry.register(Arc::new(AskUserTool::new().with_ask_tx(ask_user_tx)));
 
     // Memory & session
     registry.register(Arc::new(MemoryTool));
@@ -105,7 +123,11 @@ fn register_default_tools(registry: &mut ToolRegistry) -> Arc<Mutex<opendev_runt
     registry.register(Arc::new(TaskCompleteTool));
     registry.register(Arc::new(VlmTool));
     registry.register(Arc::new(DiffPreviewTool));
-    registry.register(Arc::new(PresentPlanTool::new()));
+    // Plan tool — with channel for TUI approval
+    let (plan_approval_tx, plan_approval_rx) = opendev_runtime::plan_approval_channel();
+    registry.register(Arc::new(
+        PresentPlanTool::new().with_approval_tx(plan_approval_tx),
+    ));
 
     // Todo tools (5 separate tools sharing one manager)
     let todo_manager = Arc::new(Mutex::new(opendev_runtime::TodoManager::new()));
@@ -122,7 +144,18 @@ fn register_default_tools(registry: &mut ToolRegistry) -> Arc<Mutex<opendev_runt
     // Note: SpawnSubagentTool requires shared Arc<ToolRegistry> and Arc<HttpClient>,
     // which are created after registration. Deferred for now.
 
-    todo_manager
+    // Tool approval channel (sender stored on runtime for react loop, receiver goes to TUI)
+    let (tool_approval_tx, tool_approval_rx) = opendev_runtime::tool_approval_channel();
+
+    (
+        todo_manager,
+        ToolChannelReceivers {
+            ask_user_rx,
+            plan_approval_rx,
+            tool_approval_rx,
+        },
+        tool_approval_tx,
+    )
 }
 
 /// Build the system prompt from embedded templates.
@@ -165,7 +198,8 @@ impl AgentRuntime {
         session_manager: SessionManager,
     ) -> Result<Self, String> {
         let mut tool_registry = ToolRegistry::new();
-        let todo_manager = register_default_tools(&mut tool_registry);
+        let (todo_manager, channel_receivers, tool_approval_tx) =
+            register_default_tools(&mut tool_registry);
 
         // Register invoke_skill tool with project-local and user-global skill dirs
         let mut skill_dirs = Vec::new();
@@ -385,6 +419,8 @@ impl AgentRuntime {
             artifact_index,
             compactor,
             todo_manager,
+            tool_approval_tx: Some(tool_approval_tx),
+            channel_receivers: Some(channel_receivers),
         })
     }
 
@@ -491,6 +527,7 @@ impl AgentRuntime {
                 Some(&self.compactor),
                 Some(&self.todo_manager),
                 cancel_token.as_ref(),
+                self.tool_approval_tx.as_ref(),
             )
             .await?;
 
