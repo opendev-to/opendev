@@ -5,7 +5,7 @@
 //! and same-turn call deduplication.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::{info, warn};
 
 use crate::middleware::ToolMiddleware;
@@ -21,11 +21,14 @@ use crate::validation;
 /// - JSON Schema parameter validation
 /// - Per-tool timeout configuration
 /// - Same-turn call deduplication
+///
+/// Uses interior mutability (`RwLock`) so tools can be registered via `&self`,
+/// enabling late registration (e.g. `SpawnSubagentTool` after `Arc<ToolRegistry>` is created).
 pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn BaseTool>>,
-    middleware: Vec<Box<dyn ToolMiddleware>>,
+    tools: RwLock<HashMap<String, Arc<dyn BaseTool>>>,
+    middleware: RwLock<Vec<Arc<dyn ToolMiddleware>>>,
     /// Per-tool timeout overrides keyed by tool name.
-    tool_timeouts: HashMap<String, ToolTimeoutConfig>,
+    tool_timeouts: RwLock<HashMap<String, ToolTimeoutConfig>>,
     /// Cache for same-turn deduplication. Keyed by hash of (tool_name, args).
     dedup_cache: Mutex<HashMap<String, ToolResult>>,
     /// Sanitizer that truncates large tool outputs before they enter LLM context.
@@ -34,10 +37,16 @@ pub struct ToolRegistry {
 
 impl std::fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        let middleware = self.middleware.read().expect("ToolRegistry lock poisoned");
+        let tool_timeouts = self
+            .tool_timeouts
+            .read()
+            .expect("ToolRegistry lock poisoned");
         f.debug_struct("ToolRegistry")
-            .field("tools", &self.tools.keys().collect::<Vec<_>>())
-            .field("middleware_count", &self.middleware.len())
-            .field("tool_timeouts", &self.tool_timeouts)
+            .field("tools", &tools.keys().collect::<Vec<_>>())
+            .field("middleware_count", &middleware.len())
+            .field("tool_timeouts", &*tool_timeouts)
             .field(
                 "dedup_cache_size",
                 &self.dedup_cache.lock().map(|c| c.len()).unwrap_or(0),
@@ -57,49 +66,70 @@ impl ToolRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
         Self {
-            tools: HashMap::new(),
-            middleware: Vec::new(),
-            tool_timeouts: HashMap::new(),
+            tools: RwLock::new(HashMap::new()),
+            middleware: RwLock::new(Vec::new()),
+            tool_timeouts: RwLock::new(HashMap::new()),
             dedup_cache: Mutex::new(HashMap::new()),
             sanitizer: ToolResultSanitizer::new(),
         }
     }
 
     /// Register a tool. Replaces any existing tool with the same name.
-    pub fn register(&mut self, tool: Arc<dyn BaseTool>) {
+    pub fn register(&self, tool: Arc<dyn BaseTool>) {
         let name = tool.name().to_string();
         info!(tool = %name, "Registered tool");
-        self.tools.insert(name, tool);
+        self.tools
+            .write()
+            .expect("ToolRegistry lock poisoned")
+            .insert(name, tool);
     }
 
     /// Unregister a tool by name. Returns the tool if it existed.
-    pub fn unregister(&mut self, name: &str) -> Option<Arc<dyn BaseTool>> {
-        self.tools.remove(name)
+    pub fn unregister(&self, name: &str) -> Option<Arc<dyn BaseTool>> {
+        self.tools
+            .write()
+            .expect("ToolRegistry lock poisoned")
+            .remove(name)
     }
 
-    /// Look up a tool by name.
-    pub fn get(&self, name: &str) -> Option<&Arc<dyn BaseTool>> {
-        self.tools.get(name)
+    /// Look up a tool by name (returns a cloned Arc).
+    pub fn get(&self, name: &str) -> Option<Arc<dyn BaseTool>> {
+        self.tools
+            .read()
+            .expect("ToolRegistry lock poisoned")
+            .get(name)
+            .cloned()
     }
 
     /// Check if a tool is registered.
     pub fn contains(&self, name: &str) -> bool {
-        self.tools.contains_key(name)
+        self.tools
+            .read()
+            .expect("ToolRegistry lock poisoned")
+            .contains_key(name)
     }
 
     /// Get all registered tool names.
-    pub fn tool_names(&self) -> Vec<&str> {
-        self.tools.keys().map(|s| s.as_str()).collect()
+    pub fn tool_names(&self) -> Vec<String> {
+        self.tools
+            .read()
+            .expect("ToolRegistry lock poisoned")
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// Get the number of registered tools.
     pub fn len(&self) -> usize {
-        self.tools.len()
+        self.tools.read().expect("ToolRegistry lock poisoned").len()
     }
 
     /// Check if the registry is empty.
     pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
+        self.tools
+            .read()
+            .expect("ToolRegistry lock poisoned")
+            .is_empty()
     }
 
     // --- Middleware ---
@@ -108,30 +138,46 @@ impl ToolRegistry {
     ///
     /// Middleware are called in insertion order for `before_execute` and
     /// in the same order for `after_execute`.
-    pub fn add_middleware(&mut self, mw: Box<dyn ToolMiddleware>) {
-        self.middleware.push(mw);
+    pub fn add_middleware(&self, mw: Box<dyn ToolMiddleware>) {
+        self.middleware
+            .write()
+            .expect("ToolRegistry lock poisoned")
+            .push(Arc::from(mw));
     }
 
     /// Get the number of registered middleware.
     pub fn middleware_count(&self) -> usize {
-        self.middleware.len()
+        self.middleware
+            .read()
+            .expect("ToolRegistry lock poisoned")
+            .len()
     }
 
     // --- Per-tool timeouts ---
 
     /// Set a timeout configuration for a specific tool.
-    pub fn set_tool_timeout(&mut self, tool_name: impl Into<String>, config: ToolTimeoutConfig) {
-        self.tool_timeouts.insert(tool_name.into(), config);
+    pub fn set_tool_timeout(&self, tool_name: impl Into<String>, config: ToolTimeoutConfig) {
+        self.tool_timeouts
+            .write()
+            .expect("ToolRegistry lock poisoned")
+            .insert(tool_name.into(), config);
     }
 
     /// Set timeout configurations for multiple tools at once.
-    pub fn set_tool_timeouts(&mut self, timeouts: HashMap<String, ToolTimeoutConfig>) {
-        self.tool_timeouts.extend(timeouts);
+    pub fn set_tool_timeouts(&self, timeouts: HashMap<String, ToolTimeoutConfig>) {
+        self.tool_timeouts
+            .write()
+            .expect("ToolRegistry lock poisoned")
+            .extend(timeouts);
     }
 
     /// Get the timeout configuration for a tool (if any).
-    pub fn get_tool_timeout(&self, tool_name: &str) -> Option<&ToolTimeoutConfig> {
-        self.tool_timeouts.get(tool_name)
+    pub fn get_tool_timeout(&self, tool_name: &str) -> Option<ToolTimeoutConfig> {
+        self.tool_timeouts
+            .read()
+            .expect("ToolRegistry lock poisoned")
+            .get(tool_name)
+            .cloned()
     }
 
     // --- Deduplication ---
@@ -152,7 +198,8 @@ impl ToolRegistry {
     ///
     /// Returns a list of tool schema objects suitable for LLM tool-use.
     pub fn get_schemas(&self) -> Vec<serde_json::Value> {
-        self.tools
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        tools
             .values()
             .map(|tool| {
                 serde_json::json!({
@@ -186,11 +233,15 @@ impl ToolRegistry {
         args: HashMap<String, serde_json::Value>,
         ctx: &ToolContext,
     ) -> ToolResult {
-        let tool = match self.tools.get(tool_name) {
-            Some(t) => Arc::clone(t),
-            None => {
-                warn!(tool = %tool_name, "Unknown tool");
-                return ToolResult::fail(format!("Unknown tool: {tool_name}"));
+        // Clone Arc out of the read lock so we don't hold it during execution
+        let tool = {
+            let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+            match tools.get(tool_name) {
+                Some(t) => Arc::clone(t),
+                None => {
+                    warn!(tool = %tool_name, "Unknown tool");
+                    return ToolResult::fail(format!("Unknown tool: {tool_name}"));
+                }
             }
         };
 
@@ -214,8 +265,14 @@ impl ToolRegistry {
             return ToolResult::fail(format!("Validation error: {validation_err}"));
         }
 
+        // Clone middleware Arcs out of the lock so we can call async methods
+        let middleware: Vec<Arc<dyn ToolMiddleware>> = {
+            let mw = self.middleware.read().expect("ToolRegistry lock poisoned");
+            mw.clone()
+        };
+
         // Run before_execute middleware
-        for mw in &self.middleware {
+        for mw in &middleware {
             if let Err(err) = mw.before_execute(tool_name, &normalized, ctx).await {
                 warn!(tool = %tool_name, error = %err, "Middleware rejected execution");
                 return ToolResult::fail(format!("Middleware error: {err}"));
@@ -223,12 +280,18 @@ impl ToolRegistry {
         }
 
         // Apply per-tool timeout config
-        let exec_ctx = if let Some(timeout_config) = self.tool_timeouts.get(tool_name) {
-            let mut new_ctx = ctx.clone();
-            new_ctx.timeout_config = Some(timeout_config.clone());
-            new_ctx
-        } else {
-            ctx.clone()
+        let exec_ctx = {
+            let timeouts = self
+                .tool_timeouts
+                .read()
+                .expect("ToolRegistry lock poisoned");
+            if let Some(timeout_config) = timeouts.get(tool_name) {
+                let mut new_ctx = ctx.clone();
+                new_ctx.timeout_config = Some(timeout_config.clone());
+                new_ctx
+            } else {
+                ctx.clone()
+            }
         };
 
         // Execute
@@ -249,7 +312,7 @@ impl ToolRegistry {
         }
 
         // Run after_execute middleware
-        for mw in &self.middleware {
+        for mw in &middleware {
             if let Err(err) = mw.after_execute(tool_name, &result).await {
                 warn!(tool = %tool_name, error = %err, "Middleware after_execute error");
                 // after_execute errors are logged but don't change the result
@@ -364,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_register_and_get() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
 
         assert!(reg.contains("echo"));
@@ -375,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_unregister() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
         assert!(reg.contains("echo"));
 
@@ -387,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_tool_names() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
 
         let names = reg.tool_names();
@@ -396,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_get_schemas() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
 
         let schemas = reg.get_schemas();
@@ -408,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_success() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
 
         let mut args = HashMap::new();
@@ -422,7 +485,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_populates_duration_ms() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
 
         let mut args = HashMap::new();
@@ -448,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_register_replaces_existing() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
         reg.register(Arc::new(EchoTool)); // Same name
         assert_eq!(reg.len(), 1); // Not duplicated
@@ -504,7 +567,7 @@ mod tests {
         let before = Arc::new(AtomicUsize::new(0));
         let after = Arc::new(AtomicUsize::new(0));
 
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
         reg.add_middleware(Box::new(TrackingMiddleware {
             before_count: Arc::clone(&before),
@@ -522,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_middleware_rejects_execution() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
         reg.add_middleware(Box::new(RejectMiddleware));
 
@@ -537,7 +600,7 @@ mod tests {
 
     #[test]
     fn test_middleware_count() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         assert_eq!(reg.middleware_count(), 0);
         reg.add_middleware(Box::new(TrackingMiddleware {
             before_count: Arc::new(AtomicUsize::new(0)),
@@ -550,7 +613,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validation_rejects_missing_required() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
 
         // EchoTool requires "message"
@@ -564,7 +627,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validation_rejects_wrong_type() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(EchoTool));
 
         let mut args = HashMap::new();
@@ -579,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_set_tool_timeout() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.set_tool_timeout(
             "bash",
             ToolTimeoutConfig {
@@ -596,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_set_tool_timeouts_bulk() {
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         let mut timeouts = HashMap::new();
         timeouts.insert(
             "bash".into(),
@@ -651,7 +714,7 @@ mod tests {
             }
         }
 
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(TimeoutCaptureTool));
         reg.set_tool_timeout(
             "timeout_capture",
@@ -699,7 +762,7 @@ mod tests {
             }
         }
 
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(TimeoutCaptureTool2));
         // No per-tool timeout set, context has a global one
         let ctx = ToolContext::new("/tmp/test").with_timeout_config(ToolTimeoutConfig {
@@ -716,7 +779,7 @@ mod tests {
     #[tokio::test]
     async fn test_dedup_same_call_returns_cached() {
         let call_count = Arc::new(AtomicUsize::new(0));
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(CounterTool {
             call_count: Arc::clone(&call_count),
         }));
@@ -740,7 +803,7 @@ mod tests {
     #[tokio::test]
     async fn test_dedup_different_args_not_cached() {
         let call_count = Arc::new(AtomicUsize::new(0));
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(CounterTool {
             call_count: Arc::clone(&call_count),
         }));
@@ -764,7 +827,7 @@ mod tests {
     #[tokio::test]
     async fn test_dedup_clear_between_turns() {
         let call_count = Arc::new(AtomicUsize::new(0));
-        let mut reg = ToolRegistry::new();
+        let reg = ToolRegistry::new();
         reg.register(Arc::new(CounterTool {
             call_count: Arc::clone(&call_count),
         }));

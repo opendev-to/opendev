@@ -374,9 +374,9 @@ impl AgentRuntime {
 
         // Register SpawnSubagentTool now that we have Arc<ToolRegistry> and Arc<HttpClient>
         let session_dir = session_manager.session_dir().to_path_buf();
-        let subagent_manager = Arc::new(
-            opendev_agents::SubagentManager::with_builtins_and_custom(working_dir),
-        );
+        let subagent_manager = Arc::new(opendev_agents::SubagentManager::with_builtins_and_custom(
+            working_dir,
+        ));
         tool_registry.register(Arc::new(SpawnSubagentTool::new(
             subagent_manager,
             Arc::clone(&tool_registry),

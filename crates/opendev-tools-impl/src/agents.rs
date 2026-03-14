@@ -8,6 +8,7 @@
 //! and the subagent spawning logic from the Python react loop.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
@@ -34,12 +35,7 @@ fn default_agent_types() -> Vec<AgentType> {
             description: "Read-only agent for exploring and understanding codebases. \
                            Has access to file reading, search, and listing tools."
                 .into(),
-            tools: vec![
-                "read_file".into(),
-                "search_files".into(),
-                "list_files".into(),
-                "grep_search".into(),
-            ],
+            tools: vec!["read_file".into(), "search".into(), "list_files".into()],
         },
         AgentType {
             name: "planner".into(),
@@ -48,7 +44,7 @@ fn default_agent_types() -> Vec<AgentType> {
                 .into(),
             tools: vec![
                 "read_file".into(),
-                "search_files".into(),
+                "search".into(),
                 "list_files".into(),
                 "write_file".into(),
             ],
@@ -73,7 +69,7 @@ fn default_agent_types() -> Vec<AgentType> {
             tools: vec![
                 "write_file".into(),
                 "read_file".into(),
-                "bash".into(),
+                "run_command".into(),
                 "edit_file".into(),
             ],
         },
@@ -272,6 +268,8 @@ pub struct SpawnSubagentTool {
     tool_registry: Arc<opendev_tools_core::ToolRegistry>,
     /// HTTP client for LLM API calls.
     http_client: Arc<opendev_http::AdaptedClient>,
+    /// Session directory for persisting child sessions.
+    session_dir: PathBuf,
     /// Parent agent's model (used as fallback).
     parent_model: String,
     /// Working directory for tool execution.
@@ -286,6 +284,7 @@ impl SpawnSubagentTool {
         manager: Arc<opendev_agents::SubagentManager>,
         tool_registry: Arc<opendev_tools_core::ToolRegistry>,
         http_client: Arc<opendev_http::AdaptedClient>,
+        session_dir: PathBuf,
         parent_model: impl Into<String>,
         working_dir: impl Into<String>,
     ) -> Self {
@@ -293,6 +292,7 @@ impl SpawnSubagentTool {
             manager,
             tool_registry,
             http_client,
+            session_dir,
             parent_model: parent_model.into(),
             working_dir: working_dir.into(),
             event_tx: None,
@@ -316,7 +316,9 @@ impl BaseTool for SpawnSubagentTool {
         "Spawn a subagent to handle an isolated task. The subagent runs its own \
          ReAct loop with restricted tools and returns the result. Use for tasks \
          that require multiple tool calls and benefit from isolated context \
-         (code exploration, planning, web cloning, etc.). \
+         (code exploration, summarization, codebase analysis, planning, web cloning, etc.). \
+         This is the correct tool for 'summarize the codebase', 'how does X work', \
+         'explore the code', etc. — NOT invoke_skill. \
          Do NOT spawn a subagent for tasks that only need 1-2 tool calls — \
          use the tools directly instead."
     }
@@ -338,6 +340,11 @@ impl BaseTool for SpawnSubagentTool {
                     "description": "Detailed task description for the subagent. \
                                     Be specific about what the subagent should do, \
                                     which files to look at, and what output is expected."
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Resume a previous subagent session by its task_id. \
+                                    If provided, the subagent continues from where it left off."
                 }
             },
             "required": ["agent_type", "task"]
@@ -359,7 +366,14 @@ impl BaseTool for SpawnSubagentTool {
             None => return ToolResult::fail("Missing required parameter: task"),
         };
 
-        info!(agent_type = %agent_type, task_len = task.len(), "spawn_subagent called");
+        let task_id = args.get("task_id").and_then(|v| v.as_str());
+
+        info!(
+            agent_type = %agent_type,
+            task_len = task.len(),
+            resume = task_id.is_some(),
+            "spawn_subagent called"
+        );
 
         // Use working_dir from context if available, otherwise fall back to configured one
         let working_dir = ctx.working_dir.to_string_lossy().to_string();
@@ -368,6 +382,11 @@ impl BaseTool for SpawnSubagentTool {
         } else {
             &working_dir
         };
+
+        // Generate child session ID (reuse task_id for resume, new UUID otherwise)
+        let child_session_id = task_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // Create progress callback
         let progress: Box<dyn opendev_agents::SubagentProgressCallback> =
@@ -394,7 +413,17 @@ impl BaseTool for SpawnSubagentTool {
 
         match result {
             Ok(run_result) => {
-                let mut output = run_result.agent_result.content.clone();
+                // Save child session for future resume
+                self.save_child_session(
+                    &child_session_id,
+                    agent_type,
+                    task,
+                    ctx.session_id.as_deref(),
+                    &run_result,
+                );
+
+                let mut output = format!("task_id: {child_session_id} (for resuming)\n\n");
+                output.push_str(&run_result.agent_result.content);
 
                 // Append shallow subagent warning if applicable
                 if let Some(ref warning) = run_result.shallow_warning {
@@ -423,6 +452,7 @@ impl BaseTool for SpawnSubagentTool {
                         serde_json::json!(run_result.tool_call_count),
                     );
                     metadata.insert("subagent_type".into(), serde_json::json!(agent_type));
+                    metadata.insert("task_id".into(), serde_json::json!(child_session_id));
                     if run_result.agent_result.interrupted {
                         metadata.insert("interrupted".into(), serde_json::json!(true));
                     }
@@ -437,6 +467,60 @@ impl BaseTool for SpawnSubagentTool {
                 warn!(agent_type = %agent_type, error = %e, "Subagent spawn failed");
                 ToolResult::fail(format!("Failed to spawn subagent '{agent_type}': {e}"))
             }
+        }
+    }
+}
+
+impl SpawnSubagentTool {
+    /// Save child session metadata to disk for future resume.
+    fn save_child_session(
+        &self,
+        child_session_id: &str,
+        agent_type: &str,
+        task: &str,
+        parent_session_id: Option<&str>,
+        run_result: &opendev_agents::SubagentRunResult,
+    ) {
+        // Create a lightweight session manager for saving child sessions
+        let child_mgr = match opendev_history::SessionManager::new(self.session_dir.clone()) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                warn!(error = %e, "Failed to create session manager for child session");
+                return;
+            }
+        };
+
+        // Build a minimal session with the subagent result
+        let mut session = opendev_models::session::Session::new();
+        session.id = child_session_id.to_string();
+        session.parent_id = parent_session_id.map(|s| s.to_string());
+        session.working_directory = Some(self.working_dir.clone());
+        session.metadata.insert(
+            "title".to_string(),
+            serde_json::json!(format!(
+                "{} (@{})",
+                task.chars().take(80).collect::<String>(),
+                agent_type
+            )),
+        );
+        session
+            .metadata
+            .insert("subagent_type".to_string(), serde_json::json!(agent_type));
+
+        // Convert agent result messages to ChatMessages
+        let messages = opendev_history::message_convert::api_values_to_chatmessages(
+            &run_result.agent_result.messages,
+        );
+        session.messages = messages;
+
+        if let Err(e) = child_mgr.save_session(&session) {
+            warn!(error = %e, "Failed to save child session");
+        } else {
+            info!(
+                child_session_id = %child_session_id,
+                parent_session_id = ?parent_session_id,
+                "Saved child session"
+            );
         }
     }
 }
@@ -518,7 +602,14 @@ mod tests {
         )
         .unwrap();
         let http = Arc::new(opendev_http::AdaptedClient::new(raw));
-        let tool = SpawnSubagentTool::new(manager, registry, http, "gpt-4o", "/tmp");
+        let tool = SpawnSubagentTool::new(
+            manager,
+            registry,
+            http,
+            PathBuf::from("/tmp"),
+            "gpt-4o",
+            "/tmp",
+        );
         let ctx = ToolContext::new("/tmp");
 
         // Missing agent_type
@@ -545,7 +636,14 @@ mod tests {
         )
         .unwrap();
         let http = Arc::new(opendev_http::AdaptedClient::new(raw));
-        let tool = SpawnSubagentTool::new(manager, registry, http, "gpt-4o", "/tmp");
+        let tool = SpawnSubagentTool::new(
+            manager,
+            registry,
+            http,
+            PathBuf::from("/tmp"),
+            "gpt-4o",
+            "/tmp",
+        );
         let ctx = ToolContext::new("/tmp");
 
         let mut args = HashMap::new();

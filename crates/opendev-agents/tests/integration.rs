@@ -770,15 +770,15 @@ fn task_complete_detection_and_extraction() {
 // Prompt composition - embedded templates
 // ========================================================================
 
-/// All 91 embedded templates load successfully.
+/// All embedded templates load successfully.
 #[test]
 fn all_embedded_templates_load() {
     use opendev_agents::prompts::embedded::{TEMPLATE_COUNT, TEMPLATES};
 
     assert_eq!(TEMPLATE_COUNT, TEMPLATES.len());
     assert!(
-        TEMPLATE_COUNT >= 91,
-        "expected at least 91 templates, got {TEMPLATE_COUNT}"
+        TEMPLATE_COUNT >= 88,
+        "expected at least 88 templates, got {TEMPLATE_COUNT}"
     );
 
     for (key, content) in TEMPLATES.iter() {

@@ -1,5 +1,6 @@
 //! Subagent specifications and execution.
 
+pub mod custom_loader;
 pub mod manager;
 pub mod spec;
 

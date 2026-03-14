@@ -114,6 +114,46 @@ impl SubagentManager {
         }
     }
 
+    /// Create a manager pre-loaded with core built-in subagent specs.
+    ///
+    /// Registers only the essential subagents (Code-Explorer, Planner, project_init).
+    /// Additional subagents (PR-Reviewer, Security-Reviewer, Web-Clone, Web-Generator,
+    /// ask-user) can be loaded as custom agents from `~/.opendev/agents/*.md`.
+    pub fn with_builtins() -> Self {
+        use super::spec::builtins;
+        use crate::prompts::embedded;
+
+        let mut mgr = Self::new();
+        mgr.register(builtins::code_explorer(
+            embedded::SUBAGENTS_SUBAGENT_CODE_EXPLORER,
+        ));
+        mgr.register(builtins::planner(embedded::SUBAGENTS_SUBAGENT_PLANNER));
+        mgr.register(builtins::project_init(
+            embedded::SUBAGENTS_SUBAGENT_PROJECT_INIT,
+        ));
+        mgr
+    }
+
+    /// Create a manager with built-in specs plus custom agents loaded from disk.
+    ///
+    /// Scans `{working_dir}/.opendev/agents/` and `~/.opendev/agents/` for
+    /// user-defined agent markdown files. Custom agents override built-ins
+    /// with the same name.
+    pub fn with_builtins_and_custom(working_dir: &std::path::Path) -> Self {
+        let mut mgr = Self::with_builtins();
+        let dirs = vec![
+            working_dir.join(".opendev").join("agents"),
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".opendev")
+                .join("agents"),
+        ];
+        for spec in super::custom_loader::load_custom_agents(&dirs) {
+            mgr.register(spec);
+        }
+        mgr
+    }
+
     /// Register a subagent specification.
     pub fn register(&mut self, spec: SubAgentSpec) {
         self.specs.insert(spec.name.clone(), spec);
@@ -353,5 +393,30 @@ mod tests {
     fn test_subagent_type_canonical_name() {
         assert_eq!(SubagentType::CodeExplorer.canonical_name(), "Code-Explorer");
         assert_eq!(SubagentType::AskUser.canonical_name(), "ask-user");
+    }
+
+    #[test]
+    fn test_with_builtins() {
+        let mgr = SubagentManager::with_builtins();
+        assert_eq!(mgr.len(), 3);
+        assert!(mgr.get("Code-Explorer").is_some());
+        assert!(mgr.get("Planner").is_some());
+        assert!(mgr.get("project_init").is_some());
+    }
+
+    #[test]
+    fn test_with_builtins_and_custom() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_dir = tmp.path().join(".opendev").join("agents");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("test-agent.md"),
+            "---\ndescription: Test agent\n---\nYou are a test.",
+        )
+        .unwrap();
+
+        let mgr = SubagentManager::with_builtins_and_custom(tmp.path());
+        assert!(mgr.len() >= 4); // 3 builtins + 1 custom
+        assert!(mgr.get("test-agent").is_some());
     }
 }

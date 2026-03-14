@@ -70,21 +70,13 @@ pub mod builtins {
     use super::SubAgentSpec;
 
     /// Tools available to the Code Explorer subagent.
-    pub const CODE_EXPLORER_TOOLS: &[&str] = &[
-        "read_file",
-        "search",
-        "list_files",
-        "find_symbol",
-        "find_referencing_symbols",
-    ];
+    pub const CODE_EXPLORER_TOOLS: &[&str] = &["read_file", "search", "list_files"];
 
     /// Tools available to the Planner subagent.
     pub const PLANNER_TOOLS: &[&str] = &[
         "read_file",
         "search",
         "list_files",
-        "find_symbol",
-        "find_referencing_symbols",
         "write_file",
         "edit_file",
     ];
@@ -161,8 +153,8 @@ pub mod builtins {
                 "edit_file",
                 "list_files",
                 "search",
-                "fetch_url",
-                "capture_web_screenshot",
+                "web_fetch",
+                "web_screenshot",
                 "run_command",
             ]
             .into_iter()
@@ -172,7 +164,7 @@ pub mod builtins {
     }
 
     /// Tools available to the Project Init subagent.
-    pub const PROJECT_INIT_TOOLS: &[&str] = &["Read", "Glob", "Grep", "Bash"];
+    pub const PROJECT_INIT_TOOLS: &[&str] = &["read_file", "list_files", "search", "run_command"];
 
     /// Create the Project Init subagent spec.
     pub fn project_init(system_prompt: &str) -> SubAgentSpec {
@@ -289,7 +281,8 @@ mod tests {
     fn test_web_clone_builtin() {
         let spec = builtins::web_clone("You clone websites.");
         assert_eq!(spec.name, "Web-Clone");
-        assert!(spec.tools.contains(&"fetch_url".to_string()));
+        assert!(spec.tools.contains(&"web_fetch".to_string()));
+        assert!(spec.tools.contains(&"web_screenshot".to_string()));
     }
 
     #[test]
@@ -309,10 +302,10 @@ mod tests {
         );
         assert!(spec.has_tool_restriction());
         assert_eq!(spec.tools.len(), 4);
-        assert!(spec.tools.contains(&"Read".to_string()));
-        assert!(spec.tools.contains(&"Glob".to_string()));
-        assert!(spec.tools.contains(&"Grep".to_string()));
-        assert!(spec.tools.contains(&"Bash".to_string()));
+        assert!(spec.tools.contains(&"read_file".to_string()));
+        assert!(spec.tools.contains(&"list_files".to_string()));
+        assert!(spec.tools.contains(&"search".to_string()));
+        assert!(spec.tools.contains(&"run_command".to_string()));
         assert!(spec.model.is_none());
     }
 }
