@@ -168,7 +168,9 @@ fn git_cmd(working_dir: &Path, args: &[&str]) -> Option<String> {
 fn detect_default_branch(working_dir: &Path) -> Option<String> {
     // Try symbolic-ref first
     if let Some(branch) = git_cmd(working_dir, &["symbolic-ref", "refs/remotes/origin/HEAD"]) {
-        return branch.strip_prefix("refs/remotes/origin/").map(String::from);
+        return branch
+            .strip_prefix("refs/remotes/origin/")
+            .map(String::from);
     }
     // Fallback: check if main or master exists
     for branch in &["main", "master"] {
@@ -305,7 +307,13 @@ fn collect_tree_entries(
 
         if entry.path().is_dir() {
             lines.push(format!("{prefix}{connector}{name}/"));
-            collect_tree_entries(&entry.path(), &child_prefix, max_depth, current_depth + 1, lines);
+            collect_tree_entries(
+                &entry.path(),
+                &child_prefix,
+                max_depth,
+                current_depth + 1,
+                lines,
+            );
         } else {
             lines.push(format!("{prefix}{connector}{name}"));
         }
@@ -343,10 +351,7 @@ mod tests {
 
     #[test]
     fn test_infer_tech_stack_dedup() {
-        let configs = vec![
-            "pyproject.toml".to_string(),
-            "requirements.txt".to_string(),
-        ];
+        let configs = vec!["pyproject.toml".to_string(), "requirements.txt".to_string()];
         let stack = infer_tech_stack(&configs);
         // Both map to "Python", should be deduped
         assert_eq!(stack.iter().filter(|s| *s == "Python").count(), 1);

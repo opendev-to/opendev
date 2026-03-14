@@ -301,6 +301,8 @@ fn msg_token_count(msg: &ApiMessage) -> usize {
 ///
 /// Keeps the tool name, success/failure indication, and first+last lines.
 fn summarize_tool_output(tool_name: &str, content: &str) -> String {
+    use std::fmt::Write;
+
     let lines: Vec<&str> = content.lines().collect();
     let succeeded = !content.contains("error")
         && !content.contains("Error")
@@ -318,17 +320,17 @@ fn summarize_tool_output(tool_name: &str, content: &str) -> String {
     let first_snippet: String = first_line.chars().take(120).collect();
     let last_snippet: String = last_line.chars().take(120).collect();
 
-    if last_snippet.is_empty() {
-        format!(
-            "[summary: {tool_name} {status}, {line_count} lines]\n{first_snippet}",
-            line_count = lines.len(),
-        )
-    } else {
-        format!(
-            "[summary: {tool_name} {status}, {line_count} lines]\n{first_snippet}\n...\n{last_snippet}",
-            line_count = lines.len(),
-        )
+    // Pre-allocate: header (~40) + first snippet (~120) + optional last (~130)
+    let mut buf = String::with_capacity(300);
+    let _ = write!(
+        buf,
+        "[summary: {tool_name} {status}, {} lines]\n{first_snippet}",
+        lines.len(),
+    );
+    if !last_snippet.is_empty() {
+        let _ = write!(buf, "\n...\n{last_snippet}");
     }
+    buf
 }
 
 /// Optimization level returned by `check_usage`.
@@ -390,24 +392,27 @@ impl ArtifactIndex {
     pub fn record(&mut self, file_path: &str, operation: &str, details: &str) {
         let now = Local::now().to_rfc3339();
         if let Some(existing) = self.entries.get_mut(file_path) {
-            existing.last_operation = operation.to_string();
-            existing.last_details = details.to_string();
+            existing.last_operation.clear();
+            existing.last_operation.push_str(operation);
+            existing.last_details.clear();
+            existing.last_details.push_str(details);
             existing.updated_at = now;
             existing.operation_count += 1;
-            if !existing.operations_seen.contains(&operation.to_string()) {
-                existing.operations_seen.push(operation.to_string());
+            if !existing.operations_seen.iter().any(|s| s == operation) {
+                existing.operations_seen.push(operation.to_owned());
             }
         } else {
+            let op = operation.to_owned();
             self.entries.insert(
-                file_path.to_string(),
+                file_path.to_owned(),
                 ArtifactEntry {
-                    file_path: file_path.to_string(),
-                    last_operation: operation.to_string(),
-                    last_details: details.to_string(),
+                    file_path: file_path.to_owned(),
+                    last_operation: op.clone(),
+                    last_details: details.to_owned(),
                     created_at: now.clone(),
                     updated_at: now,
                     operation_count: 1,
-                    operations_seen: vec![operation.to_string()],
+                    operations_seen: vec![op],
                 },
             );
         }
@@ -671,7 +676,7 @@ impl ContextCompactor {
                 continue;
             }
             messages[i].insert(
-                "content".to_string(),
+                "content".into(),
                 serde_json::Value::String(format!(
                     "[ref: tool result {tool_call_id} — see history]"
                 )),
@@ -750,8 +755,8 @@ impl ContextCompactor {
                 continue;
             }
             messages[idx].insert(
-                "content".to_string(),
-                serde_json::Value::String("[pruned]".to_string()),
+                "content".into(),
+                serde_json::Value::String("[pruned]".into()),
             );
             pruned_count += 1;
         }
@@ -794,18 +799,13 @@ impl ContextCompactor {
             msg_count = middle.len(),
         );
         if !artifact_summary.is_empty() {
-            full_summary = format!("{full_summary}\n\n{artifact_summary}");
+            full_summary.push_str("\n\n");
+            full_summary.push_str(&artifact_summary);
         }
 
         let mut summary_msg = ApiMessage::new();
-        summary_msg.insert(
-            "role".to_string(),
-            serde_json::Value::String("user".to_string()),
-        );
-        summary_msg.insert(
-            "content".to_string(),
-            serde_json::Value::String(full_summary),
-        );
+        summary_msg.insert("role".into(), serde_json::Value::String("user".into()));
+        summary_msg.insert("content".into(), serde_json::Value::String(full_summary));
 
         let mut result = Vec::with_capacity(head.len() + 1 + tail.len());
         result.extend_from_slice(head);
@@ -867,7 +867,7 @@ impl ContextCompactor {
             }
 
             let summary = summarize_tool_output(tool_name, &content);
-            msg.insert("content".to_string(), serde_json::Value::String(summary));
+            msg.insert("content".into(), serde_json::Value::String(summary));
             summarized_count += 1;
         }
 
@@ -903,18 +903,13 @@ impl ContextCompactor {
         let artifact_summary = self.artifact_index.as_summary();
         let mut full_summary = format!("[CONVERSATION SUMMARY]\n{summary_text}");
         if !artifact_summary.is_empty() {
-            full_summary = format!("{full_summary}\n\n{artifact_summary}");
+            full_summary.push_str("\n\n");
+            full_summary.push_str(&artifact_summary);
         }
 
         let mut summary_msg = ApiMessage::new();
-        summary_msg.insert(
-            "role".to_string(),
-            serde_json::Value::String("user".to_string()),
-        );
-        summary_msg.insert(
-            "content".to_string(),
-            serde_json::Value::String(full_summary),
-        );
+        summary_msg.insert("role".into(), serde_json::Value::String("user".into()));
+        summary_msg.insert("content".into(), serde_json::Value::String(full_summary));
 
         let mut compacted = Vec::with_capacity(head.len() + 1 + tail.len());
         compacted.extend_from_slice(head);
@@ -941,23 +936,31 @@ impl ContextCompactor {
 
     /// Create a basic summary without an LLM call.
     pub fn fallback_summary(messages: &[ApiMessage]) -> String {
-        let mut parts = Vec::new();
+        use std::fmt::Write;
+
+        // Pre-allocate for ~2000 chars of content plus formatting overhead
+        let mut buf = String::with_capacity(2200);
         let mut total = 0usize;
+        let mut entry_count = 0usize;
         for msg in messages {
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
             if !content.is_empty() && (role == "user" || role == "assistant") {
                 let snippet: String = content.chars().take(200).collect();
-                parts.push(format!("- [{role}] {snippet}"));
+                if entry_count > 0 {
+                    buf.push('\n');
+                }
+                let _ = write!(buf, "- [{role}] {snippet}");
                 total += snippet.len();
+                entry_count += 1;
                 if total > 2000 {
-                    let remaining = messages.len().saturating_sub(parts.len());
-                    parts.push(format!("... ({remaining} more messages)"));
+                    let remaining = messages.len().saturating_sub(entry_count);
+                    let _ = write!(buf, "\n... ({remaining} more messages)");
                     break;
                 }
             }
         }
-        parts.join("\n")
+        buf
     }
 
     /// Estimate total tokens across messages and system prompt.
