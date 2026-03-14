@@ -17,6 +17,7 @@ pub mod session_manager;
 pub mod sharing;
 pub mod snapshot;
 pub mod sqlite_store;
+pub mod topic_detector;
 
 pub use export::export_markdown;
 pub use fair_rwlock::FairRwLock;
@@ -27,3 +28,4 @@ pub use session_manager::{SessionManager, generate_title_from_messages};
 pub use sharing::share_session;
 pub use snapshot::SnapshotManager;
 pub use sqlite_store::SqliteSessionStore;
+pub use topic_detector::TopicDetector;
