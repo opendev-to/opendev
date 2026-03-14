@@ -969,7 +969,10 @@ impl ContextCompactor {
     fn sanitize_for_summarization(messages: &[ApiMessage]) -> String {
         let mut parts = Vec::new();
         for msg in messages {
-            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let role = msg
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             if !content.is_empty() {
                 let snippet: String = content.chars().take(500).collect();
@@ -1752,14 +1755,21 @@ mod tests {
             payload.pointer("/messages/0/role").and_then(|v| v.as_str()),
             Some("system")
         );
-        assert_eq!(payload.get("model").and_then(|v| v.as_str()), Some("gpt-4o-mini"));
+        assert_eq!(
+            payload.get("model").and_then(|v| v.as_str()),
+            Some("gpt-4o-mini")
+        );
     }
 
     #[test]
     fn test_build_compaction_payload_too_few() {
         let compactor = ContextCompactor::new(100_000);
         let messages = vec![make_msg("system", "sys"), make_msg("user", "hi")];
-        assert!(compactor.build_compaction_payload(&messages, "sys", "model").is_none());
+        assert!(
+            compactor
+                .build_compaction_payload(&messages, "sys", "model")
+                .is_none()
+        );
     }
 
     #[test]
