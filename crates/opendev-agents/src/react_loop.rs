@@ -10,13 +10,12 @@ use std::sync::Mutex;
 use std::time::Instant;
 use tracing::{Instrument, debug, info, info_span, warn};
 
-use crate::agent_types::{AgentDefinition, PartialResult};
 use crate::doom_loop::{DoomLoopAction, DoomLoopDetector, RecoveryAction};
 use crate::llm_calls::LlmCaller;
 use crate::response::ResponseCleaner;
 use crate::traits::{AgentError, AgentResult, LlmResponse, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
-use opendev_runtime::{play_finish_sound, ThinkingLevel};
+use opendev_runtime::{ThinkingLevel, play_finish_sound};
 use opendev_tools_core::{ToolContext, ToolRegistry};
 
 /// Metrics for a single tool call execution.
@@ -130,9 +129,6 @@ pub struct ReactLoopConfig {
     pub thinking_system_prompt: Option<String>,
     /// The user's original task text, used for analysis prompt construction.
     pub original_task: Option<String>,
-    /// Optional agent definition — when set, the loop uses the agent's
-    /// thinking/critique model overrides and thinking level.
-    pub agent_definition: Option<AgentDefinition>,
 }
 
 impl Default for ReactLoopConfig {
@@ -144,19 +140,14 @@ impl Default for ReactLoopConfig {
             thinking_level: ThinkingLevel::Medium,
             thinking_system_prompt: None,
             original_task: None,
-            agent_definition: None,
         }
     }
 }
 
 impl ReactLoopConfig {
-    /// Return the effective thinking level, considering the agent definition override.
+    /// Return the effective thinking level for this loop.
     pub fn effective_thinking_level(&self) -> ThinkingLevel {
-        if let Some(ref def) = self.agent_definition {
-            def.effective_thinking_level()
-        } else {
-            self.thinking_level
-        }
+        self.thinking_level
     }
 }
 
@@ -833,8 +824,6 @@ impl ReactLoop {
                     }
 
                     // Execute tool calls
-                    let total_tool_count = tool_calls.len();
-                    let mut completed_tool_count: usize = 0;
                     for tc in &tool_calls {
                         // Check for task_complete
                         if Self::is_task_complete(tc) {
@@ -934,9 +923,6 @@ impl ReactLoop {
                             "name": tool_name,
                             "content": formatted,
                         }));
-
-                        completed_tool_count += 1;
-
                         // Check for interrupt between tool executions —
                         // preserve partial work (completed tool results
                         // already appended to messages above).
@@ -951,17 +937,7 @@ impl ReactLoop {
                                 iter_start.elapsed().as_millis() as u64;
                             self.push_metrics(iter_metrics);
 
-                            // Build structured partial result
-                            let partial = PartialResult::from_interrupted_state(
-                                messages,
-                                response.content.as_deref(),
-                                iteration,
-                                completed_tool_count,
-                                total_tool_count,
-                            );
-
                             let mut result = AgentResult::interrupted(messages.clone());
-                            result.partial_result = Some(partial);
                             if !partial_content.is_empty() {
                                 result.content = format!(
                                     "Task interrupted by user (partial): {}",

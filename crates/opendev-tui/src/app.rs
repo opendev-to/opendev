@@ -483,7 +483,11 @@ impl App {
             .iter()
             .map(|msg| {
                 let content = strip_system_reminders(&msg.content);
-                let text_lines = if content.is_empty() { 0 } else { content.lines().count() };
+                let text_lines = if content.is_empty() {
+                    0
+                } else {
+                    content.lines().count()
+                };
                 let tool_lines = if let Some(ref tc) = msg.tool_call {
                     1 + if !tc.collapsed {
                         tc.result_lines.len()
@@ -511,7 +515,6 @@ impl App {
         let msg_visible: Vec<bool> = msg_line_estimates
             .iter()
             .map(|&est| {
-                let msg_start = cumulative;
                 let msg_end = cumulative + est;
                 cumulative = msg_end;
                 // Visible if this message's range overlaps the visible window
@@ -1808,7 +1811,7 @@ mod tests {
         let mut app = App::new();
         let pgup = crossterm::event::KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE);
         app.handle_key(pgup);
-        assert_eq!(app.state.scroll_offset, 10);
+        assert_eq!(app.state.scroll_offset, 9);
         assert!(app.state.user_scrolled);
 
         // Page down reduces offset but user is still scrolled

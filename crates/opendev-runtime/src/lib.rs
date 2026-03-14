@@ -23,6 +23,7 @@ pub mod gitignore;
 pub mod interrupt;
 pub mod plan_index;
 pub mod plan_names;
+pub mod redaction;
 pub mod session_model;
 pub mod snapshot;
 pub mod sound;
@@ -37,6 +38,7 @@ pub use errors::{ErrorCategory, StructuredError, classify_api_error};
 pub use interrupt::{InterruptToken, InterruptedError};
 pub use plan_index::PlanIndex;
 pub use plan_names::generate_plan_name;
+pub use redaction::redact_secrets;
 pub use session_model::SessionModelManager;
 pub use todo::{TodoItem, TodoManager, TodoStatus, parse_plan_steps, parse_status, strip_markdown};
 

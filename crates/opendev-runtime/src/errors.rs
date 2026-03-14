@@ -50,7 +50,27 @@ pub enum RecoveryStrategy {
 impl RecoveryStrategy {
     /// Serialize the recovery strategy to a JSON value.
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({"type": "unknown"}))
+        match self {
+            RecoveryStrategy::Retry {
+                delay_ms,
+                max_attempts,
+            } => serde_json::json!({
+                "type": "retry",
+                "delay_ms": delay_ms,
+                "max_attempts": max_attempts,
+            }),
+            RecoveryStrategy::FallbackModel(model) => serde_json::json!({
+                "type": "fallback_model",
+                "model": model,
+            }),
+            RecoveryStrategy::ReduceContext => serde_json::json!({
+                "type": "reduce_context",
+            }),
+            RecoveryStrategy::UserIntervention(message) => serde_json::json!({
+                "type": "user_intervention",
+                "message": message,
+            }),
+        }
     }
 }
 

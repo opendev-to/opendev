@@ -20,10 +20,10 @@ pub fn validate_args(
     // Check required fields
     if let Some(required) = schema.get("required").and_then(|r| r.as_array()) {
         for req in required {
-            if let Some(field_name) = req.as_str() {
-                if !args.contains_key(field_name) {
-                    return Err(format!("Missing required parameter: '{field_name}'"));
-                }
+            if let Some(field_name) = req.as_str()
+                && !args.contains_key(field_name)
+            {
+                return Err(format!("Missing required parameter: '{field_name}'"));
             }
         }
     }
@@ -48,12 +48,12 @@ fn validate_value_type(
     prop_schema: &serde_json::Value,
 ) -> Result<(), String> {
     // Check enum constraint
-    if let Some(enum_values) = prop_schema.get("enum").and_then(|e| e.as_array()) {
-        if !enum_values.contains(value) {
-            return Err(format!(
-                "Parameter '{key}' value {value} is not one of the allowed values: {enum_values:?}"
-            ));
-        }
+    if let Some(enum_values) = prop_schema.get("enum").and_then(|e| e.as_array())
+        && !enum_values.contains(value)
+    {
+        return Err(format!(
+            "Parameter '{key}' value {value} is not one of the allowed values: {enum_values:?}"
+        ));
     }
 
     // Check type constraint
@@ -111,10 +111,7 @@ mod tests {
 
     #[test]
     fn test_validate_required_present() {
-        let schema = make_schema(
-            json!({"name": {"type": "string"}}),
-            vec!["name"],
-        );
+        let schema = make_schema(json!({"name": {"type": "string"}}), vec!["name"]);
         let mut args = HashMap::new();
         args.insert("name".into(), json!("hello"));
         assert!(validate_args(&args, &schema).is_ok());
@@ -122,14 +119,15 @@ mod tests {
 
     #[test]
     fn test_validate_required_missing() {
-        let schema = make_schema(
-            json!({"name": {"type": "string"}}),
-            vec!["name"],
-        );
+        let schema = make_schema(json!({"name": {"type": "string"}}), vec!["name"]);
         let args = HashMap::new();
         let result = validate_args(&args, &schema);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Missing required parameter: 'name'"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Missing required parameter: 'name'")
+        );
     }
 
     #[test]
@@ -228,7 +226,11 @@ mod tests {
         args.insert("mode".into(), json!("turbo"));
         let result = validate_args(&args, &schema);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not one of the allowed values"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("not one of the allowed values")
+        );
     }
 
     #[test]
