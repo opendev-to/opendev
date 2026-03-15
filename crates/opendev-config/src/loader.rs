@@ -82,11 +82,20 @@ impl ConfigLoader {
     }
 
     /// Load a config file as a partial JSON value, applying migrations if needed.
+    ///
+    /// Before parsing, applies template variable substitution:
+    /// - `{env:VAR_NAME}` → environment variable value (empty string if unset)
+    /// - `{file:path}` → file contents (supports `~/`, relative, and absolute paths)
     fn load_file(path: &Path) -> Result<serde_json::Value, ConfigError> {
         let content = std::fs::read_to_string(path).map_err(|e| ConfigError::ReadError {
             path: path.display().to_string(),
             source: e,
         })?;
+
+        // Apply template substitutions before parsing
+        let config_dir = path.parent().unwrap_or(Path::new("."));
+        let content = Self::substitute_templates(&content, config_dir);
+
         let value: serde_json::Value =
             serde_json::from_str(&content).map_err(|e| ConfigError::ParseError {
                 path: path.display().to_string(),
@@ -108,6 +117,70 @@ impl ConfigLoader {
         }
 
         Ok(migrated)
+    }
+
+    /// Substitute `{env:VAR}` and `{file:path}` templates in config text.
+    ///
+    /// This runs before JSON parsing, replacing template tokens with their
+    /// resolved values. Follows the same pattern as OpenCode's `substitute()`.
+    fn substitute_templates(text: &str, config_dir: &Path) -> String {
+        let mut result = text.to_string();
+
+        // Process {env:VAR_NAME} tokens
+        while let Some(start) = result.find("{env:") {
+            let rest = &result[start + 5..];
+            if let Some(end) = rest.find('}') {
+                let var_name = &rest[..end];
+                let replacement = std::env::var(var_name).unwrap_or_else(|_| {
+                    debug!("Config template {{env:{var_name}}}: variable not set, using empty string");
+                    String::new()
+                });
+                result.replace_range(start..start + 5 + end + 1, &replacement);
+            } else {
+                break; // Malformed token, stop processing
+            }
+        }
+
+        // Process {file:path} tokens
+        while let Some(start) = result.find("{file:") {
+            let rest = &result[start + 6..];
+            if let Some(end) = rest.find('}') {
+                let file_path = rest[..end].trim();
+
+                let resolved = if file_path.starts_with("~/") {
+                    dirs::home_dir()
+                        .map(|h| h.join(&file_path[2..]))
+                        .unwrap_or_else(|| std::path::PathBuf::from(file_path))
+                } else if Path::new(file_path).is_absolute() {
+                    std::path::PathBuf::from(file_path)
+                } else {
+                    config_dir.join(file_path)
+                };
+
+                let replacement = match std::fs::read_to_string(&resolved) {
+                    Ok(content) => {
+                        let trimmed = content.trim();
+                        // JSON-escape the content since it's inside a JSON string
+                        serde_json::to_string(trimmed)
+                            .map(|s| s[1..s.len() - 1].to_string())
+                            .unwrap_or_else(|_| trimmed.to_string())
+                    }
+                    Err(e) => {
+                        debug!(
+                            "Config template {{file:{file_path}}}: could not read {}: {e}",
+                            resolved.display()
+                        );
+                        String::new()
+                    }
+                };
+
+                result.replace_range(start..start + 6 + end + 1, &replacement);
+            } else {
+                break;
+            }
+        }
+
+        result
     }
 
     /// Merge a partial JSON config onto an existing AppConfig.
@@ -1120,5 +1193,103 @@ mod tests {
         config.max_context_tokens = 100;
         let warnings = ConfigLoader::validate_cross_field(&config);
         assert!(warnings.len() >= 3, "Should have multiple warnings: {:?}", warnings);
+    }
+
+    // --- Template substitution tests ---
+
+    #[test]
+    fn test_substitute_env_variable() {
+        unsafe { std::env::set_var("OPENDEV_TEST_SUB_VAR", "test-value-123") };
+        let input = r#"{"api_key": "{env:OPENDEV_TEST_SUB_VAR}"}"#;
+        let result = ConfigLoader::substitute_templates(input, Path::new("."));
+        assert_eq!(result, r#"{"api_key": "test-value-123"}"#);
+        unsafe { std::env::remove_var("OPENDEV_TEST_SUB_VAR") };
+    }
+
+    #[test]
+    fn test_substitute_env_missing_variable() {
+        let input = r#"{"key": "{env:OPENDEV_NONEXISTENT_9999}"}"#;
+        let result = ConfigLoader::substitute_templates(input, Path::new("."));
+        assert_eq!(result, r#"{"key": ""}"#);
+    }
+
+    #[test]
+    fn test_substitute_file_inclusion() {
+        let tmp = TempDir::new().unwrap();
+        let secret_file = tmp.path().join("secret.txt");
+        std::fs::write(&secret_file, "my-secret-key\n").unwrap();
+
+        let input = format!(
+            r#"{{"api_key": "{{file:{}}}"}}"#,
+            secret_file.display()
+        );
+        let result = ConfigLoader::substitute_templates(&input, Path::new("."));
+        assert_eq!(result, r#"{"api_key": "my-secret-key"}"#);
+    }
+
+    #[test]
+    fn test_substitute_file_relative_path() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("key.txt"), "relative-key").unwrap();
+
+        let input = r#"{"api_key": "{file:key.txt}"}"#;
+        let result = ConfigLoader::substitute_templates(input, tmp.path());
+        assert_eq!(result, r#"{"api_key": "relative-key"}"#);
+    }
+
+    #[test]
+    fn test_substitute_file_missing() {
+        let input = r#"{"api_key": "{file:/nonexistent/path/to/file.txt}"}"#;
+        let result = ConfigLoader::substitute_templates(input, Path::new("."));
+        assert_eq!(result, r#"{"api_key": ""}"#);
+    }
+
+    #[test]
+    fn test_substitute_multiple_tokens() {
+        unsafe { std::env::set_var("OPENDEV_TEST_MULTI_A", "val-a") };
+        unsafe { std::env::set_var("OPENDEV_TEST_MULTI_B", "val-b") };
+        let input = r#"{"a": "{env:OPENDEV_TEST_MULTI_A}", "b": "{env:OPENDEV_TEST_MULTI_B}"}"#;
+        let result = ConfigLoader::substitute_templates(input, Path::new("."));
+        assert_eq!(result, r#"{"a": "val-a", "b": "val-b"}"#);
+        unsafe { std::env::remove_var("OPENDEV_TEST_MULTI_A") };
+        unsafe { std::env::remove_var("OPENDEV_TEST_MULTI_B") };
+    }
+
+    #[test]
+    fn test_substitute_no_tokens() {
+        let input = r#"{"model": "gpt-4", "temperature": 0.7}"#;
+        let result = ConfigLoader::substitute_templates(input, Path::new("."));
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_substitute_file_with_special_chars() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("special.txt");
+        std::fs::write(&file, "value with \"quotes\" and\nnewlines").unwrap();
+
+        let input = format!(r#"{{"data": "{{file:{}}}"}}"#, file.display());
+        let result = ConfigLoader::substitute_templates(&input, Path::new("."));
+        // Should be JSON-escaped
+        assert!(result.contains(r#"value with \"quotes\" and\nnewlines"#));
+    }
+
+    #[test]
+    fn test_substitute_env_then_load() {
+        let tmp = TempDir::new().unwrap();
+        unsafe { std::env::set_var("OPENDEV_TEST_PROVIDER_SUB", "anthropic") };
+
+        let config_file = tmp.path().join("config.json");
+        std::fs::write(
+            &config_file,
+            r#"{"model_provider": "{env:OPENDEV_TEST_PROVIDER_SUB}"}"#,
+        )
+        .unwrap();
+
+        let empty = tmp.path().join("empty.json");
+        let config = ConfigLoader::load(&config_file, &empty).unwrap();
+        assert_eq!(config.model_provider, "anthropic");
+
+        unsafe { std::env::remove_var("OPENDEV_TEST_PROVIDER_SUB") };
     }
 }
