@@ -366,6 +366,14 @@ impl BaseTool for SpawnSubagentTool {
             None => return ToolResult::fail("Missing required parameter: task"),
         };
 
+        // Prevent recursive subagent spawning (subagents spawning subagents).
+        if ctx.is_subagent {
+            return ToolResult::fail(
+                "Subagents cannot spawn other subagents. Complete your task directly \
+                 using the tools available to you.",
+            );
+        }
+
         let task_id = args.get("task_id").and_then(|v| v.as_str());
 
         info!(
@@ -423,7 +431,21 @@ impl BaseTool for SpawnSubagentTool {
                 );
 
                 let mut output = format!("task_id: {child_session_id} (for resuming)\n\n");
-                output.push_str(&run_result.agent_result.content);
+
+                // Cap subagent result size to prevent context bloat (50 KB max).
+                const MAX_SUBAGENT_OUTPUT: usize = 50 * 1024;
+                let content = &run_result.agent_result.content;
+                if content.len() > MAX_SUBAGENT_OUTPUT {
+                    let half = MAX_SUBAGENT_OUTPUT / 2;
+                    output.push_str(&content[..half]);
+                    output.push_str(&format!(
+                        "\n\n[...truncated {} chars of subagent output...]\n\n",
+                        content.len() - MAX_SUBAGENT_OUTPUT
+                    ));
+                    output.push_str(&content[content.len() - half..]);
+                } else {
+                    output.push_str(content);
+                }
 
                 // Append shallow subagent warning if applicable
                 if let Some(ref warning) = run_result.shallow_warning {
@@ -691,5 +713,38 @@ mod tests {
         assert!(matches!(evt, SubagentEvent::ToolComplete { .. }));
         let evt = rx.recv().await.unwrap();
         assert!(matches!(evt, SubagentEvent::Finished { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_subagent_blocked_in_subagent_context() {
+        let manager = Arc::new(opendev_agents::SubagentManager::new());
+        let registry = Arc::new(opendev_tools_core::ToolRegistry::new());
+        let raw = opendev_http::HttpClient::new(
+            "https://api.example.com/v1/chat/completions",
+            reqwest::header::HeaderMap::new(),
+            None,
+        )
+        .unwrap();
+        let http = Arc::new(opendev_http::AdaptedClient::new(raw));
+        let tool = SpawnSubagentTool::new(
+            manager,
+            registry,
+            http,
+            PathBuf::from("/tmp"),
+            "gpt-4o",
+            "/tmp",
+        );
+
+        // Simulate being called from within a subagent context
+        let mut ctx = ToolContext::new("/tmp");
+        ctx.is_subagent = true;
+
+        let mut args = HashMap::new();
+        args.insert("agent_type".into(), serde_json::json!("code_explorer"));
+        args.insert("task".into(), serde_json::json!("explore code"));
+
+        let result = tool.execute(args, &ctx).await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("cannot spawn other subagents"));
     }
 }

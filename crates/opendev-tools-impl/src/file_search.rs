@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 use tokio::process::Command;
 
-use crate::path_utils::resolve_dir_path;
+use crate::path_utils::{resolve_dir_path, validate_path_access};
 
 /// Default directories to exclude from search and file listing.
 /// Covers 20+ programming languages and ecosystems.
@@ -459,6 +459,10 @@ impl BaseTool for FileSearchTool {
             .as_deref()
             .map(|p| resolve_dir_path(p, &ctx.working_dir))
             .unwrap_or_else(|| ctx.working_dir.clone());
+
+        if let Err(msg) = validate_path_access(&search_path, &ctx.working_dir) {
+            return ToolResult::fail(msg);
+        }
 
         if !search_path.exists() {
             return ToolResult::fail(format!("Path not found: {}", search_path.display()));
@@ -1340,11 +1344,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_path_not_found() {
+        let dir = TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = FileSearchTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
         let args = make_args(&[
             ("pattern", serde_json::json!("x")),
-            ("path", serde_json::json!("/nonexistent/path/xyz")),
+            ("path", serde_json::json!(dir_path.join("nonexistent").to_str().unwrap())),
         ]);
 
         let result = tool.execute(args, &ctx).await;

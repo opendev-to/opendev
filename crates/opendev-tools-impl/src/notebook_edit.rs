@@ -8,6 +8,8 @@
 //! Cells can be identified by cell_id (preferred) or cell_number (0-indexed).
 
 use std::collections::HashMap;
+
+use crate::path_utils::{resolve_file_path, validate_path_access};
 use std::path::PathBuf;
 
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
@@ -86,14 +88,11 @@ impl BaseTool for NotebookEditTool {
             .unwrap_or("replace");
 
         // Resolve path
-        let path = {
-            let p = PathBuf::from(notebook_path);
-            if p.is_absolute() {
-                p
-            } else {
-                ctx.working_dir.join(p)
-            }
-        };
+        let path = resolve_file_path(notebook_path, &ctx.working_dir);
+
+        if let Err(msg) = validate_path_access(&path, &ctx.working_dir) {
+            return ToolResult::fail(msg);
+        }
 
         // Validate
         if !path.exists() {
@@ -443,9 +442,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_notebook_edit_file_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = NotebookEditTool;
-        let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("notebook_path", serde_json::json!("/tmp/nonexistent.ipynb"))]);
+        let ctx = ToolContext::new(&dir_path);
+        let args = make_args(&[("notebook_path", serde_json::json!(dir_path.join("nonexistent.ipynb").to_str().unwrap()))]);
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));
@@ -453,26 +454,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_notebook_edit_not_ipynb() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = NotebookEditTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
 
-        let path = std::env::temp_dir().join("test_not_notebook.txt");
+        let path = dir_path.join("test_not_notebook.txt");
         std::fs::write(&path, "not a notebook").unwrap();
 
         let args = make_args(&[("notebook_path", serde_json::json!(path.to_string_lossy()))]);
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Not a Jupyter notebook"));
-
-        std::fs::remove_file(&path).ok();
     }
 
     #[tokio::test]
     async fn test_notebook_edit_replace() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = NotebookEditTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
 
-        let path = std::env::temp_dir().join("test_replace.ipynb");
+        let path = dir_path.join("test_replace.ipynb");
         let nb = sample_notebook();
         std::fs::write(&path, serde_json::to_string_pretty(&nb).unwrap()).unwrap();
 
@@ -492,16 +495,16 @@ mod tests {
         let cells = saved.get("cells").unwrap().as_array().unwrap();
         let source = cells[0].get("source").unwrap().as_array().unwrap();
         assert_eq!(source[0], "print('world')");
-
-        std::fs::remove_file(&path).ok();
     }
 
     #[tokio::test]
     async fn test_notebook_edit_insert() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = NotebookEditTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
 
-        let path = std::env::temp_dir().join("test_insert.ipynb");
+        let path = dir_path.join("test_insert.ipynb");
         let nb = sample_notebook();
         std::fs::write(&path, serde_json::to_string_pretty(&nb).unwrap()).unwrap();
 
@@ -521,16 +524,16 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let cells = saved.get("cells").unwrap().as_array().unwrap();
         assert_eq!(cells.len(), 3);
-
-        std::fs::remove_file(&path).ok();
     }
 
     #[tokio::test]
     async fn test_notebook_edit_delete() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = NotebookEditTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
 
-        let path = std::env::temp_dir().join("test_delete.ipynb");
+        let path = dir_path.join("test_delete.ipynb");
         let nb = sample_notebook();
         std::fs::write(&path, serde_json::to_string_pretty(&nb).unwrap()).unwrap();
 
@@ -548,7 +551,5 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let cells = saved.get("cells").unwrap().as_array().unwrap();
         assert_eq!(cells.len(), 1);
-
-        std::fs::remove_file(&path).ok();
     }
 }

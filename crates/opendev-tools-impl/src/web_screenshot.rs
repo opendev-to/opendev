@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::path_utils::{resolve_file_path, validate_path_access};
+
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
 /// Tool for capturing web page screenshots.
@@ -169,12 +171,11 @@ async fn capture_screenshot(
     // Determine output path
     let dest = match output_path {
         Some(p) => {
-            let path = PathBuf::from(p);
-            if path.is_absolute() {
-                path
-            } else {
-                ctx.working_dir.join(path)
+            let resolved = resolve_file_path(p, &ctx.working_dir);
+            if let Err(msg) = validate_path_access(&resolved, &ctx.working_dir) {
+                return ToolResult::fail(msg);
             }
+            resolved
         }
         None => generate_output_path(&url),
     };

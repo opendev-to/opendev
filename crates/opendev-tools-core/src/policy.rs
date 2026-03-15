@@ -36,12 +36,7 @@ fn tool_groups() -> HashMap<&'static str, HashSet<&'static str>> {
         ]),
     );
 
-    groups.insert(
-        "group:process",
-        HashSet::from([
-            "run_command",
-        ]),
-    );
+    groups.insert("group:process", HashSet::from(["run_command"]));
 
     groups.insert(
         "group:web",

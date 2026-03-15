@@ -9,6 +9,7 @@ use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
 use crate::edit_replacers;
 use crate::formatter;
+use crate::path_utils::{resolve_file_path, validate_path_access};
 
 // ---------------------------------------------------------------------------
 // Per-file locking: serialize concurrent edits to the same file.
@@ -72,7 +73,7 @@ impl BaseTool for FileEditTool {
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> ToolResult {
         let file_path = match args.get("file_path").and_then(|v| v.as_str()) {
             Some(p) => p,
@@ -95,16 +96,21 @@ impl BaseTool for FileEditTool {
             return ToolResult::fail("old_string and new_string are identical");
         }
 
-        let path = Path::new(file_path);
+        let path = resolve_file_path(file_path, &ctx.working_dir);
+
+        if let Err(msg) = validate_path_access(&path, &ctx.working_dir) {
+            return ToolResult::fail(msg);
+        }
+
         if !path.exists() {
             return ToolResult::fail(format!("File not found: {file_path}"));
         }
 
         // Acquire per-file lock
-        let lock = get_file_lock(path);
+        let lock = get_file_lock(&path);
         let _guard = lock.lock().unwrap();
 
-        let content = match std::fs::read_to_string(path) {
+        let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => return ToolResult::fail(format!("Failed to read file: {e}")),
         };
@@ -166,7 +172,7 @@ impl BaseTool for FileEditTool {
         }
 
         // Auto-format if a formatter is available
-        let formatted = formatter::format_file(file_path, &_ctx.working_dir);
+        let formatted = formatter::format_file(file_path, &ctx.working_dir);
 
         let replacements = if replace_all { count } else { 1 };
 

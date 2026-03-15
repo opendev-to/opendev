@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
+use crate::path_utils::validate_path_access;
+
 /// Supported image file extensions and their MIME types.
 const IMAGE_MIME_TYPES: &[(&str, &str)] = &[
     ("jpg", "image/jpeg"),
@@ -112,6 +114,10 @@ impl BaseTool for VlmTool {
                     ctx.working_dir.join(p)
                 }
             };
+
+            if let Err(msg) = validate_path_access(&path, &ctx.working_dir) {
+                return ToolResult::fail(msg);
+            }
 
             if !path.exists() {
                 return ToolResult::fail(format!("Image file not found: {path_str}"));
@@ -327,12 +333,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_vlm_unsupported_provider() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = VlmTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
 
-        // Create a dummy image file
-        let img_path = std::env::temp_dir().join("test_vlm.png");
-        std::fs::write(&img_path, &[0x89, 0x50, 0x4E, 0x47]).unwrap(); // PNG magic bytes
+        let img_path = dir_path.join("test_vlm.png");
+        std::fs::write(&img_path, &[0x89, 0x50, 0x4E, 0x47]).unwrap();
 
         let args = make_args(&[
             ("prompt", serde_json::json!("Describe")),
@@ -342,16 +349,16 @@ mod tests {
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Unsupported provider"));
-
-        std::fs::remove_file(&img_path).ok();
     }
 
     #[tokio::test]
     async fn test_vlm_anthropic_not_supported() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = VlmTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
 
-        let img_path = std::env::temp_dir().join("test_vlm_anthropic.png");
+        let img_path = dir_path.join("test_vlm_anthropic.png");
         std::fs::write(&img_path, &[0x89, 0x50, 0x4E, 0x47]).unwrap();
 
         let args = make_args(&[
@@ -362,16 +369,16 @@ mod tests {
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("different request format"));
-
-        std::fs::remove_file(&img_path).ok();
     }
 
     #[tokio::test]
     async fn test_vlm_no_api_key() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = VlmTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
 
-        let img_path = std::env::temp_dir().join("test_vlm_nokey.png");
+        let img_path = dir_path.join("test_vlm_nokey.png");
         std::fs::write(&img_path, &[0x89, 0x50, 0x4E, 0x47]).unwrap();
 
         // Ensure no API key is set
@@ -386,7 +393,5 @@ mod tests {
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("API key not found"));
-
-        std::fs::remove_file(&img_path).ok();
     }
 }

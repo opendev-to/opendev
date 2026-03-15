@@ -1,7 +1,12 @@
 //! Tool result sanitization — truncates large outputs before they enter LLM context.
+//!
+//! When a tool's output exceeds its truncation limit, the full output is saved
+//! to an overflow file under `<data_dir>/tool-output/` for later retrieval via
+//! `read_file` with offset/limit. Files are retained for 7 days.
 
 use std::collections::HashMap;
-use tracing::debug;
+use std::path::{Path, PathBuf};
+use tracing::{debug, warn};
 
 /// Truncation strategy for a tool's output.
 #[derive(Debug, Clone)]
@@ -71,6 +76,9 @@ fn default_rules() -> HashMap<String, TruncationRule> {
     rules
 }
 
+/// Maximum age for overflow files (7 days).
+const OVERFLOW_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
+
 /// Sanitizes tool results by applying truncation rules.
 ///
 /// Integrates as a single pass before results enter the message history,
@@ -78,14 +86,25 @@ fn default_rules() -> HashMap<String, TruncationRule> {
 #[derive(Debug)]
 pub struct ToolResultSanitizer {
     rules: HashMap<String, TruncationRule>,
+    /// Directory for overflow files. If set, full output is saved when truncated.
+    overflow_dir: Option<PathBuf>,
 }
 
 impl ToolResultSanitizer {
-    /// Create with default rules.
+    /// Create with default rules and no overflow storage.
     pub fn new() -> Self {
         Self {
             rules: default_rules(),
+            overflow_dir: None,
         }
+    }
+
+    /// Create with overflow storage enabled.
+    ///
+    /// When output is truncated, the full output is saved to `overflow_dir/tool_<timestamp>.txt`.
+    pub fn with_overflow_dir(mut self, dir: PathBuf) -> Self {
+        self.overflow_dir = Some(dir);
+        self
     }
 
     /// Create with custom per-tool character limit overrides.
@@ -106,13 +125,17 @@ impl ToolResultSanitizer {
                 rules.insert(tool_name, TruncationRule::head(max_chars));
             }
         }
-        Self { rules }
+        Self {
+            rules,
+            overflow_dir: None,
+        }
     }
 
     /// Sanitize a tool result, truncating output if needed.
     ///
     /// Takes `success`, `output`, and `error` fields. Returns potentially
-    /// truncated versions. The original strings are not mutated.
+    /// truncated versions. When truncated and an overflow directory is
+    /// configured, the full output is saved to disk with a retrieval hint.
     pub fn sanitize(
         &self,
         tool_name: &str,
@@ -133,6 +156,7 @@ impl ToolResultSanitizer {
                 output: output.map(String::from),
                 error: truncated_error,
                 was_truncated: false,
+                overflow_path: None,
             };
         }
 
@@ -143,6 +167,7 @@ impl ToolResultSanitizer {
                     output: output.map(String::from),
                     error: error.map(String::from),
                     was_truncated: false,
+                    overflow_path: None,
                 };
             }
         };
@@ -154,6 +179,7 @@ impl ToolResultSanitizer {
                     output: Some(output_str.to_string()),
                     error: None,
                     was_truncated: false,
+                    overflow_path: None,
                 };
             }
         };
@@ -163,6 +189,7 @@ impl ToolResultSanitizer {
                 output: Some(output_str.to_string()),
                 error: None,
                 was_truncated: false,
+                overflow_path: None,
             };
         }
 
@@ -174,18 +201,31 @@ impl ToolResultSanitizer {
             TruncationStrategy::HeadTail { .. } => "head_tail",
         };
 
-        let marker = format!(
+        // Save full output to overflow file if configured.
+        let overflow_path = self.save_overflow(tool_name, output_str);
+
+        let mut marker = format!(
             "\n\n[truncated: showing {} of {} chars, strategy={}]",
             truncated.len(),
             original_len,
             strategy_name
         );
 
+        // Add retrieval hint with overflow path.
+        if let Some(ref path) = overflow_path {
+            marker.push_str(&format!(
+                "\nFull output saved to: {}\n\
+                 Use read_file with offset/limit or search to access specific sections.",
+                path.display()
+            ));
+        }
+
         debug!(
             tool = tool_name,
             original = original_len,
             truncated = truncated.len(),
             strategy = strategy_name,
+            overflow = ?overflow_path,
             "Truncated tool result"
         );
 
@@ -193,6 +233,7 @@ impl ToolResultSanitizer {
             output: Some(format!("{truncated}{marker}")),
             error: None,
             was_truncated: true,
+            overflow_path,
         }
     }
 
@@ -226,20 +267,113 @@ impl ToolResultSanitizer {
                 let rule = mcp_default_rule();
                 if output_str.len() > rule.max_chars {
                     let truncated = apply_strategy(output_str, &rule);
-                    let marker = format!(
+                    let overflow_path = self.save_overflow(tool_name, output_str);
+                    let mut marker = format!(
                         "\n\n[truncated: showing {} of {} chars, strategy=head]",
                         truncated.len(),
                         output_str.len()
                     );
+                    if let Some(ref path) = overflow_path {
+                        marker.push_str(&format!(
+                            "\nFull output saved to: {}\n\
+                             Use read_file with offset/limit or search to access specific sections.",
+                            path.display()
+                        ));
+                    }
                     return SanitizedResult {
                         output: Some(format!("{truncated}{marker}")),
                         error: None,
                         was_truncated: true,
+                        overflow_path,
                     };
                 }
             }
         }
         self.sanitize(tool_name, success, output, error)
+    }
+
+    /// Save full output to an overflow file. Returns the path if successful.
+    fn save_overflow(&self, tool_name: &str, content: &str) -> Option<PathBuf> {
+        let dir = self.overflow_dir.as_ref()?;
+
+        // Ensure directory exists.
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            warn!(error = %e, "Failed to create overflow directory");
+            return None;
+        }
+
+        // Generate a unique filename with embedded timestamp for cleanup.
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let safe_name = tool_name.replace(['/', '\\', ':'], "_");
+        let filename = format!("tool_{timestamp}_{safe_name}.txt");
+        let path = dir.join(&filename);
+
+        match std::fs::write(&path, content) {
+            Ok(()) => {
+                debug!(
+                    path = %path.display(),
+                    bytes = content.len(),
+                    "Saved overflow output"
+                );
+                Some(path)
+            }
+            Err(e) => {
+                warn!(error = %e, path = %path.display(), "Failed to save overflow output");
+                None
+            }
+        }
+    }
+
+    /// Clean up overflow files older than 7 days.
+    ///
+    /// Call periodically (e.g., at startup or on a timer) to prevent
+    /// unbounded disk usage from accumulated overflow files.
+    pub fn cleanup_overflow(&self) {
+        let Some(dir) = self.overflow_dir.as_ref() else {
+            return;
+        };
+        cleanup_overflow_dir(dir);
+    }
+}
+
+/// Remove overflow files older than [`OVERFLOW_RETENTION_SECS`] from the given directory.
+pub fn cleanup_overflow_dir(dir: &Path) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let now = std::time::SystemTime::now();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        // Extract timestamp from filename: tool_<timestamp>_<name>.txt
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if let Some(ts_str) = stem.strip_prefix("tool_")
+            && let Some(ts_end) = ts_str.find('_')
+            && let Ok(ts) = ts_str[..ts_end].parse::<u64>()
+        {
+            let file_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts);
+            if let Ok(age) = now.duration_since(file_time)
+                && age.as_secs() > OVERFLOW_RETENTION_SECS
+                && let Err(e) = std::fs::remove_file(&path)
+            {
+                debug!(
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to remove old overflow file"
+                );
+            }
+        }
     }
 }
 
@@ -255,6 +389,9 @@ pub struct SanitizedResult {
     pub output: Option<String>,
     pub error: Option<String>,
     pub was_truncated: bool,
+    /// Path to the overflow file containing the full untruncated output.
+    /// Set only when `was_truncated` is true and overflow storage succeeded.
+    pub overflow_path: Option<PathBuf>,
 }
 
 /// Apply a truncation strategy to text.
@@ -419,5 +556,80 @@ mod tests {
         assert!(result.starts_with("abc"));
         assert!(result.ends_with("hij"));
         assert!(result.contains("[middle truncated]"));
+    }
+
+    // ---- Overflow storage ----
+
+    #[test]
+    fn test_overflow_saved_on_truncation() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let overflow_dir = tmp.path().join("tool-output");
+        let sanitizer = ToolResultSanitizer::new().with_overflow_dir(overflow_dir.clone());
+
+        let long_output = "x".repeat(20000);
+        let result = sanitizer.sanitize("read_file", true, Some(&long_output), None);
+
+        assert!(result.was_truncated);
+        assert!(result.overflow_path.is_some());
+        let path = result.overflow_path.unwrap();
+        assert!(path.exists());
+
+        // Full output should be in the file.
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(saved.len(), 20000);
+
+        // Truncated output should contain the hint.
+        let output = result.output.unwrap();
+        assert!(output.contains("Full output saved to:"));
+        assert!(output.contains("read_file with offset/limit"));
+    }
+
+    #[test]
+    fn test_no_overflow_without_dir() {
+        let sanitizer = ToolResultSanitizer::new();
+        let long_output = "x".repeat(20000);
+        let result = sanitizer.sanitize("read_file", true, Some(&long_output), None);
+        assert!(result.was_truncated);
+        assert!(result.overflow_path.is_none());
+    }
+
+    #[test]
+    fn test_no_overflow_when_not_truncated() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let overflow_dir = tmp.path().join("tool-output");
+        let sanitizer = ToolResultSanitizer::new().with_overflow_dir(overflow_dir);
+
+        let result = sanitizer.sanitize("read_file", true, Some("short"), None);
+        assert!(!result.was_truncated);
+        assert!(result.overflow_path.is_none());
+    }
+
+    #[test]
+    fn test_cleanup_overflow_removes_old_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let overflow_dir = tmp.path().join("tool-output");
+        std::fs::create_dir_all(&overflow_dir).unwrap();
+
+        // Create an "old" file with a timestamp 8 days ago.
+        let old_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 8 * 24 * 60 * 60;
+        let old_file = overflow_dir.join(format!("tool_{old_ts}_read_file.txt"));
+        std::fs::write(&old_file, "old content").unwrap();
+
+        // Create a "recent" file.
+        let recent_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let recent_file = overflow_dir.join(format!("tool_{recent_ts}_search.txt"));
+        std::fs::write(&recent_file, "recent content").unwrap();
+
+        cleanup_overflow_dir(&overflow_dir);
+
+        assert!(!old_file.exists(), "Old file should be removed");
+        assert!(recent_file.exists(), "Recent file should be kept");
     }
 }

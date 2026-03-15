@@ -10,6 +10,7 @@ opendev-tools-core = { workspace = true }
 opendev-models = { workspace = true }
 opendev-config = { workspace = true }
 opendev-http = { workspace = true }
+opendev-mcp = { workspace = true }
 opendev-history = { workspace = true }
 opendev-context = { workspace = true }
 opendev-agents = { workspace = true }

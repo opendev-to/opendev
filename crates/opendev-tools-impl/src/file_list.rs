@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::path_utils::{resolve_dir_path, validate_path_access};
+
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
 use crate::file_search::{DEFAULT_SEARCH_EXCLUDE_GLOBS, DEFAULT_SEARCH_EXCLUDES};
@@ -83,20 +85,17 @@ impl BaseTool for FileListTool {
         let base_dir = args
             .get("path")
             .and_then(|v| v.as_str())
-            .map(|p| {
-                let path = Path::new(p);
-                if path.is_absolute() {
-                    path.to_path_buf()
-                } else {
-                    ctx.working_dir.join(path)
-                }
-            })
+            .map(|p| resolve_dir_path(p, &ctx.working_dir))
             .unwrap_or_else(|| ctx.working_dir.clone());
 
         let max_depth = args
             .get("max_depth")
             .and_then(|v| v.as_u64())
             .map(|v| v as usize);
+
+        if let Err(msg) = validate_path_access(&base_dir, &ctx.working_dir) {
+            return ToolResult::fail(msg);
+        }
 
         if !base_dir.exists() {
             return ToolResult::fail(format!("Directory not found: {}", base_dir.display()));

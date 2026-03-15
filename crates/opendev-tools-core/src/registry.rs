@@ -74,6 +74,20 @@ impl ToolRegistry {
         }
     }
 
+    /// Create a registry with overflow storage for truncated tool output.
+    ///
+    /// When a tool's output exceeds its truncation limit, the full output is
+    /// saved to `overflow_dir` for later retrieval. Files are retained for 7 days.
+    pub fn with_overflow_dir(overflow_dir: std::path::PathBuf) -> Self {
+        Self {
+            tools: RwLock::new(HashMap::new()),
+            middleware: RwLock::new(Vec::new()),
+            tool_timeouts: RwLock::new(HashMap::new()),
+            dedup_cache: Mutex::new(HashMap::new()),
+            sanitizer: ToolResultSanitizer::new().with_overflow_dir(overflow_dir),
+        }
+    }
+
     /// Register a tool. Replaces any existing tool with the same name.
     pub fn register(&self, tool: Arc<dyn BaseTool>) {
         let name = tool.name().to_string();

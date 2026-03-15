@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
-use crate::path_utils::resolve_file_path;
+use crate::path_utils::{resolve_file_path, validate_path_access};
 
 /// Tool for reading file contents.
 #[derive(Debug)]
@@ -19,6 +19,9 @@ impl FileReadTool {
 
     /// Maximum line length before truncation.
     const MAX_LINE_LENGTH: usize = 2000;
+
+    /// Maximum output size in bytes (50 KB) to prevent context bloat.
+    const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 
     /// Read directory entries, sorted alphabetically with `/` suffix for subdirs.
     fn read_directory(
@@ -130,6 +133,10 @@ impl BaseTool for FileReadTool {
 
         let path = resolve_file_path(file_path, &ctx.working_dir);
 
+        if let Err(msg) = validate_path_access(&path, &ctx.working_dir) {
+            return ToolResult::fail(msg);
+        }
+
         if !path.exists() {
             return ToolResult::fail(file_not_found_message(file_path, &path));
         }
@@ -160,7 +167,7 @@ impl BaseTool for FileReadTool {
         // Check for binary content
         match std::fs::read(&path) {
             Ok(bytes) => {
-                if is_binary(&bytes) {
+                if is_binary_file(&path, &bytes) {
                     return ToolResult::fail(format!(
                         "Binary file detected: {file_path} ({} bytes). Use a specialized tool for binary files.",
                         bytes.len()
@@ -182,19 +189,44 @@ impl BaseTool for FileReadTool {
                 }
 
                 let mut output = String::new();
+                let mut output_bytes: usize = 0;
+                let mut lines_emitted: usize = 0;
+                let mut byte_truncated = false;
+
                 for (i, line) in lines[start..end].iter().enumerate() {
                     let line_num = start + i + 1;
-                    let truncated = if line.len() > Self::MAX_LINE_LENGTH {
+                    let truncated_line = if line.len() > Self::MAX_LINE_LENGTH {
                         format!("{}...", &line[..Self::MAX_LINE_LENGTH])
                     } else {
                         line.to_string()
                     };
-                    output.push_str(&format!("{line_num:>6}\t{truncated}\n"));
+                    let formatted = format!("{line_num:>6}\t{truncated_line}\n");
+                    let line_bytes = formatted.len();
+
+                    if output_bytes + line_bytes > Self::MAX_OUTPUT_BYTES {
+                        byte_truncated = true;
+                        break;
+                    }
+
+                    output.push_str(&formatted);
+                    output_bytes += line_bytes;
+                    lines_emitted += 1;
+                }
+
+                if byte_truncated {
+                    let remaining = end - start - lines_emitted;
+                    output.push_str(&format!(
+                        "\n[...truncated: {remaining} more lines not shown (output exceeded {} KB limit). Use offset/limit to read specific sections.]\n",
+                        Self::MAX_OUTPUT_BYTES / 1024
+                    ));
                 }
 
                 let mut metadata = HashMap::new();
                 metadata.insert("total_lines".into(), serde_json::json!(total_lines));
-                metadata.insert("lines_shown".into(), serde_json::json!(end - start));
+                metadata.insert("lines_shown".into(), serde_json::json!(lines_emitted));
+                if byte_truncated {
+                    metadata.insert("truncated".into(), serde_json::json!(true));
+                }
 
                 ToolResult::ok_with_metadata(output, metadata)
             }
@@ -247,11 +279,73 @@ fn file_not_found_message(display_path: &str, resolved: &std::path::Path) -> Str
     msg
 }
 
-/// Check if content appears to be binary by looking for null bytes
-/// in the first 8192 bytes.
+/// Known binary file extensions (fast path to avoid reading content).
+const BINARY_EXTENSIONS: &[&str] = &[
+    // Archives & compressed
+    "zip", "gz", "tar", "bz2", "xz", "7z", "rar", "zst", "lz4",
+    // Images
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tiff", "tif", "avif", "heic",
+    // Audio/Video
+    "mp3", "mp4", "wav", "ogg", "flac", "avi", "mkv", "mov", "webm",
+    // Executables & libraries
+    "exe", "dll", "so", "dylib", "o", "a", "lib", "class",
+    // Compiled/bytecode
+    "pyc", "pyo", "wasm", "beam",
+    // Databases
+    "db", "sqlite", "sqlite3",
+    // Documents (binary)
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+    // Fonts
+    "ttf", "otf", "woff", "woff2", "eot",
+    // Other binary
+    "bin", "dat", "pak", "jar", "war", "egg",
+    // Serialized data
+    "pb", "protobuf", "flatbuf", "msgpack",
+    // Lock files (often large, not useful)
+    "lock",
+];
+
+/// Check if a file is likely binary, first by extension, then by content inspection.
+fn is_binary_file(path: &std::path::Path, bytes: &[u8]) -> bool {
+    // Fast path: check extension
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        let ext_lower = ext.to_ascii_lowercase();
+        if BINARY_EXTENSIONS.contains(&ext_lower.as_str()) {
+            return true;
+        }
+    }
+    // Content-based: check for null bytes in first 8 KB
+    is_binary(bytes)
+}
+
+/// Check if content appears to be binary.
+///
+/// Uses two heuristics (matching OpenCode's approach):
+/// 1. Null bytes in the first 8KB → definitely binary.
+/// 2. More than 30% non-printable characters → likely binary.
+///
+/// Non-printable is defined as bytes < 9 or (> 13 and < 32), excluding
+/// tab (9), newline (10), carriage return (13).
 fn is_binary(bytes: &[u8]) -> bool {
     let check_len = bytes.len().min(8192);
-    bytes[..check_len].contains(&0)
+    if check_len == 0 {
+        return false;
+    }
+    let sample = &bytes[..check_len];
+
+    // Check for null bytes (fast path)
+    if sample.contains(&0) {
+        return true;
+    }
+
+    // Check non-printable character ratio
+    let non_printable = sample
+        .iter()
+        .filter(|&&b| b < 9 || (b > 13 && b < 32))
+        .count();
+
+    let ratio = non_printable as f64 / check_len as f64;
+    ratio > 0.3
 }
 
 #[cfg(test)]
@@ -270,14 +364,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_file_basic() {
-        let mut tmp = NamedTempFile::new().unwrap();
-        writeln!(tmp, "line one").unwrap();
-        writeln!(tmp, "line two").unwrap();
-        writeln!(tmp, "line three").unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
+        let file = dir_path.join("test.txt");
+        std::fs::write(&file, "line one\nline two\nline three\n").unwrap();
 
         let tool = FileReadTool;
-        let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("file_path", serde_json::json!(tmp.path().to_str().unwrap()))]);
+        let ctx = ToolContext::new(&dir_path);
+        let args = make_args(&[("file_path", serde_json::json!(file.to_str().unwrap()))]);
         let result = tool.execute(args, &ctx).await;
 
         assert!(result.success);
@@ -289,15 +383,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_file_with_offset_and_limit() {
-        let mut tmp = NamedTempFile::new().unwrap();
-        for i in 1..=10 {
-            writeln!(tmp, "line {i}").unwrap();
-        }
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
+        let file = dir_path.join("lines.txt");
+        let content: String = (1..=10).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(&file, content).unwrap();
 
         let tool = FileReadTool;
-        let ctx = ToolContext::new("/tmp");
+        let ctx = ToolContext::new(&dir_path);
         let args = make_args(&[
-            ("file_path", serde_json::json!(tmp.path().to_str().unwrap())),
+            ("file_path", serde_json::json!(file.to_str().unwrap())),
             ("offset", serde_json::json!(3)),
             ("limit", serde_json::json!(2)),
         ]);
@@ -312,9 +407,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_file_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
         let tool = FileReadTool;
-        let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("file_path", serde_json::json!("/nonexistent/file.txt"))]);
+        let ctx = ToolContext::new(&dir_path);
+        let args = make_args(&[("file_path", serde_json::json!(dir_path.join("nonexistent.txt").to_str().unwrap()))]);
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));
@@ -322,12 +419,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_binary_file() {
-        let mut tmp = NamedTempFile::new().unwrap();
-        tmp.write_all(&[0u8, 1, 2, 3, 0, 5]).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let dir_path = dir.path().canonicalize().unwrap();
+        let file = dir_path.join("binary.bin");
+        std::fs::write(&file, &[0u8, 1, 2, 3, 0, 5]).unwrap();
 
         let tool = FileReadTool;
-        let ctx = ToolContext::new("/tmp");
-        let args = make_args(&[("file_path", serde_json::json!(tmp.path().to_str().unwrap()))]);
+        let ctx = ToolContext::new(&dir_path);
+        let args = make_args(&[("file_path", serde_json::json!(file.to_str().unwrap()))]);
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("Binary"));
@@ -345,6 +444,46 @@ mod tests {
     fn test_is_binary() {
         assert!(is_binary(&[0u8, 1, 2]));
         assert!(!is_binary(b"hello world\n"));
+    }
+
+    #[test]
+    fn test_is_binary_file_by_extension() {
+        let path = std::path::Path::new("image.png");
+        assert!(is_binary_file(path, b"this is actually text"));
+
+        let path = std::path::Path::new("archive.zip");
+        assert!(is_binary_file(path, b"text content"));
+
+        let path = std::path::Path::new("data.sqlite3");
+        assert!(is_binary_file(path, b"text content"));
+    }
+
+    #[test]
+    fn test_is_binary_file_case_insensitive() {
+        let path = std::path::Path::new("image.PNG");
+        assert!(is_binary_file(path, b"text"));
+
+        let path = std::path::Path::new("image.Jpg");
+        assert!(is_binary_file(path, b"text"));
+    }
+
+    #[test]
+    fn test_is_binary_file_text_extensions_use_content() {
+        // .rs file with no null bytes = not binary
+        let path = std::path::Path::new("main.rs");
+        assert!(!is_binary_file(path, b"fn main() {}"));
+
+        // .rs file with null bytes = binary
+        let path = std::path::Path::new("main.rs");
+        assert!(is_binary_file(path, &[0u8, 1, 2]));
+    }
+
+    #[test]
+    fn test_is_binary_file_no_extension() {
+        // No extension, fallback to content check
+        let path = std::path::Path::new("Makefile");
+        assert!(!is_binary_file(path, b"all: build"));
+        assert!(is_binary_file(path, &[0u8]));
     }
 
     #[tokio::test]
@@ -468,5 +607,75 @@ mod tests {
         assert!(err.contains("file_read.rs"));
         assert!(err.contains("file_write.rs"));
         assert!(!err.contains("other.txt"));
+    }
+
+    // ---- Output byte limit ----
+
+    #[tokio::test]
+    async fn test_read_large_file_byte_truncation() {
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().canonicalize().unwrap();
+
+        // Create a file with very long lines that exceed 50KB output
+        let long_line = "x".repeat(500);
+        let content: String = (0..200)
+            .map(|_| long_line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(tmp_path.join("big.txt"), &content).unwrap();
+
+        let tool = FileReadTool;
+        let ctx = ToolContext::new(&tmp_path);
+        let args = make_args(&[(
+            "file_path",
+            serde_json::json!(tmp_path.join("big.txt").to_str().unwrap()),
+        )]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+
+        let output = result.output.unwrap();
+        // Output should be capped around 50KB
+        assert!(output.len() <= FileReadTool::MAX_OUTPUT_BYTES + 200); // some margin for truncation message
+        if content.len() > FileReadTool::MAX_OUTPUT_BYTES {
+            assert!(output.contains("truncated"));
+            assert_eq!(result.metadata.get("truncated"), Some(&serde_json::json!(true)));
+        }
+    }
+
+    // ---- Binary detection improvements ----
+
+    #[test]
+    fn test_binary_detection_null_bytes() {
+        let bytes = b"hello\x00world";
+        assert!(is_binary(bytes));
+    }
+
+    #[test]
+    fn test_binary_detection_high_non_printable_ratio() {
+        // 50% non-printable chars (bytes < 9)
+        let mut bytes = vec![0x01u8; 50];
+        bytes.extend_from_slice(&[b'a'; 50]);
+        assert!(is_binary(&bytes));
+    }
+
+    #[test]
+    fn test_binary_detection_low_non_printable_ratio() {
+        // Mostly printable with a few control chars (< 30%)
+        let mut bytes = vec![b'a'; 100];
+        bytes[0] = 0x01;
+        bytes[1] = 0x02;
+        assert!(!is_binary(&bytes));
+    }
+
+    #[test]
+    fn test_binary_detection_empty() {
+        assert!(!is_binary(&[]));
+    }
+
+    #[test]
+    fn test_binary_detection_text_with_tabs_newlines() {
+        // Tabs and newlines should NOT count as non-printable
+        let bytes = b"hello\tworld\nfoo\rbar";
+        assert!(!is_binary(bytes));
     }
 }

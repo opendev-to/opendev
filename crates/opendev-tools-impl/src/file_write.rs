@@ -6,6 +6,7 @@ use std::path::Path;
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
 use crate::formatter;
+use crate::path_utils::{resolve_file_path, validate_path_access};
 
 /// Tool for writing file contents.
 #[derive(Debug)]
@@ -45,7 +46,7 @@ impl BaseTool for FileWriteTool {
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> ToolResult {
         let file_path = match args.get("file_path").and_then(|v| v.as_str()) {
             Some(p) => p,
@@ -62,7 +63,11 @@ impl BaseTool for FileWriteTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        let path = Path::new(file_path);
+        let path = resolve_file_path(file_path, &ctx.working_dir);
+
+        if let Err(msg) = validate_path_access(&path, &ctx.working_dir) {
+            return ToolResult::fail(msg);
+        }
 
         // Create parent directories if needed
         if create_dirs {
@@ -96,7 +101,7 @@ impl BaseTool for FileWriteTool {
         }
 
         // Auto-format if a formatter is available
-        let formatted = formatter::format_file(file_path, &_ctx.working_dir);
+        let formatted = formatter::format_file(file_path, &ctx.working_dir);
 
         let lines = content.lines().count();
         let bytes = content.len();
