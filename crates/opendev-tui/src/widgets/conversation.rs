@@ -1815,6 +1815,116 @@ mod tests {
     }
 
     #[test]
+    fn test_multi_agent_tree_display() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "Explore the codebase".into(),
+            tool_call: None,
+            collapsed: false,
+        }];
+
+        // Create 3 subagents with different states
+        let mut s1 = SubagentDisplayState::new("Code-Explorer".into(), "Explore core architecture".into());
+        s1.add_tool_call("search".into(), "t1".into());
+        s1.add_tool_call("read_file".into(), "t2".into());
+        s1.complete_tool_call("t1", true);
+
+        let mut s2 = SubagentDisplayState::new("Code-Explorer".into(), "Explore config and support".into());
+        s2.add_tool_call("search".into(), "t3".into());
+        s2.add_tool_call("search".into(), "t4".into());
+        s2.add_tool_call("list_files".into(), "t5".into());
+
+        let mut s3 = SubagentDisplayState::new("Code-Explorer".into(), "Explore UI and tools".into());
+        s3.add_tool_call("find_symbol".into(), "t6".into());
+        s3.finish(true, "Done".into(), 9, None, 26000);
+
+        let subagents = vec![s1, s2, s3];
+        let widget = ConversationWidget::new(&msgs, 0).active_subagents(&subagents);
+        let spinner = widget.build_spinner_lines();
+        let text: String = spinner
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+
+        // Grouped header (not all finished → "Running")
+        assert!(text.contains("Running 3 Explore agents"), "header missing, got: {text}");
+
+        // Tree branches — first two use ├─, last uses └─
+        assert!(text.contains("├─"), "missing ├─ branch, got: {text}");
+        assert!(text.contains("└─"), "missing └─ branch, got: {text}");
+
+        // Activity summary for running agents
+        assert!(text.contains("Searching for"), "missing search summary, got: {text}");
+        assert!(text.contains("reading"), "missing read summary, got: {text}");
+
+        // Finished agent shows "Done"
+        assert!(text.contains("Done"), "missing Done for finished agent, got: {text}");
+
+        // Token display for finished agent
+        assert!(text.contains("26.0k tokens"), "missing token display, got: {text}");
+
+        // Verb display
+        assert!(text.contains("Explore "), "missing Explore verb, got: {text}");
+    }
+
+    #[test]
+    fn test_multi_agent_all_finished_shows_completed() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "Explore".into(),
+            tool_call: None,
+            collapsed: false,
+        }];
+
+        let mut s1 = SubagentDisplayState::new("Code-Explorer".into(), "Explore core".into());
+        s1.finish(true, "Done".into(), 10, None, 30000);
+        let mut s2 = SubagentDisplayState::new("Code-Explorer".into(), "Explore config".into());
+        s2.finish(true, "Done".into(), 8, None, 25000);
+
+        let subagents = vec![s1, s2];
+        let widget = ConversationWidget::new(&msgs, 0).active_subagents(&subagents);
+        let spinner = widget.build_spinner_lines();
+        let text: String = spinner
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+
+        assert!(text.contains("Completed 2 Explore agents"), "got: {text}");
+    }
+
+    #[test]
+    fn test_single_agent_uses_activity_summary() {
+        let msgs = vec![DisplayMessage {
+            role: DisplayRole::User,
+            content: "Search".into(),
+            tool_call: None,
+            collapsed: false,
+        }];
+
+        let mut s1 = SubagentDisplayState::new("Code-Explorer".into(), "Find the auth module".into());
+        s1.add_tool_call("search".into(), "t1".into());
+        s1.add_tool_call("read_file".into(), "t2".into());
+
+        let subagents = vec![s1];
+        let widget = ConversationWidget::new(&msgs, 0).active_subagents(&subagents);
+        let spinner = widget.build_spinner_lines();
+        let text: String = spinner
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+
+        // Single agent should NOT show "Running N agents" header
+        assert!(!text.contains("Running"), "single agent shouldn't have grouped header, got: {text}");
+
+        // Should show categorized activity summary, not raw tool names
+        assert!(text.contains("Searching for 1 pattern"), "got: {text}");
+        assert!(text.contains("reading 1 file"), "got: {text}");
+    }
+
+    #[test]
     fn test_activity_summary_searching_and_reading() {
         let mut state = SubagentDisplayState::new("Code-Explorer".into(), "Explore core".into());
         state.add_tool_call("search".into(), "t1".into());
