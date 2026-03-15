@@ -788,6 +788,15 @@ impl<'a> ConversationWidget<'a> {
             }
         }
 
+        // Blank separator between subagent tree and thinking/tool spinner
+        if has_subagents {
+            let will_show_more = !active_unfinished.is_empty()
+                || (active_unfinished.is_empty() && self.task_progress.is_some());
+            if will_show_more {
+                lines.push(Line::from(""));
+            }
+        }
+
         if !self.compaction_active && !active_unfinished.is_empty() {
             for tool in &active_unfinished {
                 let frame_idx = tool.tick_count % SPINNER_FRAMES.len();
@@ -854,60 +863,21 @@ fn format_tokens(n: u64) -> String {
 /// - `read_file`, `list_files` → "reading N files"
 /// - Other tools listed by name
 fn build_subagent_activity_summary(subagent: &SubagentDisplayState) -> String {
-    if subagent.active_tools.is_empty() && subagent.completed_tools.is_empty() {
-        return "Initializing\u{2026}".to_string();
+    // Show the most recent active tool name
+    if !subagent.active_tools.is_empty() {
+        let tool = subagent
+            .active_tools
+            .values()
+            .max_by_key(|t| t.started_at)
+            .unwrap();
+        return tool.tool_name.clone();
     }
-
-    let active_names: Vec<&str> = subagent
-        .active_tools
-        .values()
-        .map(|t| t.tool_name.as_str())
-        .collect();
-
-    if active_names.is_empty() {
-        return "Working\u{2026}".to_string();
+    // No active tools but has completed — show last completed tool name
+    if let Some(last) = subagent.completed_tools.last() {
+        return last.tool_name.clone();
     }
-
-    let mut search_count = 0usize;
-    let mut read_count = 0usize;
-    let mut other_names: Vec<&str> = Vec::new();
-
-    for name in &active_names {
-        match *name {
-            "search" | "grep" | "find_symbol" | "glob" => search_count += 1,
-            "read_file" | "list_files" => read_count += 1,
-            other => {
-                if !other_names.contains(&other) {
-                    other_names.push(other);
-                }
-            }
-        }
-    }
-
-    let mut parts: Vec<String> = Vec::new();
-    if search_count > 0 {
-        parts.push(format!(
-            "Searching for {} pattern{}",
-            search_count,
-            if search_count == 1 { "" } else { "s" }
-        ));
-    }
-    if read_count > 0 {
-        parts.push(format!(
-            "reading {} file{}",
-            read_count,
-            if read_count == 1 { "" } else { "s" }
-        ));
-    }
-    for name in other_names {
-        parts.push(name.to_string());
-    }
-
-    if parts.is_empty() {
-        "Working\u{2026}".to_string()
-    } else {
-        format!("{}\u{2026}", parts.join(", "))
-    }
+    // Truly no tools yet
+    "Initializing\u{2026}".to_string()
 }
 
 /// Format a tool call as a styled line with category color coding.
