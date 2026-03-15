@@ -670,10 +670,11 @@ impl ReactLoop {
         // Initialized with the working dir as root; startup instruction
         // paths are discovered from existing instruction files.
         let mut subdir_tracker = {
-            let startup_paths = opendev_context::discover_instruction_files(&tool_context.working_dir)
-                .into_iter()
-                .map(|f| f.path)
-                .collect::<Vec<_>>();
+            let startup_paths =
+                opendev_context::discover_instruction_files(&tool_context.working_dir)
+                    .into_iter()
+                    .map(|f| f.path)
+                    .collect::<Vec<_>>();
             opendev_context::SubdirInstructionTracker::new(
                 tool_context.working_dir.clone(),
                 &startup_paths,
@@ -687,7 +688,8 @@ impl ReactLoop {
         // Session-level auto-approved tool patterns. When a user approves a
         // tool invocation with "yes_remember", the tool:args pattern is added
         // here so future identical invocations skip the approval prompt.
-        let mut auto_approved_patterns: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut auto_approved_patterns: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         // Nudge/reminder state tracking
         let mut todo_nudge_count: usize = 0;
@@ -1222,8 +1224,7 @@ impl ReactLoop {
                                         if tool_name != "run_command"
                                             && let Some(approval_tx) = tool_approval_tx
                                         {
-                                            let desc =
-                                                format!("{} {}", tool_name, arg_pattern);
+                                            let desc = format!("{} {}", tool_name, arg_pattern);
                                             let (resp_tx, resp_rx) =
                                                 tokio::sync::oneshot::channel();
                                             let req = opendev_runtime::ToolApprovalRequest {
@@ -1282,8 +1283,8 @@ impl ReactLoop {
                         // by default, same as run_command.
                         // Skip if permission rules explicitly allow this tool,
                         // or if the user previously approved this tool with "always".
-                        let needs_approval_gate = tool_name == "run_command"
-                            || tool_name.starts_with("mcp__");
+                        let needs_approval_gate =
+                            tool_name == "run_command" || tool_name.starts_with("mcp__");
                         let auto_approved = auto_approved_patterns.contains(tool_name);
                         if needs_approval_gate
                             && !permission_allows
@@ -1298,9 +1299,13 @@ impl ReactLoop {
                                     .to_string()
                             } else {
                                 // For MCP and other tools, summarize the args
-                                serde_json::to_string_pretty(
-                                    &serde_json::Value::Object(args_map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
-                                ).unwrap_or_default()
+                                serde_json::to_string_pretty(&serde_json::Value::Object(
+                                    args_map
+                                        .iter()
+                                        .map(|(k, v)| (k.clone(), v.clone()))
+                                        .collect(),
+                                ))
+                                .unwrap_or_default()
                             };
                             let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                             let req = opendev_runtime::ToolApprovalRequest {
@@ -1338,7 +1343,10 @@ impl ReactLoop {
                                         // "yes_remember" — auto-approve this tool for rest of session
                                         if d.choice == "yes_remember" {
                                             auto_approved_patterns.insert(tool_name.to_string());
-                                            debug!(tool = tool_name, "Auto-approving tool for remainder of session");
+                                            debug!(
+                                                tool = tool_name,
+                                                "Auto-approving tool for remainder of session"
+                                            );
                                         }
                                         // Update command if edited by user
                                         if d.command != command {
@@ -1484,7 +1492,10 @@ impl ReactLoop {
                         // AGENTS.md/CLAUDE.md files in that file's directory tree
                         // that haven't been injected yet.
                         if tool_result.success
-                            && matches!(tool_name, "read_file" | "edit_file" | "write_file" | "search")
+                            && matches!(
+                                tool_name,
+                                "read_file" | "edit_file" | "write_file" | "search"
+                            )
                         {
                             let file_path_str = args_value
                                 .get("file_path")
@@ -1496,8 +1507,7 @@ impl ReactLoop {
                                 for instr in &instructions {
                                     let note = format!(
                                         "<system-reminder>\nThe following project instructions apply to files in this directory ({}):\n\n{}\n</system-reminder>",
-                                        instr.relative_path,
-                                        instr.content,
+                                        instr.relative_path, instr.content,
                                     );
                                     append_directive(messages, &note);
                                     debug!(
@@ -2612,9 +2622,10 @@ mod tests {
         patterns.insert("rm -rf *".to_string(), PermissionAction::Deny);
 
         let mut config = ReactLoopConfig::default();
-        config
-            .permission
-            .insert("run_command".to_string(), PermissionRule::Patterns(patterns));
+        config.permission.insert(
+            "run_command".to_string(),
+            PermissionRule::Patterns(patterns),
+        );
 
         assert_eq!(
             config.evaluate_permission("run_command", "git status"),

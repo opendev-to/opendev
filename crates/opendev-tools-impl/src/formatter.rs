@@ -565,7 +565,11 @@ mod tests {
             "my-fmt".to_string(),
             FormatterOverride {
                 disabled: false,
-                command: vec!["my-fmt".to_string(), "--write".to_string(), "$FILE".to_string()],
+                command: vec![
+                    "my-fmt".to_string(),
+                    "--write".to_string(),
+                    "$FILE".to_string(),
+                ],
                 extensions: vec![".xyz".to_string()],
                 environment: HashMap::new(),
             },

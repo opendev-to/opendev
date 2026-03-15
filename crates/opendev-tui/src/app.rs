@@ -18,8 +18,8 @@ use crate::event::{AppEvent, EventHandler};
 use crate::history::CommandHistory;
 use crate::managers::BackgroundTaskManager;
 use crate::widgets::{
-    ConversationWidget, InputWidget, StatusBarWidget, TodoDisplayItem,
-    TodoDisplayStatus, TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
+    ConversationWidget, InputWidget, StatusBarWidget, TodoDisplayItem, TodoDisplayStatus,
+    TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
 };
 use crossterm::{
     event::{
@@ -1039,12 +1039,12 @@ impl App {
             .constraints(
                 [
                     layout::Constraint::Min(5),              // conversation
-                    layout::Constraint::Length(todo_height),  // todo panel
+                    layout::Constraint::Length(todo_height), // todo panel
                     layout::Constraint::Length({
                         let input_lines = self.state.input_buffer.matches('\n').count() + 1;
                         (input_lines as u16 + 1).min(8) // +1 for separator, cap at 8
                     }), // input
-                    layout::Constraint::Length(2),            // status bar
+                    layout::Constraint::Length(2),           // status bar
                 ]
                 .as_ref(),
             )
@@ -1715,7 +1715,41 @@ impl App {
                     (lines, collapse)
                 };
 
-                if !display_lines.is_empty() {
+                // For spawn_subagent results, populate nested_calls from the
+                // finished subagent's completed tools so they render in history.
+                let nested_calls = if tool_name == "spawn_subagent" {
+                    // Find matching finished subagent by agent_type arg
+                    let agent_name = arguments
+                        .get("agent_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if let Some(subagent) = self
+                        .state
+                        .active_subagents
+                        .iter()
+                        .find(|s| s.name == agent_name && s.finished)
+                    {
+                        subagent
+                            .completed_tools
+                            .iter()
+                            .map(|ct| DisplayToolCall {
+                                name: ct.tool_name.clone(),
+                                arguments: std::collections::HashMap::new(),
+                                summary: None,
+                                success: ct.success,
+                                collapsed: true,
+                                result_lines: Vec::new(),
+                                nested_calls: Vec::new(),
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                if !display_lines.is_empty() || !nested_calls.is_empty() {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Assistant,
                         content: String::new(),
@@ -1726,7 +1760,7 @@ impl App {
                             success,
                             collapsed,
                             result_lines: display_lines,
-                            nested_calls: Vec::new(),
+                            nested_calls,
                         }),
                         collapsed: false,
                     });
@@ -1869,43 +1903,8 @@ impl App {
                 {
                     subagent.finish(success, result_summary, tool_call_count, shallow_warning);
                 }
-
-                // Populate nested_calls on the most recent spawn_subagent tool call
-                // so finished subagent data transitions to cached conversation lines.
-                if let Some(subagent) = self
-                    .state
-                    .active_subagents
-                    .iter()
-                    .find(|s| s.name == subagent_name && s.finished)
-                {
-                    let nested: Vec<DisplayToolCall> = subagent
-                        .completed_tools
-                        .iter()
-                        .map(|ct| DisplayToolCall {
-                            name: ct.tool_name.clone(),
-                            arguments: std::collections::HashMap::new(),
-                            summary: None,
-                            success: ct.success,
-                            collapsed: true,
-                            result_lines: Vec::new(),
-                            nested_calls: Vec::new(),
-                        })
-                        .collect();
-
-                    // Find the most recent spawn_subagent DisplayToolCall matching this subagent
-                    for msg in self.state.messages.iter_mut().rev() {
-                        if let Some(tc) = &mut msg.tool_call
-                            && tc.name == "spawn_subagent"
-                            && tc.nested_calls.is_empty()
-                        {
-                            tc.nested_calls = nested;
-                            break;
-                        }
-                    }
-
-                    self.state.message_generation += 1;
-                }
-
+                // nested_calls are populated when the ToolResult for spawn_subagent
+                // arrives (which happens after this event).
                 self.state.dirty = true;
             }
 
@@ -2734,13 +2733,9 @@ impl App {
                         "Not enough messages to compact (need at least 5).".to_string(),
                     );
                 } else if self.state.compaction_active {
-                    self.push_system_message(
-                        "Compaction already in progress.".to_string(),
-                    );
+                    self.push_system_message("Compaction already in progress.".to_string());
                 } else if self.state.agent_active {
-                    self.push_system_message(
-                        "Cannot compact while agent is running.".to_string(),
-                    );
+                    self.push_system_message("Cannot compact while agent is running.".to_string());
                 } else {
                     // Send special sentinel to trigger compaction in the backend
                     if let Some(ref tx) = self.user_message_tx {
@@ -2802,7 +2797,10 @@ impl App {
         }
 
         // Advance spinner animation
-        if self.state.agent_active || !self.state.active_tools.is_empty() || self.state.compaction_active {
+        if self.state.agent_active
+            || !self.state.active_tools.is_empty()
+            || self.state.compaction_active
+        {
             self.state.spinner.tick();
         }
 
@@ -2827,9 +2825,7 @@ impl App {
         }
         // Remove finished subagents immediately — their data has been
         // transferred to nested_calls in the conversation history.
-        self.state
-            .active_subagents
-            .retain(|s| !s.finished);
+        self.state.active_subagents.retain(|s| !s.finished);
 
         // Update task progress elapsed time from wall clock
         if let Some(ref mut progress) = self.state.task_progress {

@@ -33,7 +33,10 @@ impl std::fmt::Debug for InvokeSkillTool {
         f.debug_struct("InvokeSkillTool")
             .field("skill_loader", &"<SkillLoader>")
             .field("invoked_skills", &self.invoked_skills)
-            .field("mcp_manager", &self.mcp_manager.as_ref().map(|_| "<McpManager>"))
+            .field(
+                "mcp_manager",
+                &self.mcp_manager.as_ref().map(|_| "<McpManager>"),
+            )
             .finish()
     }
 }
@@ -119,9 +122,13 @@ impl BaseTool for InvokeSkillTool {
             } else {
                 // Check if the user is confusing invoke_skill with spawn_subagent.
                 let subagent_types = [
-                    "code-explorer", "code_explorer", "planner",
-                    "general", "build",
-                    "ask-user", "ask_user",
+                    "code-explorer",
+                    "code_explorer",
+                    "planner",
+                    "general",
+                    "build",
+                    "ask-user",
+                    "ask_user",
                 ];
                 let normalized = skill_name.to_lowercase();
                 if subagent_types.iter().any(|t| normalized == *t) {
@@ -166,7 +173,10 @@ impl BaseTool for InvokeSkillTool {
                         } else {
                             format!(" (args: {})", p.arguments.join(", "))
                         };
-                        output.push_str(&format!("  {} — {}{}\n", p.command, p.description, args_str));
+                        output.push_str(&format!(
+                            "  {} — {}{}\n",
+                            p.command, p.description, args_str
+                        ));
                     }
                 }
                 return ToolResult::ok(output.trim_end().to_string());
@@ -205,7 +215,8 @@ impl BaseTool for InvokeSkillTool {
         }
 
         // Extract the skill from the Found variant (safe: all other arms return).
-        let SkillLookup::Found(skill) = lookup else { // Box<LoadedSkill>
+        let SkillLookup::Found(skill) = lookup else {
+            // Box<LoadedSkill>
             unreachable!()
         };
 
@@ -764,10 +775,7 @@ mod tests {
 
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
-        assert_eq!(
-            result.metadata.get("skill_model").unwrap(),
-            "gpt-4o-mini"
-        );
+        assert_eq!(result.metadata.get("skill_model").unwrap(), "gpt-4o-mini");
     }
 
     #[tokio::test]

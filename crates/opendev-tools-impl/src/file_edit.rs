@@ -490,7 +490,10 @@ mod tests {
         let err = result.error.unwrap();
         assert!(err.contains("secrets"), "Should mention secrets: {err}");
         // File should be unchanged
-        assert_eq!(std::fs::read_to_string(&env_file).unwrap(), "SECRET=abc123\n");
+        assert_eq!(
+            std::fs::read_to_string(&env_file).unwrap(),
+            "SECRET=abc123\n"
+        );
     }
 
     #[tokio::test]
@@ -508,6 +511,10 @@ mod tests {
         ]);
 
         let result = tool.execute(args, &ctx).await;
-        assert!(result.success, ".env.example should be editable: {:?}", result.error);
+        assert!(
+            result.success,
+            ".env.example should be editable: {:?}",
+            result.error
+        );
     }
 }

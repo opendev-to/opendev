@@ -19,10 +19,7 @@ const MAX_PROJECT_DIAGNOSTIC_FILES: usize = 5;
 ///
 /// Returns a formatted string suitable for appending to tool output,
 /// or `None` if no diagnostics are available or no provider is configured.
-pub async fn collect_post_edit_diagnostics(
-    ctx: &ToolContext,
-    file_path: &Path,
-) -> Option<String> {
+pub async fn collect_post_edit_diagnostics(ctx: &ToolContext, file_path: &Path) -> Option<String> {
     let provider = ctx.diagnostic_provider.as_ref()?;
 
     // Query diagnostics for the edited file — errors and warnings only (severity ≤ 2).
@@ -41,10 +38,7 @@ pub async fn collect_post_edit_diagnostics(
     let warning_count = diagnostics.iter().filter(|d| d.severity == 2).count();
 
     output.push_str("\nLSP diagnostics detected after edit:");
-    output.push_str(&format!(
-        "\n<diagnostics file=\"{}\">",
-        file_path.display()
-    ));
+    output.push_str(&format!("\n<diagnostics file=\"{}\">", file_path.display()));
 
     for diag in &diagnostics {
         output.push('\n');
@@ -92,10 +86,7 @@ pub async fn collect_multi_file_diagnostics(
             break;
         }
 
-        output.push_str(&format!(
-            "\n<diagnostics file=\"{}\">",
-            file_path.display()
-        ));
+        output.push_str(&format!("\n<diagnostics file=\"{}\">", file_path.display()));
 
         for diag in &diagnostics {
             output.push('\n');

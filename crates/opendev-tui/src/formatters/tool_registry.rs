@@ -491,8 +491,8 @@ pub fn format_tool_call_parts(
                 }
             })
             .unwrap_or_else(|| "Agent".to_string());
-        let task = extract_arg_from_keys(&["task"], args)
-            .unwrap_or_else(|| "working...".to_string());
+        let task =
+            extract_arg_from_keys(&["task"], args).unwrap_or_else(|| "working...".to_string());
         return (verb, task);
     }
 

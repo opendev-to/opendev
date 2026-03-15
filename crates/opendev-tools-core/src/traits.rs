@@ -265,10 +265,7 @@ impl ToolContext {
     }
 
     /// Set a diagnostic provider for post-edit LSP feedback.
-    pub fn with_diagnostic_provider(
-        mut self,
-        provider: Arc<dyn DiagnosticProvider>,
-    ) -> Self {
+    pub fn with_diagnostic_provider(mut self, provider: Arc<dyn DiagnosticProvider>) -> Self {
         self.diagnostic_provider = Some(provider);
         self
     }

@@ -446,7 +446,10 @@ mod tests {
         let dir_path = dir.path().canonicalize().unwrap();
         let tool = NotebookEditTool;
         let ctx = ToolContext::new(&dir_path);
-        let args = make_args(&[("notebook_path", serde_json::json!(dir_path.join("nonexistent.ipynb").to_str().unwrap()))]);
+        let args = make_args(&[(
+            "notebook_path",
+            serde_json::json!(dir_path.join("nonexistent.ipynb").to_str().unwrap()),
+        )]);
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));

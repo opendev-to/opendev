@@ -190,8 +190,8 @@ const INSTRUCTION_FILENAMES: &[&str] = &["AGENTS.md", "CLAUDE.md", "OPENDEV.md"]
 /// Additional instruction file patterns from other AI tools.
 /// These are checked per-directory alongside the standard filenames.
 const COMPAT_INSTRUCTION_FILES: &[&str] = &[
-    ".cursorrules",                      // Cursor AI (flat file)
-    ".github/copilot-instructions.md",   // GitHub Copilot
+    ".cursorrules",                    // Cursor AI (flat file)
+    ".github/copilot-instructions.md", // GitHub Copilot
 ];
 
 /// Max content size per instruction file (50 KB).
@@ -249,13 +249,7 @@ pub fn discover_instruction_files(working_dir: &Path) -> Vec<InstructionFile> {
                 .collect();
             rule_files.sort_by_key(|e| e.file_name());
             for entry in rule_files {
-                try_add_instruction(
-                    &entry.path(),
-                    &current,
-                    working_dir,
-                    &mut files,
-                    &mut seen,
-                );
+                try_add_instruction(&entry.path(), &current, working_dir, &mut files, &mut seen);
             }
         }
 
@@ -357,10 +351,7 @@ const REMOTE_INSTRUCTION_TIMEOUT_SECS: u64 = 5;
 /// - An `https://` or `http://` URL (fetched with a 5-second timeout)
 ///
 /// Duplicate files (by canonical path) and duplicate URLs are skipped.
-pub fn resolve_instruction_paths(
-    patterns: &[String],
-    working_dir: &Path,
-) -> Vec<InstructionFile> {
+pub fn resolve_instruction_paths(patterns: &[String], working_dir: &Path) -> Vec<InstructionFile> {
     let mut files = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut seen_urls = std::collections::HashSet::new();
@@ -903,16 +894,8 @@ mod tests {
         let dir_path = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(dir_path.join(".opendev")).unwrap();
         std::fs::create_dir_all(dir_path.join(".claude")).unwrap();
-        std::fs::write(
-            dir_path.join(".opendev/instructions.md"),
-            "OpenDev rules",
-        )
-        .unwrap();
-        std::fs::write(
-            dir_path.join(".claude/instructions.md"),
-            "Claude rules",
-        )
-        .unwrap();
+        std::fs::write(dir_path.join(".opendev/instructions.md"), "OpenDev rules").unwrap();
+        std::fs::write(dir_path.join(".claude/instructions.md"), "Claude rules").unwrap();
         std::fs::create_dir(dir_path.join(".git")).unwrap();
 
         let files = discover_instruction_files(&dir_path);
@@ -947,10 +930,7 @@ mod tests {
         let dir_path = dir.path().canonicalize().unwrap();
         std::fs::write(dir_path.join("CONTRIBUTING.md"), "contrib rules").unwrap();
 
-        let files = resolve_instruction_paths(
-            &["CONTRIBUTING.md".to_string()],
-            &dir_path,
-        );
+        let files = resolve_instruction_paths(&["CONTRIBUTING.md".to_string()], &dir_path);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].scope, "config");
         assert!(files[0].content.contains("contrib rules"));
@@ -966,10 +946,7 @@ mod tests {
         std::fs::write(rules_dir.join("b.md"), "rule b").unwrap();
         std::fs::write(rules_dir.join("c.txt"), "not a markdown").unwrap();
 
-        let files = resolve_instruction_paths(
-            &["rules/*.md".to_string()],
-            &dir_path,
-        );
+        let files = resolve_instruction_paths(&["rules/*.md".to_string()], &dir_path);
         assert_eq!(files.len(), 2);
         let contents: Vec<&str> = files.iter().map(|f| f.content.as_str()).collect();
         assert!(contents.iter().any(|c| c.contains("rule a")));
@@ -983,10 +960,7 @@ mod tests {
         std::fs::write(dir_path.join("guide.md"), "absolute guide").unwrap();
         let abs_path = dir_path.join("guide.md").to_string_lossy().to_string();
 
-        let files = resolve_instruction_paths(
-            &[abs_path],
-            Path::new("/tmp"),
-        );
+        let files = resolve_instruction_paths(&[abs_path], Path::new("/tmp"));
         assert_eq!(files.len(), 1);
         assert!(files[0].content.contains("absolute guide"));
     }
@@ -997,10 +971,7 @@ mod tests {
         let dir_path = dir.path().canonicalize().unwrap();
         std::fs::write(dir_path.join("empty.md"), "   ").unwrap();
 
-        let files = resolve_instruction_paths(
-            &["empty.md".to_string()],
-            &dir_path,
-        );
+        let files = resolve_instruction_paths(&["empty.md".to_string()], &dir_path);
         assert!(files.is_empty());
     }
 
@@ -1010,10 +981,8 @@ mod tests {
         let dir_path = dir.path().canonicalize().unwrap();
         std::fs::write(dir_path.join("rules.md"), "dedup test").unwrap();
 
-        let files = resolve_instruction_paths(
-            &["rules.md".to_string(), "rules.md".to_string()],
-            &dir_path,
-        );
+        let files =
+            resolve_instruction_paths(&["rules.md".to_string(), "rules.md".to_string()], &dir_path);
         assert_eq!(files.len(), 1);
     }
 
@@ -1022,10 +991,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let dir_path = dir.path().canonicalize().unwrap();
 
-        let files = resolve_instruction_paths(
-            &["does_not_exist.md".to_string()],
-            &dir_path,
-        );
+        let files = resolve_instruction_paths(&["does_not_exist.md".to_string()], &dir_path);
         assert!(files.is_empty());
     }
 
@@ -1051,10 +1017,7 @@ mod tests {
         let dir_path = dir.path().canonicalize().unwrap();
 
         let url = "https://localhost:1/__dup_test__".to_string();
-        let files = resolve_instruction_paths(
-            &[url.clone(), url],
-            &dir_path,
-        );
+        let files = resolve_instruction_paths(&[url.clone(), url], &dir_path);
         // Both should fail (unreachable host), but even if one succeeded,
         // dedup ensures at most 1.
         assert!(files.len() <= 1);
@@ -1096,10 +1059,7 @@ mod tests {
             content: "test content".to_string(),
         };
         assert_eq!(file.scope, "remote");
-        assert_eq!(
-            file.path.to_string_lossy(),
-            "https://example.com/rules.md"
-        );
+        assert_eq!(file.path.to_string_lossy(), "https://example.com/rules.md");
     }
 
     #[test]
@@ -1115,9 +1075,14 @@ mod tests {
 
         let files = discover_instruction_files(&dir_path);
         assert!(
-            files.iter().any(|f| f.content.contains("strict TypeScript")),
+            files
+                .iter()
+                .any(|f| f.content.contains("strict TypeScript")),
             "Should discover .cursorrules: {:?}",
-            files.iter().map(|f| f.path.display().to_string()).collect::<Vec<_>>()
+            files
+                .iter()
+                .map(|f| f.path.display().to_string())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1138,7 +1103,9 @@ mod tests {
 
         let files = discover_instruction_files(&dir_path);
         assert!(
-            files.iter().any(|f| f.content.contains("conventional commits")),
+            files
+                .iter()
+                .any(|f| f.content.contains("conventional commits")),
             "Should discover .github/copilot-instructions.md"
         );
     }

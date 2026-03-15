@@ -37,10 +37,7 @@ impl ConfigLoader {
         if global_settings.exists() {
             match Self::load_file(global_settings) {
                 Ok(user_config) => {
-                    Self::warn_unknown_fields(
-                        &user_config,
-                        &global_settings.display().to_string(),
-                    );
+                    Self::warn_unknown_fields(&user_config, &global_settings.display().to_string());
                     config = Self::merge(config, user_config);
                     debug!("Loaded global settings from {:?}", global_settings);
                 }
@@ -132,7 +129,9 @@ impl ConfigLoader {
             if let Some(end) = rest.find('}') {
                 let var_name = &rest[..end];
                 let replacement = std::env::var(var_name).unwrap_or_else(|_| {
-                    debug!("Config template {{env:{var_name}}}: variable not set, using empty string");
+                    debug!(
+                        "Config template {{env:{var_name}}}: variable not set, using empty string"
+                    );
                     String::new()
                 });
                 result.replace_range(start..start + 5 + end + 1, &replacement);
@@ -396,9 +395,7 @@ impl ConfigLoader {
                 } else {
                     1
                 };
-                curr[j] = (prev[j] + 1)
-                    .min(curr[j - 1] + 1)
-                    .min(prev[j - 1] + cost);
+                curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
             }
             std::mem::swap(&mut prev, &mut curr);
         }
@@ -519,14 +516,10 @@ impl ConfigLoader {
         // 5. Model variant validation
         for (name, variant) in &config.model_variants {
             if variant.model.trim().is_empty() {
-                warnings.push(format!(
-                    "model_variants[\"{name}\"].model is empty"
-                ));
+                warnings.push(format!("model_variants[\"{name}\"].model is empty"));
             }
             if variant.provider.trim().is_empty() {
-                warnings.push(format!(
-                    "model_variants[\"{name}\"].provider is empty"
-                ));
+                warnings.push(format!("model_variants[\"{name}\"].provider is empty"));
             }
             if !(0.0..=2.0).contains(&variant.temperature) {
                 warnings.push(format!(
@@ -546,9 +539,7 @@ impl ConfigLoader {
 
         // 7. Bash timeout sanity
         if config.bash_timeout == 0 {
-            warnings.push(
-                "bash_timeout is 0 — commands will time out immediately".to_string(),
-            );
+            warnings.push("bash_timeout is 0 — commands will time out immediately".to_string());
         }
 
         if !warnings.is_empty() {
@@ -568,10 +559,7 @@ impl ConfigLoader {
     /// Apply overrides from a variable lookup function.
     ///
     /// Factored out so tests can supply a mock lookup without touching global env.
-    fn apply_env_overrides_with(
-        config: &mut AppConfig,
-        get: impl Fn(&str) -> Option<String>,
-    ) {
+    fn apply_env_overrides_with(config: &mut AppConfig, get: impl Fn(&str) -> Option<String>) {
         if let Some(provider) = get("OPENDEV_MODEL_PROVIDER") {
             config.model_provider = provider;
         }
@@ -779,9 +767,7 @@ mod tests {
     // --- Environment variable override tests ---
     // Uses apply_env_overrides_with() with a mock lookup to avoid global env var races.
 
-    fn mock_env(
-        vars: &[(&str, &str)],
-    ) -> impl Fn(&str) -> Option<String> {
+    fn mock_env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let map: std::collections::HashMap<String, String> = vars
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -865,10 +851,7 @@ mod tests {
         assert!(config.verbose);
 
         config.verbose = false;
-        ConfigLoader::apply_env_overrides_with(
-            &mut config,
-            mock_env(&[("OPENDEV_VERBOSE", "1")]),
-        );
+        ConfigLoader::apply_env_overrides_with(&mut config, mock_env(&[("OPENDEV_VERBOSE", "1")]));
         assert!(config.verbose);
 
         config.verbose = true;
@@ -884,10 +867,7 @@ mod tests {
         let mut config = AppConfig::default();
         assert!(!config.debug_logging);
 
-        ConfigLoader::apply_env_overrides_with(
-            &mut config,
-            mock_env(&[("OPENDEV_DEBUG", "TRUE")]),
-        );
+        ConfigLoader::apply_env_overrides_with(&mut config, mock_env(&[("OPENDEV_DEBUG", "TRUE")]));
         assert!(config.debug_logging);
     }
 
@@ -1059,9 +1039,7 @@ mod tests {
         config.playbook.scoring_weights.semantic = 0.9;
         let warnings = ConfigLoader::validate_cross_field(&config);
         assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("scoring weights sum")),
+            warnings.iter().any(|w| w.contains("scoring weights sum")),
             "Should warn about weights summing to 2.7: {:?}",
             warnings
         );
@@ -1165,9 +1143,7 @@ mod tests {
         config.max_context_tokens = 500;
         let warnings = ConfigLoader::validate_cross_field(&config);
         assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("max_context_tokens")),
+            warnings.iter().any(|w| w.contains("max_context_tokens")),
             "Should warn about low context tokens: {:?}",
             warnings
         );
@@ -1192,7 +1168,11 @@ mod tests {
         config.bash_timeout = 0;
         config.max_context_tokens = 100;
         let warnings = ConfigLoader::validate_cross_field(&config);
-        assert!(warnings.len() >= 3, "Should have multiple warnings: {:?}", warnings);
+        assert!(
+            warnings.len() >= 3,
+            "Should have multiple warnings: {:?}",
+            warnings
+        );
     }
 
     // --- Template substitution tests ---
@@ -1219,10 +1199,7 @@ mod tests {
         let secret_file = tmp.path().join("secret.txt");
         std::fs::write(&secret_file, "my-secret-key\n").unwrap();
 
-        let input = format!(
-            r#"{{"api_key": "{{file:{}}}"}}"#,
-            secret_file.display()
-        );
+        let input = format!(r#"{{"api_key": "{{file:{}}}"}}"#, secret_file.display());
         let result = ConfigLoader::substitute_templates(&input, Path::new("."));
         assert_eq!(result, r#"{"api_key": "my-secret-key"}"#);
     }

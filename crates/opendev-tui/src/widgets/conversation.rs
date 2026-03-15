@@ -23,7 +23,9 @@ use crate::formatters::style_tokens::{self, Indent};
 use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts};
 use crate::widgets::nested_tool::SubagentDisplayState;
 use crate::widgets::progress::TaskProgress;
-use crate::widgets::spinner::{COMPACTION_FRAMES, COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
+use crate::widgets::spinner::{
+    COMPACTION_FRAMES, COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES,
+};
 
 /// Check if a tool name is an edit/write tool that produces diffs.
 pub fn is_diff_tool(name: &str) -> bool {
@@ -529,7 +531,7 @@ impl<'a> ConversationWidget<'a> {
         // Render active subagents inline
         for subagent in self.active_subagents {
             if subagent.finished {
-                // Finished subagent: ⏺ Explore(task) \n  ⎿  Done (N tool uses · Xs)
+                // Finished: ⏺ Explore(task) \n  ⎿  Done (N tool uses · Xs)
                 let verb = subagent.display_verb();
                 let task_preview = if subagent.task.len() > 50 {
                     format!("{}…", &subagent.task[..50])
@@ -562,7 +564,7 @@ impl<'a> ConversationWidget<'a> {
                     Style::default().fg(style_tokens::SUBTLE),
                 )));
             } else {
-                // Running subagent header: ⠋ Explore(task)
+                // Running: ⠋ Explore(task) with nested tools
                 let frame_idx = subagent.tick % SPINNER_FRAMES.len();
                 let spinner = SPINNER_FRAMES[frame_idx];
                 let verb = subagent.display_verb();
@@ -589,7 +591,6 @@ impl<'a> ConversationWidget<'a> {
                 ]));
 
                 if subagent.active_tools.is_empty() && subagent.completed_tools.is_empty() {
-                    // No tools yet: show initializing
                     lines.push(Line::from(Span::styled(
                         format!("  {}  Initializing\u{2026}", CONTINUATION_CHAR),
                         Style::default()
@@ -597,7 +598,6 @@ impl<'a> ConversationWidget<'a> {
                             .add_modifier(Modifier::ITALIC),
                     )));
                 } else {
-                    // Collect visible tools: last MAX_VISIBLE_NESTED from completed + all active
                     let active_names: Vec<&str> = subagent
                         .active_tools
                         .values()
@@ -605,8 +605,7 @@ impl<'a> ConversationWidget<'a> {
                         .collect();
                     let completed_count = subagent.completed_tools.len();
                     let completed_start = completed_count.saturating_sub(MAX_VISIBLE_NESTED);
-                    let visible_completed: Vec<&str> = subagent.completed_tools
-                        [completed_start..]
+                    let visible_completed: Vec<&str> = subagent.completed_tools[completed_start..]
                         .iter()
                         .map(|t| t.tool_name.as_str())
                         .collect();
@@ -615,7 +614,6 @@ impl<'a> ConversationWidget<'a> {
                     let visible_count = visible_completed.len() + active_names.len();
                     let hidden_count = total_tools.saturating_sub(visible_count);
 
-                    // Render visible tool names
                     let all_visible: Vec<&str> = visible_completed
                         .iter()
                         .chain(active_names.iter())
@@ -638,9 +636,7 @@ impl<'a> ConversationWidget<'a> {
 
                     if hidden_count > 0 {
                         lines.push(Line::from(Span::styled(
-                            format!(
-                                "     +{hidden_count} more tool uses (ctrl+o to expand)"
-                            ),
+                            format!("     +{hidden_count} more tool uses (ctrl+o to expand)"),
                             Style::default()
                                 .fg(style_tokens::SUBTLE)
                                 .add_modifier(Modifier::ITALIC),

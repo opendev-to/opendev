@@ -133,10 +133,7 @@ pub enum AppEvent {
     /// Manual compaction started (shows compaction spinner).
     CompactionStarted,
     /// Manual compaction finished (hides compaction spinner, shows result).
-    CompactionFinished {
-        success: bool,
-        message: String,
-    },
+    CompactionFinished { success: bool, message: String },
 
     // -- Plan events --
     /// Plan approval request arrived from the PresentPlanTool.

@@ -440,7 +440,11 @@ fn config_instructions_merge_concat_dedup() {
     assert_eq!(config.instructions.len(), 3);
     assert!(config.instructions.contains(&"CONTRIBUTING.md".to_string()));
     assert!(config.instructions.contains(&"docs/rules.md".to_string()));
-    assert!(config.instructions.contains(&"project-rules.md".to_string()));
+    assert!(
+        config
+            .instructions
+            .contains(&"project-rules.md".to_string())
+    );
 }
 
 /// When only one layer has instructions, they're preserved as-is.
@@ -450,11 +454,7 @@ fn config_instructions_single_layer() {
     let global = tmp.path().join("global.json");
     let project = tmp.path().join("project.json");
 
-    std::fs::write(
-        &global,
-        r#"{"instructions": ["global-rules.md"]}"#,
-    )
-    .unwrap();
+    std::fs::write(&global, r#"{"instructions": ["global-rules.md"]}"#).unwrap();
     // No project config
     let config = ConfigLoader::load(&global, &project).unwrap();
     assert_eq!(config.instructions, vec!["global-rules.md"]);
@@ -507,11 +507,7 @@ fn config_skill_paths_single_layer() {
     let global = tmp.path().join("global.json");
     let project = tmp.path().join("project.json");
 
-    std::fs::write(
-        &global,
-        r#"{"skill_paths": ["~/.opendev/extra-skills"]}"#,
-    )
-    .unwrap();
+    std::fs::write(&global, r#"{"skill_paths": ["~/.opendev/extra-skills"]}"#).unwrap();
 
     let config = ConfigLoader::load(&global, &project).unwrap();
     assert_eq!(config.skill_paths, vec!["~/.opendev/extra-skills"]);

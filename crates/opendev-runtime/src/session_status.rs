@@ -267,10 +267,7 @@ mod tests {
 
         assert_eq!(tracker.active_count(), 3);
         assert_eq!(tracker.get("sess-1"), SessionStatus::Busy);
-        assert!(matches!(
-            tracker.get("sess-2"),
-            SessionStatus::Retry { .. }
-        ));
+        assert!(matches!(tracker.get("sess-2"), SessionStatus::Retry { .. }));
 
         // Transition sess-1 from busy to retry
         tracker.set_retry("sess-1", 1, "Too Many Requests", 99999);
@@ -326,10 +323,7 @@ mod tests {
 
         tracker.set_busy("sess-1");
         let event = rx.recv().await.unwrap();
-        assert!(matches!(
-            event,
-            RuntimeEvent::SessionStatusChanged { .. }
-        ));
+        assert!(matches!(event, RuntimeEvent::SessionStatusChanged { .. }));
         if let RuntimeEvent::SessionStatusChanged {
             session_id, status, ..
         } = event

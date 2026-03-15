@@ -157,6 +157,59 @@ impl TuiRunner {
                     });
                 }
             });
+
+            // Subagent event channel bridge
+            if let Some(mut subagent_rx) = receivers.subagent_event_rx {
+                let subagent_tx = event_tx.clone();
+                tokio::spawn(async move {
+                    use opendev_tools_impl::SubagentEvent;
+                    while let Some(event) = subagent_rx.recv().await {
+                        let app_event = match event {
+                            SubagentEvent::Started {
+                                subagent_name,
+                                task,
+                            } => AppEvent::SubagentStarted {
+                                subagent_name,
+                                task,
+                            },
+                            SubagentEvent::ToolCall {
+                                subagent_name,
+                                tool_name,
+                                tool_id,
+                            } => AppEvent::SubagentToolCall {
+                                subagent_name,
+                                tool_name,
+                                tool_id,
+                            },
+                            SubagentEvent::ToolComplete {
+                                subagent_name,
+                                tool_name,
+                                tool_id,
+                                success,
+                            } => AppEvent::SubagentToolComplete {
+                                subagent_name,
+                                tool_name,
+                                tool_id,
+                                success,
+                            },
+                            SubagentEvent::Finished {
+                                subagent_name,
+                                success,
+                                result_summary,
+                                tool_call_count,
+                                shallow_warning,
+                            } => AppEvent::SubagentFinished {
+                                subagent_name,
+                                success,
+                                result_summary,
+                                tool_call_count,
+                                shallow_warning,
+                            },
+                        };
+                        let _ = subagent_tx.send(app_event);
+                    }
+                });
+            }
         }
 
         // Create the event callback for tool/agent events

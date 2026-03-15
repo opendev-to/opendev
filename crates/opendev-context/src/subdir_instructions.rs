@@ -15,10 +15,7 @@ use tracing::debug;
 const INSTRUCTION_FILENAMES: &[&str] = &["AGENTS.md", "CLAUDE.md", "OPENDEV.md", "CONTEXT.md"];
 
 /// Additional instruction files from other AI tools.
-const COMPAT_INSTRUCTION_FILES: &[&str] = &[
-    ".cursorrules",
-    ".github/copilot-instructions.md",
-];
+const COMPAT_INSTRUCTION_FILES: &[&str] = &[".cursorrules", ".github/copilot-instructions.md"];
 
 /// Maximum instruction file size to inject (50 KB).
 const MAX_INSTRUCTION_SIZE: usize = 50 * 1024;
@@ -76,7 +73,10 @@ impl SubdirInstructionTracker {
             }
         };
 
-        let canonical_root = self.project_root.canonicalize().unwrap_or_else(|_| self.project_root.clone());
+        let canonical_root = self
+            .project_root
+            .canonicalize()
+            .unwrap_or_else(|_| self.project_root.clone());
         let mut results = Vec::new();
         let mut current = dir;
 
@@ -321,7 +321,11 @@ mod tests {
         let root = tmp.path().canonicalize().unwrap();
 
         // Create a .cursorrules file at project root
-        std::fs::write(root.join(".cursorrules"), "Always use TypeScript strict mode").unwrap();
+        std::fs::write(
+            root.join(".cursorrules"),
+            "Always use TypeScript strict mode",
+        )
+        .unwrap();
 
         let file = root.join("index.ts");
         std::fs::write(&file, "").unwrap();

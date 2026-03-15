@@ -69,7 +69,13 @@ pub trait SubagentProgressCallback: Send + Sync {
     fn on_tool_complete(&self, subagent_name: &str, tool_name: &str, tool_id: &str, success: bool);
 
     /// Called when the subagent finishes (with or without error).
-    fn on_finished(&self, subagent_name: &str, success: bool, result_summary: &str);
+    fn on_finished(
+        &self,
+        subagent_name: &str,
+        success: bool,
+        result_summary: &str,
+        tool_call_count: usize,
+    );
 }
 
 /// A no-op progress callback for when the caller doesn't need progress updates.
@@ -80,7 +86,7 @@ impl SubagentProgressCallback for NoopProgressCallback {
     fn on_started(&self, _name: &str, _task: &str) {}
     fn on_tool_call(&self, _name: &str, _tool: &str, _id: &str) {}
     fn on_tool_complete(&self, _name: &str, _tool: &str, _id: &str, _success: bool) {}
-    fn on_finished(&self, _name: &str, _success: bool, _summary: &str) {}
+    fn on_finished(&self, _name: &str, _success: bool, _summary: &str, _count: usize) {}
 }
 
 /// Result of spawning a subagent, containing the result and diagnostic info.
@@ -224,7 +230,9 @@ impl SubagentManager {
                 SubAgentSpec::new(
                     name,
                     cfg.description.as_deref().unwrap_or("Custom agent"),
-                    cfg.prompt.as_deref().unwrap_or("You are a helpful assistant."),
+                    cfg.prompt
+                        .as_deref()
+                        .unwrap_or("You are a helpful assistant."),
                 )
             });
 
@@ -331,10 +339,7 @@ impl SubagentManager {
                 } else if spec.hidden {
                     tracing::warn!(agent = name, "default_agent is hidden, falling back");
                 } else if !spec.mode.can_be_primary() {
-                    tracing::warn!(
-                        agent = name,
-                        "default_agent is subagent-only, falling back"
-                    );
+                    tracing::warn!(agent = name, "default_agent is subagent-only, falling back");
                 } else {
                     return Some(&spec.name);
                 }
@@ -464,12 +469,11 @@ impl SubagentManager {
                 let mut parts = vec![spec.system_prompt.clone()];
                 parts.push("\n\n# Project Instructions\n".to_string());
                 for instr in &instructions {
-                    let filename = instr
-                        .path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    parts.push(format!("## {} ({})\n{}", filename, instr.scope, instr.content));
+                    let filename = instr.path.file_name().unwrap_or_default().to_string_lossy();
+                    parts.push(format!(
+                        "## {} ({})\n{}",
+                        filename, instr.scope, instr.content
+                    ));
                 }
                 parts.join("\n")
             }
@@ -515,7 +519,7 @@ impl SubagentManager {
                 } else {
                     agent_result.content.clone()
                 };
-                progress.on_finished(&spec.name, agent_result.success, &summary);
+                progress.on_finished(&spec.name, agent_result.success, &summary, tool_call_count);
 
                 Ok(SubagentRunResult {
                     agent_result,
@@ -525,7 +529,7 @@ impl SubagentManager {
             }
             Err(e) => {
                 let err_msg = e.to_string();
-                progress.on_finished(&spec.name, false, &err_msg);
+                progress.on_finished(&spec.name, false, &err_msg, 0);
                 Err(e)
             }
         }
@@ -696,9 +700,7 @@ mod tests {
     fn test_hidden_agents_excluded_from_names() {
         let mut mgr = SubagentManager::new();
         mgr.register(make_spec("visible"));
-        mgr.register(
-            SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true),
-        );
+        mgr.register(SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true));
 
         let names = mgr.names();
         assert!(names.contains(&"visible"));
@@ -714,9 +716,7 @@ mod tests {
     fn test_hidden_agents_excluded_from_enum_description() {
         let mut mgr = SubagentManager::new();
         mgr.register(make_spec("visible"));
-        mgr.register(
-            SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true),
-        );
+        mgr.register(SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true));
 
         let descs = mgr.build_enum_description();
         assert_eq!(descs.len(), 1);
@@ -726,9 +726,7 @@ mod tests {
     #[test]
     fn test_hidden_agents_still_gettable() {
         let mut mgr = SubagentManager::new();
-        mgr.register(
-            SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true),
-        );
+        mgr.register(SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true));
 
         // Hidden agents can still be retrieved by name (for programmatic spawning)
         assert!(mgr.get("hidden-agent").is_some());
@@ -826,9 +824,7 @@ mod tests {
     fn test_disabled_agents_excluded_from_names() {
         let mut mgr = SubagentManager::new();
         mgr.register(make_spec("active"));
-        mgr.register(
-            SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true),
-        );
+        mgr.register(SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true));
 
         let names = mgr.names();
         assert!(names.contains(&"active"));
@@ -842,9 +838,7 @@ mod tests {
     fn test_disabled_agents_excluded_from_enum_description() {
         let mut mgr = SubagentManager::new();
         mgr.register(make_spec("active"));
-        mgr.register(
-            SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true),
-        );
+        mgr.register(SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true));
 
         let descs = mgr.build_enum_description();
         assert_eq!(descs.len(), 1);
@@ -854,9 +848,7 @@ mod tests {
     #[test]
     fn test_disabled_agents_still_gettable() {
         let mut mgr = SubagentManager::new();
-        mgr.register(
-            SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true),
-        );
+        mgr.register(SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true));
 
         // Disabled agents can still be looked up (but spawn will fail)
         assert!(mgr.get("disabled-agent").is_some());
@@ -865,9 +857,7 @@ mod tests {
     #[test]
     fn test_disabled_agents_in_all_names() {
         let mut mgr = SubagentManager::new();
-        mgr.register(
-            SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true),
-        );
+        mgr.register(SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true));
 
         let all = mgr.all_names();
         assert!(
@@ -934,7 +924,10 @@ mod tests {
         );
         mgr.apply_config_overrides(&overrides);
 
-        assert!(mgr.get("build").is_none(), "Disabled agent should be removed");
+        assert!(
+            mgr.get("build").is_none(),
+            "Disabled agent should be removed"
+        );
     }
 
     #[test]
@@ -1142,7 +1135,11 @@ mod tests {
         );
 
         let result = mgr.resolve_default_agent(Some("nonexistent"));
-        assert_eq!(result, Some("build"), "Should fall back to first primary-capable agent");
+        assert_eq!(
+            result,
+            Some("build"),
+            "Should fall back to first primary-capable agent"
+        );
     }
 
     #[test]
@@ -1159,7 +1156,11 @@ mod tests {
         );
 
         let result = mgr.resolve_default_agent(Some("build"));
-        assert_eq!(result, Some("general"), "Should skip disabled and fall back");
+        assert_eq!(
+            result,
+            Some("general"),
+            "Should skip disabled and fall back"
+        );
     }
 
     #[test]
@@ -1189,7 +1190,11 @@ mod tests {
         );
 
         let result = mgr.resolve_default_agent(Some("helper"));
-        assert_eq!(result, Some("primary"), "Should skip subagent-only and fall back");
+        assert_eq!(
+            result,
+            Some("primary"),
+            "Should skip subagent-only and fall back"
+        );
     }
 
     #[test]
@@ -1201,7 +1206,11 @@ mod tests {
         );
 
         let result = mgr.resolve_default_agent(None);
-        assert_eq!(result, Some("build"), "Should return first primary-capable agent");
+        assert_eq!(
+            result,
+            Some("build"),
+            "Should return first primary-capable agent"
+        );
     }
 
     #[test]

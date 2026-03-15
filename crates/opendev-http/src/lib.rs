@@ -19,8 +19,6 @@ pub use adapted_client::AdaptedClient;
 pub use auth::CredentialStore;
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 pub use client::HttpClient;
-pub use models::{
-    HttpError, HttpResult, RetryConfig, classify_retryable_error, parse_retry_after,
-};
+pub use models::{HttpError, HttpResult, RetryConfig, classify_retryable_error, parse_retry_after};
 pub use rotation::AuthProfileManager;
 pub use user_store::UserStore;

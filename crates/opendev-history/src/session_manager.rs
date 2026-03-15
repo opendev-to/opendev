@@ -1112,9 +1112,7 @@ mod tests {
         session
             .metadata
             .insert("title".to_string(), serde_json::json!("My task (fork #2)"));
-        session
-            .messages
-            .push(make_msg(Role::User, "hello"));
+        session.messages.push(make_msg(Role::User, "hello"));
         mgr.save_session(&session).unwrap();
 
         let forked = mgr.fork_session("double-fork-src", None).unwrap();

@@ -17,16 +17,16 @@ use opendev_agents::react_loop::{ReactLoop, ReactLoopConfig};
 use opendev_agents::traits::{AgentError, AgentEventCallback, AgentResult};
 use opendev_context::{ArtifactIndex, ContextCompactor};
 use opendev_history::SessionManager;
-use opendev_history::topic_detector::{TopicDetector, SimpleMessage};
+use opendev_history::topic_detector::{SimpleMessage, TopicDetector};
 use opendev_http::HttpClient;
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_http::adapters::base::ProviderAdapter;
+use opendev_mcp::McpManager;
 use opendev_models::AppConfig;
 use opendev_models::message::{ChatMessage, Role};
 use opendev_repl::HandlerRegistry;
 use opendev_repl::query_enhancer::QueryEnhancer;
 use opendev_runtime::CostTracker;
-use opendev_mcp::McpManager;
 use opendev_tools_core::{BaseTool, ToolContext, ToolRegistry};
 use opendev_tools_impl::*;
 
@@ -78,6 +78,8 @@ pub struct ToolChannelReceivers {
     pub ask_user_rx: opendev_runtime::AskUserReceiver,
     pub plan_approval_rx: opendev_runtime::PlanApprovalReceiver,
     pub tool_approval_rx: opendev_runtime::ToolApprovalReceiver,
+    pub subagent_event_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<opendev_tools_impl::SubagentEvent>>,
 }
 
 /// Register all built-in tools into the registry.
@@ -156,6 +158,7 @@ fn register_default_tools(
             ask_user_rx,
             plan_approval_rx,
             tool_approval_rx,
+            subagent_event_rx: None, // Populated later when SpawnSubagentTool is registered
         },
         tool_approval_tx,
     )
@@ -225,15 +228,14 @@ impl AgentRuntime {
         // Clean up overflow files older than 7 days on startup.
         opendev_tools_core::cleanup_overflow_dir(&overflow_dir);
         let tool_registry = Arc::new(ToolRegistry::with_overflow_dir(overflow_dir));
-        let (todo_manager, channel_receivers, tool_approval_tx) =
+        let (todo_manager, mut channel_receivers, tool_approval_tx) =
             register_default_tools(&tool_registry);
 
         // BatchTool needs Arc<ToolRegistry> for dispatching calls.
         tool_registry.register(Arc::new(BatchTool::new(Arc::clone(&tool_registry))));
 
         // Register custom tools from .opendev/tools/ and .opencode/tool/ directories.
-        let custom_tools =
-            opendev_tools_impl::custom_tool::discover_custom_tools(working_dir);
+        let custom_tools = opendev_tools_impl::custom_tool::discover_custom_tools(working_dir);
         for tool in custom_tools {
             info!(name = tool.name(), "Registered custom tool");
             tool_registry.register(Arc::new(tool));
@@ -470,9 +472,8 @@ impl AgentRuntime {
 
         // Register SpawnSubagentTool now that we have Arc<ToolRegistry> and Arc<HttpClient>
         let session_dir = session_manager.session_dir().to_path_buf();
-        let mut subagent_manager = opendev_agents::SubagentManager::with_builtins_and_custom(
-            working_dir,
-        );
+        let mut subagent_manager =
+            opendev_agents::SubagentManager::with_builtins_and_custom(working_dir);
         // Apply inline agent config overrides from opendev.json
         if !config.agents.is_empty() {
             subagent_manager.apply_config_overrides(&config.agents);
@@ -482,14 +483,21 @@ impl AgentRuntime {
             );
         }
         let subagent_manager = Arc::new(subagent_manager);
-        tool_registry.register(Arc::new(SpawnSubagentTool::new(
-            subagent_manager,
-            Arc::clone(&tool_registry),
-            Arc::clone(&http_client),
-            session_dir,
-            &config.model,
-            working_dir.display().to_string(),
-        )));
+        let (subagent_event_tx, subagent_event_rx) =
+            tokio::sync::mpsc::unbounded_channel::<opendev_tools_impl::SubagentEvent>();
+        tool_registry.register(Arc::new(
+            SpawnSubagentTool::new(
+                subagent_manager,
+                Arc::clone(&tool_registry),
+                Arc::clone(&http_client),
+                session_dir,
+                &config.model,
+                working_dir.display().to_string(),
+            )
+            .with_event_sender(subagent_event_tx),
+        ));
+        // Attach subagent event receiver to channel_receivers for TUI bridging
+        channel_receivers.subagent_event_rx = Some(subagent_event_rx);
         info!(
             tool_count = tool_registry.tool_names().len(),
             "Registered all tools including spawn_subagent"
@@ -590,10 +598,11 @@ impl AgentRuntime {
         );
 
         // Re-register invoke_skill with MCP prompt support.
-        self.tool_registry.register(Arc::new(InvokeSkillTool::with_mcp(
-            Arc::clone(&self.skill_loader),
-            Arc::clone(&manager),
-        )));
+        self.tool_registry
+            .register(Arc::new(InvokeSkillTool::with_mcp(
+                Arc::clone(&self.skill_loader),
+                Arc::clone(&manager),
+            )));
 
         self.mcp_manager = Some(manager);
     }
@@ -827,19 +836,19 @@ impl AgentRuntime {
 
         let compacted = if let Some((payload, _middle_count, keep_recent)) = build_result {
             // Call LLM for summarization
-            let summary_text: Option<String> = match self.http_client.post_json(&payload, None).await
-            {
-                Ok(result) => result
-                    .body
-                    .as_ref()
-                    .and_then(|body| body.pointer("/choices/0/message/content"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                Err(e) => {
-                    warn!("LLM compaction request failed: {e}, using fallback");
-                    None
-                }
-            };
+            let summary_text: Option<String> =
+                match self.http_client.post_json(&payload, None).await {
+                    Ok(result) => result
+                        .body
+                        .as_ref()
+                        .and_then(|body| body.pointer("/choices/0/message/content"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    Err(e) => {
+                        warn!("LLM compaction request failed: {e}, using fallback");
+                        None
+                    }
+                };
 
             let summary = match summary_text {
                 Some(text) if !text.is_empty() => {

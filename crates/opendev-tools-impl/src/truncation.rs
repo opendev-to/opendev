@@ -218,7 +218,10 @@ mod tests {
 
     #[test]
     fn test_truncation_by_lines() {
-        let text = (0..10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let text = (0..10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let result = truncate_output(&text, Some(3), Some(100_000), TruncateDirection::Head);
         assert!(result.truncated);
         assert!(result.content.contains("line 0"));
@@ -251,7 +254,10 @@ mod tests {
 
     #[test]
     fn test_truncation_tail_direction() {
-        let text = (0..10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let text = (0..10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let result = truncate_output(&text, Some(3), Some(100_000), TruncateDirection::Tail);
         assert!(result.truncated);
         // Tail keeps the last 3 lines.

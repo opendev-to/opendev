@@ -24,8 +24,8 @@ use crate::config::{
 };
 use crate::error::{McpError, McpResult};
 use crate::models::{
-    JsonRpcNotification, JsonRpcRequest, McpContent, McpPromptResult, McpPromptSummary, McpResource,
-    McpServerInfo, McpTool, McpToolResult, McpToolSchema,
+    JsonRpcNotification, JsonRpcRequest, McpContent, McpPromptResult, McpPromptSummary,
+    McpResource, McpServerInfo, McpTool, McpToolResult, McpToolSchema,
 };
 use crate::transport::{self, McpTransport};
 
@@ -183,8 +183,7 @@ impl NotificationHandle {
             Ok(response) => {
                 if let Some(result) = response.result
                     && let Some(tools_val) = result.get("tools")
-                    && let Ok(tools) =
-                        serde_json::from_value::<Vec<McpTool>>(tools_val.clone())
+                    && let Ok(tools) = serde_json::from_value::<Vec<McpTool>>(tools_val.clone())
                 {
                     // Update cache.
                     let mut cache = self.tool_schema_cache.write().await;
@@ -1365,9 +1364,9 @@ impl McpManager {
         arguments: Option<HashMap<String, String>>,
     ) -> McpResult<McpPromptResult> {
         let connections = self.connections.read().await;
-        let conn = connections.get(server_name).ok_or_else(|| {
-            McpError::ServerNotFound(server_name.to_string())
-        })?;
+        let conn = connections
+            .get(server_name)
+            .ok_or_else(|| McpError::ServerNotFound(server_name.to_string()))?;
 
         let mut params = HashMap::new();
         params.insert(
@@ -1394,9 +1393,9 @@ impl McpManager {
             )));
         }
 
-        let result = response.result.ok_or_else(|| {
-            McpError::Protocol("prompts/get returned no result".to_string())
-        })?;
+        let result = response
+            .result
+            .ok_or_else(|| McpError::Protocol("prompts/get returned no result".to_string()))?;
 
         serde_json::from_value(result)
             .map_err(|e| McpError::Protocol(format!("Failed to parse prompt result: {e}")))
@@ -1450,9 +1449,9 @@ impl McpManager {
         resource_uri: &str,
     ) -> McpResult<Vec<McpContent>> {
         let connections = self.connections.read().await;
-        let conn = connections.get(server_name).ok_or_else(|| {
-            McpError::ServerNotFound(server_name.to_string())
-        })?;
+        let conn = connections
+            .get(server_name)
+            .ok_or_else(|| McpError::ServerNotFound(server_name.to_string()))?;
 
         let mut params = HashMap::new();
         params.insert(
@@ -1476,9 +1475,9 @@ impl McpManager {
             )));
         }
 
-        let result = response.result.ok_or_else(|| {
-            McpError::Protocol("resources/read returned no result".to_string())
-        })?;
+        let result = response
+            .result
+            .ok_or_else(|| McpError::Protocol("resources/read returned no result".to_string()))?;
 
         // Parse content array from response
         let contents = result

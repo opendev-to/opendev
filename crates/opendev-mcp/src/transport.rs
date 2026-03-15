@@ -206,7 +206,10 @@ impl McpTransport for StdioTransport {
                                             let _ = notif_tx.send(notif);
                                         }
                                         Err(e) => {
-                                            debug!("Received server notification (unparseable: {})", e);
+                                            debug!(
+                                                "Received server notification (unparseable: {})",
+                                                e
+                                            );
                                         }
                                     }
                                 }
@@ -829,7 +832,10 @@ while True:
         let descendants = collect_descendant_pids(my_pid);
         // We can't assert exact count (test runner may have threads),
         // but the function should not panic or hang.
-        assert!(descendants.len() < 100, "Unreasonable number of descendants");
+        assert!(
+            descendants.len() < 100,
+            "Unreasonable number of descendants"
+        );
     }
 
     #[cfg(unix)]

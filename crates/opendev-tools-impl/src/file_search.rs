@@ -1358,7 +1358,10 @@ mod tests {
         let ctx = ToolContext::new(&dir_path);
         let args = make_args(&[
             ("pattern", serde_json::json!("x")),
-            ("path", serde_json::json!(dir_path.join("nonexistent").to_str().unwrap())),
+            (
+                "path",
+                serde_json::json!(dir_path.join("nonexistent").to_str().unwrap()),
+            ),
         ]);
 
         let result = tool.execute(args, &ctx).await;
@@ -1621,6 +1624,9 @@ mod ast_grep_tests {
         assert!(result.success);
         let output = result.output.unwrap();
         assert!(output.contains("alpha"), "should find match in .rs file");
-        assert!(!output.contains("beta"), "should not find match in .txt file");
+        assert!(
+            !output.contains("beta"),
+            "should not find match in .txt file"
+        );
     }
 }

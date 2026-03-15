@@ -216,12 +216,18 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
         });
     }
 
-    fn on_finished(&self, subagent_name: &str, success: bool, result_summary: &str) {
+    fn on_finished(
+        &self,
+        subagent_name: &str,
+        success: bool,
+        result_summary: &str,
+        tool_call_count: usize,
+    ) {
         let _ = self.tx.send(SubagentEvent::Finished {
             subagent_name: subagent_name.to_string(),
             success,
             result_summary: result_summary.to_string(),
-            tool_call_count: 0,
+            tool_call_count,
             shallow_warning: None,
         });
     }
@@ -679,7 +685,7 @@ mod tests {
         cb.on_started("test-agent", "do a thing");
         cb.on_tool_call("test-agent", "read_file", "tc-1");
         cb.on_tool_complete("test-agent", "read_file", "tc-1", true);
-        cb.on_finished("test-agent", true, "Done");
+        cb.on_finished("test-agent", true, "Done", 3);
 
         let evt = rx.recv().await.unwrap();
         assert!(matches!(evt, SubagentEvent::Started { .. }));
@@ -721,6 +727,11 @@ mod tests {
 
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("cannot spawn other subagents"));
+        assert!(
+            result
+                .error
+                .unwrap()
+                .contains("cannot spawn other subagents")
+        );
     }
 }

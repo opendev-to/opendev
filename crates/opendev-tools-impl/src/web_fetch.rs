@@ -178,8 +178,8 @@ impl BaseTool for WebFetchTool {
 
         // Determine if we should extract markdown based on format and extract_markdown params.
         let extract_markdown = match format {
-            "html" => false,   // raw HTML requested
-            "text" => false,   // plain text, no conversion
+            "html" => false, // raw HTML requested
+            "text" => false, // plain text, no conversion
             _ => {
                 // "markdown" or default: respect extract_markdown param or auto-detect
                 args.get("extract_markdown")
@@ -618,7 +618,10 @@ mod tests {
         let tool = WebFetchTool;
         let ctx = ToolContext::new("/tmp");
         let args = make_args(&[
-            ("url", serde_json::json!("http://this-host-does-not-exist-12345.invalid")),
+            (
+                "url",
+                serde_json::json!("http://this-host-does-not-exist-12345.invalid"),
+            ),
             ("timeout", serde_json::json!(999)),
         ]);
         // Should not panic — timeout is capped at 120.
@@ -633,7 +636,10 @@ mod tests {
         let ctx = ToolContext::new("/tmp");
         // We can't easily test with a real server, but we can verify the parameter is accepted.
         let args = make_args(&[
-            ("url", serde_json::json!("http://this-host-does-not-exist-12345.invalid")),
+            (
+                "url",
+                serde_json::json!("http://this-host-does-not-exist-12345.invalid"),
+            ),
             ("format", serde_json::json!("html")),
         ]);
         let result = tool.execute(args, &ctx).await;
