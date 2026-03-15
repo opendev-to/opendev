@@ -21,8 +21,9 @@ use crate::formatters::display::strip_system_reminders;
 use crate::formatters::markdown::MarkdownRenderer;
 use crate::formatters::style_tokens::{self, Indent};
 use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts};
+use crate::widgets::nested_tool::SubagentDisplayState;
 use crate::widgets::progress::TaskProgress;
-use crate::widgets::spinner::{COMPACTION_CHAR, COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
+use crate::widgets::spinner::{COMPACTION_FRAMES, COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
 
 /// Check if a tool name is an edit/write tool that produces diffs.
 pub fn is_diff_tool(name: &str) -> bool {
@@ -215,8 +216,12 @@ pub struct ConversationWidget<'a> {
     spinner_char: char,
     /// Whether manual compaction is in progress.
     compaction_active: bool,
+    /// Animated compaction spinner character for the current frame.
+    compaction_spinner_char: char,
     /// Pre-built cached lines for the static message portion (if available).
     cached_lines: Option<&'a [Line<'static>]>,
+    /// Active subagent executions (rendered inline in spinner area).
+    active_subagents: &'a [SubagentDisplayState],
 }
 
 impl<'a> ConversationWidget<'a> {
@@ -231,7 +236,9 @@ impl<'a> ConversationWidget<'a> {
             task_progress: None,
             spinner_char: SPINNER_FRAMES[0],
             compaction_active: false,
+            compaction_spinner_char: COMPACTION_FRAMES[0],
             cached_lines: None,
+            active_subagents: &[],
         }
     }
 
@@ -270,11 +277,21 @@ impl<'a> ConversationWidget<'a> {
         self
     }
 
+    pub fn compaction_spinner_char(mut self, ch: char) -> Self {
+        self.compaction_spinner_char = ch;
+        self
+    }
+
     /// Supply pre-built cached lines for the static message portion.
     /// When set, `build_lines()` is skipped and these lines are used directly,
     /// with dynamic spinner/progress lines still built fresh each frame.
     pub fn cached_lines(mut self, lines: &'a [Line<'static>]) -> Self {
         self.cached_lines = Some(lines);
+        self
+    }
+
+    pub fn active_subagents(mut self, subagents: &'a [SubagentDisplayState]) -> Self {
+        self.active_subagents = subagents;
         self
     }
 
@@ -457,9 +474,8 @@ impl<'a> ConversationWidget<'a> {
                 }
 
                 // Nested tool calls (from subagent execution)
-                for nested in &tc.nested_calls {
-                    let nested_line = format_nested_tool_call(nested, 1);
-                    lines.push(nested_line);
+                for (i, nested) in tc.nested_calls.iter().enumerate() {
+                    lines.push(format_nested_tool_call(nested, i));
                 }
             }
 
@@ -482,6 +498,8 @@ impl<'a> ConversationWidget<'a> {
     /// These are rendered outside the scrollable area so that spinner
     /// animation (60ms ticks) doesn't shift scroll math or cause jitter.
     fn build_spinner_lines(&self) -> Vec<Line<'a>> {
+        const MAX_VISIBLE_NESTED: usize = 3;
+
         let mut lines: Vec<Line> = Vec::new();
 
         let active_unfinished: Vec<_> = self
@@ -491,10 +509,10 @@ impl<'a> ConversationWidget<'a> {
             .collect();
 
         if self.compaction_active {
-            // Compaction spinner: ✻ Compacting conversation…
+            // Compaction spinner: animated flip-clock cycle
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("{} ", COMPACTION_CHAR),
+                    format!("{} ", self.compaction_spinner_char),
                     Style::default()
                         .fg(style_tokens::BLUE_BRIGHT)
                         .add_modifier(Modifier::BOLD),
@@ -506,7 +524,133 @@ impl<'a> ConversationWidget<'a> {
                         .add_modifier(Modifier::ITALIC),
                 ),
             ]));
-        } else if !active_unfinished.is_empty() {
+        }
+
+        // Render active subagents inline
+        for subagent in self.active_subagents {
+            if subagent.finished {
+                // Finished subagent: ⏺ Explore(task) \n  ⎿  Done (N tool uses · Xs)
+                let verb = subagent.display_verb();
+                let task_preview = if subagent.task.len() > 50 {
+                    format!("{}…", &subagent.task[..50])
+                } else {
+                    subagent.task.clone()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{COMPLETED_CHAR} "),
+                        Style::default().fg(style_tokens::GREEN_BRIGHT),
+                    ),
+                    Span::styled(
+                        verb.to_string(),
+                        Style::default()
+                            .fg(style_tokens::PRIMARY)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("({task_preview})"),
+                        Style::default().fg(style_tokens::SUBTLE),
+                    ),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "  {}  Done ({} tool uses \u{00b7} {}s)",
+                        CONTINUATION_CHAR,
+                        subagent.tool_call_count,
+                        subagent.elapsed_secs()
+                    ),
+                    Style::default().fg(style_tokens::SUBTLE),
+                )));
+            } else {
+                // Running subagent header: ⠋ Explore(task)
+                let frame_idx = subagent.tick % SPINNER_FRAMES.len();
+                let spinner = SPINNER_FRAMES[frame_idx];
+                let verb = subagent.display_verb();
+                let task_preview = if subagent.task.len() > 50 {
+                    format!("{}…", &subagent.task[..50])
+                } else {
+                    subagent.task.clone()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{spinner} "),
+                        Style::default().fg(style_tokens::BLUE_BRIGHT),
+                    ),
+                    Span::styled(
+                        verb.to_string(),
+                        Style::default()
+                            .fg(style_tokens::PRIMARY)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("({task_preview})"),
+                        Style::default().fg(style_tokens::SUBTLE),
+                    ),
+                ]));
+
+                if subagent.active_tools.is_empty() && subagent.completed_tools.is_empty() {
+                    // No tools yet: show initializing
+                    lines.push(Line::from(Span::styled(
+                        format!("  {}  Initializing\u{2026}", CONTINUATION_CHAR),
+                        Style::default()
+                            .fg(style_tokens::SUBTLE)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                } else {
+                    // Collect visible tools: last MAX_VISIBLE_NESTED from completed + all active
+                    let active_names: Vec<&str> = subagent
+                        .active_tools
+                        .values()
+                        .map(|t| t.tool_name.as_str())
+                        .collect();
+                    let completed_count = subagent.completed_tools.len();
+                    let completed_start = completed_count.saturating_sub(MAX_VISIBLE_NESTED);
+                    let visible_completed: Vec<&str> = subagent.completed_tools
+                        [completed_start..]
+                        .iter()
+                        .map(|t| t.tool_name.as_str())
+                        .collect();
+
+                    let total_tools = completed_count + active_names.len();
+                    let visible_count = visible_completed.len() + active_names.len();
+                    let hidden_count = total_tools.saturating_sub(visible_count);
+
+                    // Render visible tool names
+                    let all_visible: Vec<&str> = visible_completed
+                        .iter()
+                        .chain(active_names.iter())
+                        .copied()
+                        .collect();
+
+                    for (i, tool_name) in all_visible.iter().enumerate() {
+                        if i == 0 {
+                            lines.push(Line::from(Span::styled(
+                                format!("  {}  {tool_name}", CONTINUATION_CHAR),
+                                Style::default().fg(style_tokens::SUBTLE),
+                            )));
+                        } else {
+                            lines.push(Line::from(Span::styled(
+                                format!("     {tool_name}"),
+                                Style::default().fg(style_tokens::SUBTLE),
+                            )));
+                        }
+                    }
+
+                    if hidden_count > 0 {
+                        lines.push(Line::from(Span::styled(
+                            format!(
+                                "     +{hidden_count} more tool uses (ctrl+o to expand)"
+                            ),
+                            Style::default()
+                                .fg(style_tokens::SUBTLE)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                    }
+                }
+            }
+        }
+
+        if !self.compaction_active && !active_unfinished.is_empty() {
             for tool in &active_unfinished {
                 let frame_idx = tool.tick_count % SPINNER_FRAMES.len();
                 let spinner = SPINNER_FRAMES[frame_idx];
@@ -579,9 +723,15 @@ fn format_tool_call(tc: &DisplayToolCall) -> Line<'static> {
     ])
 }
 
-/// Format a nested tool call with tree indent.
-fn format_nested_tool_call(tc: &DisplayToolCall, depth: usize) -> Line<'static> {
-    let indent = Indent::for_depth(depth);
+/// Format a nested tool call with continuation-style indent.
+///
+/// Index 0 uses `⎿` prefix; subsequent items use space indent.
+fn format_nested_tool_call(tc: &DisplayToolCall, index: usize) -> Line<'static> {
+    let prefix = if index == 0 {
+        format!("  {}  ", CONTINUATION_CHAR)
+    } else {
+        "     ".to_string()
+    };
 
     let (icon, icon_color) = if tc.success {
         (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
@@ -592,10 +742,7 @@ fn format_nested_tool_call(tc: &DisplayToolCall, depth: usize) -> Line<'static> 
     let (verb, arg) = format_tool_call_parts(&tc.name, &tc.arguments);
 
     Line::from(vec![
-        Span::styled(
-            format!("{indent}\u{2514}\u{2500} "),
-            Style::default().fg(style_tokens::SUBTLE),
-        ),
+        Span::styled(prefix, Style::default().fg(style_tokens::SUBTLE)),
         Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
         Span::styled(
             verb,

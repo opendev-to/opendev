@@ -13,7 +13,7 @@ pub mod welcome_panel;
 
 pub use conversation::ConversationWidget;
 pub use input::InputWidget;
-pub use nested_tool::{NestedToolWidget, SubagentDisplayState};
+pub use nested_tool::SubagentDisplayState;
 pub use progress::TaskProgress;
 pub use spinner::SpinnerState;
 pub use status_bar::StatusBarWidget;

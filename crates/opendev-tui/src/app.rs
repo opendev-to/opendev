@@ -18,7 +18,7 @@ use crate::event::{AppEvent, EventHandler};
 use crate::history::CommandHistory;
 use crate::managers::BackgroundTaskManager;
 use crate::widgets::{
-    ConversationWidget, InputWidget, NestedToolWidget, StatusBarWidget, TodoDisplayItem,
+    ConversationWidget, InputWidget, StatusBarWidget, TodoDisplayItem,
     TodoDisplayStatus, TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
 };
 use crossterm::{
@@ -1018,10 +1018,9 @@ impl App {
     fn render(&self, frame: &mut ratatui::Frame) {
         let area = frame.area();
 
-        // Layout: conversation (flexible) | todo panel (if active) | subagent display (if active)
-        //         | input | status bar
-        // Tool spinners and thinking progress are rendered inline in the conversation area.
-        let has_subagents = !self.state.active_subagents.is_empty();
+        // Layout: conversation (flexible) | todo panel (if active) | input | status bar
+        // Tool spinners, thinking progress, and subagent displays are rendered inline
+        // in the conversation area's spinner section.
         let has_todos = !self.state.todo_items.is_empty();
         let todo_height: u16 = if has_todos {
             if self.state.todo_expanded {
@@ -1034,31 +1033,18 @@ impl App {
         } else {
             0
         };
-        let subagent_height: u16 = if has_subagents {
-            // Dynamic height: header + 2 lines per subagent + tool lines
-            let lines: u16 = self
-                .state
-                .active_subagents
-                .iter()
-                .map(|s| 1 + s.active_tools.len() as u16 + s.completed_tools.len().min(3) as u16)
-                .sum();
-            (lines + 2).min(12) // Cap at 12 lines
-        } else {
-            0
-        };
 
         let chunks = layout::Layout::default()
             .direction(layout::Direction::Vertical)
             .constraints(
                 [
-                    layout::Constraint::Min(5),                  // conversation
-                    layout::Constraint::Length(todo_height),     // todo panel
-                    layout::Constraint::Length(subagent_height), // subagent display
+                    layout::Constraint::Min(5),              // conversation
+                    layout::Constraint::Length(todo_height),  // todo panel
                     layout::Constraint::Length({
                         let input_lines = self.state.input_buffer.matches('\n').count() + 1;
                         (input_lines as u16 + 1).min(8) // +1 for separator, cap at 8
                     }), // input
-                    layout::Constraint::Length(2),               // status bar
+                    layout::Constraint::Length(2),            // status bar
                 ]
                 .as_ref(),
             )
@@ -1083,9 +1069,15 @@ impl App {
                     .working_dir(&self.state.working_dir)
                     .mode(mode_str)
                     .active_tools(&self.state.active_tools)
+                    .active_subagents(&self.state.active_subagents)
                     .task_progress(self.state.task_progress.as_ref())
                     .spinner_char(self.state.spinner.current())
-                    .compaction_active(self.state.compaction_active);
+                    .compaction_active(self.state.compaction_active)
+                    .compaction_spinner_char({
+                        use crate::widgets::spinner::COMPACTION_FRAMES;
+                        let tick = self.state.spinner.tick_count() as usize;
+                        COMPACTION_FRAMES[tick % COMPACTION_FRAMES.len()]
+                    });
             if !self.state.cached_lines.is_empty() {
                 conversation = conversation.cached_lines(&self.state.cached_lines);
             }
@@ -1103,12 +1095,6 @@ impl App {
             frame.render_widget(todo_widget, chunks[1]);
         }
 
-        // Subagent display (only if active)
-        if has_subagents {
-            let subagent_display = NestedToolWidget::new(&self.state.active_subagents);
-            frame.render_widget(subagent_display, chunks[2]);
-        }
-
         // Input
         let input = InputWidget::new(
             &self.state.input_buffer,
@@ -1116,26 +1102,26 @@ impl App {
             mode_str,
             self.state.pending_messages.len(),
         );
-        frame.render_widget(input, chunks[3]);
+        frame.render_widget(input, chunks[2]);
 
         // Autocomplete popup (rendered over conversation area)
         if self.state.autocomplete.is_visible() {
-            self.render_autocomplete(frame, chunks[3]);
+            self.render_autocomplete(frame, chunks[2]);
         }
 
         // Plan approval panel (rendered over input area when active)
         if self.plan_approval_controller.active() {
-            self.render_plan_approval(frame, chunks[3]);
+            self.render_plan_approval(frame, chunks[2]);
         }
 
         // Ask-user panel (rendered over input area when active)
         if self.ask_user_controller.active() {
-            self.render_ask_user(frame, chunks[3]);
+            self.render_ask_user(frame, chunks[2]);
         }
 
         // Tool approval panel (rendered over input area when active)
         if self.approval_controller.active() {
-            self.render_approval(frame, chunks[3]);
+            self.render_approval(frame, chunks[2]);
         }
 
         // Status bar
@@ -1153,7 +1139,7 @@ impl App {
         .session_cost(self.state.session_cost)
         .mcp_status(self.state.mcp_status, self.state.mcp_has_errors)
         .background_tasks(self.state.background_task_count);
-        frame.render_widget(status, chunks[4]);
+        frame.render_widget(status, chunks[3]);
     }
 
     /// Shared helper that renders a popup panel matching the Python Textual style:
@@ -1540,6 +1526,7 @@ impl App {
                     || !self.state.active_subagents.is_empty()
                     || self.state.task_progress.is_some()
                     || !self.state.welcome_panel.fade_complete
+                    || self.state.compaction_active
                 {
                     self.state.dirty = true;
                 }
@@ -1882,8 +1869,43 @@ impl App {
                 {
                     subagent.finish(success, result_summary, tool_call_count, shallow_warning);
                 }
-                // Remove finished subagents after marking them
-                // (keep them for one more render so the user sees the result)
+
+                // Populate nested_calls on the most recent spawn_subagent tool call
+                // so finished subagent data transitions to cached conversation lines.
+                if let Some(subagent) = self
+                    .state
+                    .active_subagents
+                    .iter()
+                    .find(|s| s.name == subagent_name && s.finished)
+                {
+                    let nested: Vec<DisplayToolCall> = subagent
+                        .completed_tools
+                        .iter()
+                        .map(|ct| DisplayToolCall {
+                            name: ct.tool_name.clone(),
+                            arguments: std::collections::HashMap::new(),
+                            summary: None,
+                            success: ct.success,
+                            collapsed: true,
+                            result_lines: Vec::new(),
+                            nested_calls: Vec::new(),
+                        })
+                        .collect();
+
+                    // Find the most recent spawn_subagent DisplayToolCall matching this subagent
+                    for msg in self.state.messages.iter_mut().rev() {
+                        if let Some(tc) = &mut msg.tool_call
+                            && tc.name == "spawn_subagent"
+                            && tc.nested_calls.is_empty()
+                        {
+                            tc.nested_calls = nested;
+                            break;
+                        }
+                    }
+
+                    self.state.message_generation += 1;
+                }
+
                 self.state.dirty = true;
             }
 
@@ -2009,7 +2031,21 @@ impl App {
             AppEvent::CompactionFinished { success, message } => {
                 self.state.compaction_active = false;
                 if success {
-                    self.push_system_message(message);
+                    // Clear display (same as /clear) then show the compaction summary
+                    self.state.messages.clear();
+                    self.state.scroll_offset = 0;
+                    self.state.user_scrolled = false;
+                    self.state.cached_lines.clear();
+                    self.state.per_message_hashes.clear();
+                    self.state.per_message_line_counts.clear();
+                    // Push summary as assistant message so markdown renders nicely
+                    self.state.messages.push(DisplayMessage {
+                        role: DisplayRole::Assistant,
+                        content: message,
+                        tool_call: None,
+                        collapsed: false,
+                    });
+                    self.state.message_generation += 1;
                 } else {
                     self.push_system_message(format!("Compaction failed: {message}"));
                 }
@@ -2766,7 +2802,7 @@ impl App {
         }
 
         // Advance spinner animation
-        if self.state.agent_active || !self.state.active_tools.is_empty() {
+        if self.state.agent_active || !self.state.active_tools.is_empty() || self.state.compaction_active {
             self.state.spinner.tick();
         }
 
@@ -2789,10 +2825,11 @@ impl App {
                 subagent.advance_tick();
             }
         }
-        // Remove subagents that finished more than 3 seconds ago
+        // Remove finished subagents immediately — their data has been
+        // transferred to nested_calls in the conversation history.
         self.state
             .active_subagents
-            .retain(|s| !s.finished || s.elapsed_secs() < 3);
+            .retain(|s| !s.finished);
 
         // Update task progress elapsed time from wall clock
         if let Some(ref mut progress) = self.state.task_progress {

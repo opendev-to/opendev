@@ -131,6 +131,16 @@ impl SubagentDisplayState {
     pub fn elapsed_secs(&self) -> u64 {
         self.started_at.elapsed().as_secs()
     }
+
+    /// Human-friendly display verb for inline rendering.
+    pub fn display_verb(&self) -> &str {
+        match self.name.as_str() {
+            "Code-Explorer" | "code_explorer" => "Explore",
+            "Planner" | "planner" => "Plan",
+            "ask-user" | "ask_user" => "AskUser",
+            _ => &self.name,
+        }
+    }
 }
 
 /// State for an active nested tool call.

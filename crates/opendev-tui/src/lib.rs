@@ -30,6 +30,6 @@ pub use formatters::{
     format_tool_call_parts, format_warning, strip_system_reminders, tool_color, truncate_output,
 };
 pub use widgets::{
-    NestedToolWidget, SpinnerState, SubagentDisplayState, TaskProgress, ThinkingBlock,
+    SpinnerState, SubagentDisplayState, TaskProgress, ThinkingBlock,
     ThinkingPhase, TodoDisplayItem, TodoDisplayStatus, TodoPanelWidget,
 };

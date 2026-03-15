@@ -18,8 +18,8 @@ pub const SPINNER_FRAMES: &[char] = &[
     '\u{280f}', // ⠏
 ];
 
-/// Compaction spinner character (matches Claude Code `✻`).
-pub const COMPACTION_CHAR: char = '\u{273b}'; // ✻
+/// Compaction spinner frames (flip-clock cycle: ⦾ ⦿ ⎈ ⌾).
+pub const COMPACTION_FRAMES: &[char] = &['\u{29be}', '\u{29bf}', '\u{2388}', '\u{233e}'];
 
 /// Completed/stopped indicator (matches Python `⏺`).
 pub const COMPLETED_CHAR: char = '\u{23fa}'; // ⏺

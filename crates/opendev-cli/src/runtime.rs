@@ -823,6 +823,8 @@ impl AgentRuntime {
             None
         };
 
+        let mut summary_for_display = String::new();
+
         let compacted = if let Some((payload, _middle_count, keep_recent)) = build_result {
             // Call LLM for summarization
             let summary_text: Option<String> = match self.http_client.post_json(&payload, None).await
@@ -846,6 +848,7 @@ impl AgentRuntime {
                         summary_len = text.len(),
                         "Manual LLM compaction succeeded"
                     );
+                    summary_for_display = text.clone();
                     text
                 }
                 _ => {
@@ -889,9 +892,15 @@ impl AgentRuntime {
             warn!("Failed to save compacted session: {e}");
         }
 
-        Ok(format!(
+        // Return stats + LLM summary so the TUI can display what was preserved
+        let stats = format!(
             "Conversation compacted: {original_count} messages \u{2192} {compacted_count} messages."
-        ))
+        );
+        if summary_for_display.is_empty() {
+            Ok(stats)
+        } else {
+            Ok(format!("{stats}\n\n{summary_for_display}"))
+        }
     }
 }
 
