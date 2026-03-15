@@ -342,6 +342,7 @@ fn prepare_command(command: &str) -> String {
 // Kill an entire process group
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 fn kill_process_group(pgid: u32) {
     unsafe {
         // Graceful shutdown: SIGTERM first, then SIGKILL after a brief grace period.
@@ -357,6 +358,12 @@ fn kill_process_group(pgid: u32) {
             libc::kill(-(pgid as i32), libc::SIGKILL);
         }
     }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pgid: u32) {
+    // On Windows, process groups are handled differently.
+    // The child.kill() call in tokio already terminates the process tree.
 }
 
 // ---------------------------------------------------------------------------
@@ -430,11 +437,15 @@ impl BashTool {
             .stderr(std::process::Stdio::piped());
 
         // Create new process group on Unix for clean kill
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setpgid(0, 0);
+                    Ok(())
+                });
+            }
         }
 
         let mut child = match cmd.spawn() {
@@ -653,11 +664,15 @@ impl BashTool {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setpgid(0, 0);
+                    Ok(())
+                });
+            }
         }
 
         let mut child = match cmd.spawn() {
