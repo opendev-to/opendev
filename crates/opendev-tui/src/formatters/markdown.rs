@@ -249,7 +249,9 @@ fn parse_bold_spans(text: &str) -> Vec<Span<'static>> {
                 let bold_text: Cow<'static, str> = Cow::Owned(after_start[..bold_end].to_string());
                 spans.push(Span::styled(
                     bold_text,
-                    Style::default().fg(style_tokens::BOLD_FG).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(style_tokens::BOLD_FG)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 remaining = &after_start[bold_end + 2..];
             } else {

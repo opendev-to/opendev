@@ -737,6 +737,17 @@ impl ReactLoop {
         let mut completion_nudge_sent = false;
         let mut consecutive_reads: usize = 0;
 
+        // Spawn accumulation buffer: when gpt-4o sends spawn_subagent calls
+        // one per LLM response instead of batching, we accumulate them here
+        // and execute in parallel once a non-spawn action arrives.
+        struct PendingSpawn {
+            tool_call_id: String,
+            tool_name: String,
+            args_map: HashMap<String, Value>,
+            args_value: Value,
+        }
+        let mut pending_spawns: Vec<PendingSpawn> = Vec::new();
+
         loop {
             iteration += 1;
             let iter_start = Instant::now();
@@ -1019,6 +1030,90 @@ impl ReactLoop {
                     ));
                 }
                 TurnResult::Complete { content, status } => {
+                    // If there are pending spawns that haven't been flushed,
+                    // execute them now before completing. The model sent a
+                    // single spawn then immediately tried to synthesize.
+                    if !pending_spawns.is_empty() {
+                        let spawn_count = pending_spawns.len();
+                        info!(
+                            count = spawn_count,
+                            "Flushing pending spawns before completion"
+                        );
+
+                        use std::future::Future;
+                        use std::pin::Pin;
+
+                        let mut futs: Vec<Pin<Box<dyn Future<Output = ToolResult> + Send + '_>>> =
+                            Vec::with_capacity(spawn_count);
+
+                        for ps in &pending_spawns {
+                            if let Some(cb) = event_callback {
+                                cb.on_tool_started(&ps.tool_call_id, &ps.tool_name, &ps.args_map);
+                            }
+                            let exec_ctx = match cancel {
+                                Some(ct) => {
+                                    let mut ctx = tool_context.clone();
+                                    ctx.cancel_token = Some(ct.child_token());
+                                    ctx
+                                }
+                                None => tool_context.clone(),
+                            };
+                            let name = ps.tool_name.clone();
+                            let args = ps.args_map.clone();
+                            futs.push(Box::pin(async move {
+                                tool_registry.execute(&name, args, &exec_ctx).await
+                            }));
+                        }
+
+                        let results = poll_all_futures(futs).await;
+
+                        for (i, tool_result) in results.into_iter().enumerate() {
+                            let ps = &pending_spawns[i];
+                            if let Some(cb) = event_callback {
+                                let output_str = if tool_result.success {
+                                    tool_result.output.as_deref().unwrap_or("")
+                                } else {
+                                    tool_result
+                                        .error
+                                        .as_deref()
+                                        .unwrap_or("Tool execution failed")
+                                };
+                                cb.on_tool_result(
+                                    &ps.tool_call_id,
+                                    &ps.tool_name,
+                                    output_str,
+                                    tool_result.success,
+                                );
+                                cb.on_tool_finished(&ps.tool_call_id, tool_result.success);
+                            }
+                            let result_value = if tool_result.success {
+                                serde_json::json!({
+                                    "success": true,
+                                    "output": tool_result.output.as_deref().unwrap_or(""),
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "success": false,
+                                    "error": tool_result.error.as_deref()
+                                        .unwrap_or("Tool execution failed"),
+                                })
+                            };
+                            let formatted = Self::format_tool_result(&ps.tool_name, &result_value);
+                            messages.push(serde_json::json!({
+                                "role": "tool",
+                                "tool_call_id": ps.tool_call_id,
+                                "name": ps.tool_name,
+                                "content": formatted,
+                            }));
+                        }
+                        pending_spawns.clear();
+                        // Don't complete — loop back so the model can
+                        // synthesize the subagent results
+                        iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                        self.push_metrics(iter_metrics);
+                        continue;
+                    }
+
                     // Block completion when there are incomplete todos
                     if let Some(mgr) = todo_manager
                         && let Ok(mgr) = mgr.lock()
@@ -1127,15 +1222,213 @@ impl ReactLoop {
                     let mut completed_tool_count: usize = 0;
                     let mut any_tool_failed = false;
 
-                    // When ALL tool calls are spawn_subagent, execute them
-                    // concurrently so multiple subagents run in parallel.
-                    let all_spawn = total_tool_count > 1
-                        && tool_calls.iter().all(|tc| {
-                            tc.get("function")
-                                .and_then(|f| f.get("name"))
-                                .and_then(|n| n.as_str())
-                                == Some("spawn_subagent")
+                    // Check if all tool calls are spawn_subagent
+                    let all_are_spawn = tool_calls.iter().all(|tc| {
+                        tc.get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            == Some("spawn_subagent")
+                    });
+
+                    // Single spawn_subagent call: accumulate for parallel
+                    // execution. Models like gpt-4o often send one spawn per
+                    // response — we buffer them and flush when a non-spawn
+                    // action arrives or when we already have buffered spawns.
+                    if all_are_spawn && total_tool_count == 1 && pending_spawns.is_empty() {
+                        let tc = &tool_calls[0];
+                        let args_str = tc
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("{}");
+                        let args_value: Value =
+                            serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                        let args_map: HashMap<String, Value> = args_value
+                            .as_object()
+                            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                            .unwrap_or_default();
+                        let tool_call_id = tc
+                            .get("id")
+                            .and_then(|id| id.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        info!(
+                            tool_call_id = %tool_call_id,
+                            "Buffering spawn_subagent for parallel accumulation"
+                        );
+
+                        pending_spawns.push(PendingSpawn {
+                            tool_call_id: tool_call_id.clone(),
+                            tool_name: "spawn_subagent".to_string(),
+                            args_map,
+                            args_value,
                         });
+
+                        // Return a synthetic result telling the model to
+                        // send remaining spawn calls
+                        messages.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": "spawn_subagent",
+                            "content": "Queued for parallel execution. Send your remaining spawn_subagent calls now — they will all run in parallel.",
+                        }));
+
+                        iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                        self.push_metrics(iter_metrics);
+                        continue;
+                    }
+
+                    // Flush pending spawns: when we have accumulated spawns
+                    // and the current turn has more spawns (or non-spawn
+                    // tools), combine them and execute all in parallel.
+                    if !pending_spawns.is_empty() {
+                        // Add current spawn calls to the pending list
+                        if all_are_spawn {
+                            for tc in &tool_calls {
+                                let args_str = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("arguments"))
+                                    .and_then(|a| a.as_str())
+                                    .unwrap_or("{}");
+                                let args_value: Value =
+                                    serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                                let args_map: HashMap<String, Value> = args_value
+                                    .as_object()
+                                    .map(|obj| {
+                                        obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                                    })
+                                    .unwrap_or_default();
+                                let tool_call_id = tc
+                                    .get("id")
+                                    .and_then(|id| id.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+                                pending_spawns.push(PendingSpawn {
+                                    tool_call_id,
+                                    tool_name: "spawn_subagent".to_string(),
+                                    args_map,
+                                    args_value,
+                                });
+                            }
+                        }
+
+                        // Execute ALL pending spawns in parallel
+                        let spawn_count = pending_spawns.len();
+                        info!(
+                            count = spawn_count,
+                            "Executing spawn_subagent calls in parallel (accumulated)"
+                        );
+
+                        use std::future::Future;
+                        use std::pin::Pin;
+
+                        let mut futs: Vec<Pin<Box<dyn Future<Output = ToolResult> + Send + '_>>> =
+                            Vec::with_capacity(spawn_count);
+
+                        for ps in &pending_spawns {
+                            if let Some(cb) = event_callback {
+                                cb.on_tool_started(&ps.tool_call_id, &ps.tool_name, &ps.args_map);
+                            }
+                            let exec_ctx = match cancel {
+                                Some(ct) => {
+                                    let mut ctx = tool_context.clone();
+                                    ctx.cancel_token = Some(ct.child_token());
+                                    ctx
+                                }
+                                None => tool_context.clone(),
+                            };
+                            let name = ps.tool_name.clone();
+                            let args = ps.args_map.clone();
+                            futs.push(Box::pin(async move {
+                                tool_registry.execute(&name, args, &exec_ctx).await
+                            }));
+                        }
+
+                        let results = poll_all_futures(futs).await;
+
+                        for (i, tool_result) in results.into_iter().enumerate() {
+                            let ps = &pending_spawns[i];
+                            iter_metrics.tool_calls.push(ToolCallMetric {
+                                tool_name: ps.tool_name.clone(),
+                                duration_ms: 0,
+                                success: tool_result.success,
+                            });
+                            if let Some(ai) = artifact_index
+                                && tool_result.success
+                            {
+                                record_artifact(ai, &ps.tool_name, &ps.args_value, &tool_result);
+                            }
+                            if let Some(cb) = event_callback {
+                                let output_str = if tool_result.success {
+                                    tool_result.output.as_deref().unwrap_or("")
+                                } else {
+                                    tool_result
+                                        .error
+                                        .as_deref()
+                                        .unwrap_or("Tool execution failed")
+                                };
+                                cb.on_tool_result(
+                                    &ps.tool_call_id,
+                                    &ps.tool_name,
+                                    output_str,
+                                    tool_result.success,
+                                );
+                                cb.on_tool_finished(&ps.tool_call_id, tool_result.success);
+                            }
+                            if !tool_result.success {
+                                any_tool_failed = true;
+                            }
+                            let mut result_value = if tool_result.success {
+                                serde_json::json!({
+                                    "success": true,
+                                    "output": tool_result.output.as_deref().unwrap_or(""),
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "success": false,
+                                    "error": tool_result.error.as_deref()
+                                        .unwrap_or("Tool execution failed"),
+                                })
+                            };
+                            if let Some(ref suffix) = tool_result.llm_suffix {
+                                result_value["llm_suffix"] = serde_json::json!(suffix);
+                            }
+
+                            // Remove the synthetic "queued" tool result
+                            // and replace with the real result
+                            let formatted = Self::format_tool_result(&ps.tool_name, &result_value);
+                            messages.push(serde_json::json!({
+                                "role": "tool",
+                                "tool_call_id": ps.tool_call_id,
+                                "name": ps.tool_name,
+                                "content": formatted,
+                            }));
+                            completed_tool_count += 1;
+                        }
+
+                        // Inject subagent_complete signal
+                        let subagent_complete = get_reminder("subagent_complete_signal", &[]);
+                        if !subagent_complete.is_empty() {
+                            append_directive(messages, &subagent_complete);
+                        }
+
+                        pending_spawns.clear();
+
+                        // If all calls were spawn, we're done for this iteration
+                        if all_are_spawn {
+                            iter_metrics.total_duration_ms =
+                                iter_start.elapsed().as_millis() as u64;
+                            self.push_metrics(iter_metrics);
+                            continue;
+                        }
+                        // Otherwise fall through to sequential path for
+                        // remaining non-spawn tools
+                    }
+
+                    // When ALL tool calls are spawn_subagent (multiple in
+                    // one response), execute them concurrently.
+                    let all_spawn = total_tool_count > 1 && all_are_spawn;
 
                     if all_spawn {
                         info!(
