@@ -863,21 +863,73 @@ fn format_tokens(n: u64) -> String {
 /// - `read_file`, `list_files` → "reading N files"
 /// - Other tools listed by name
 fn build_subagent_activity_summary(subagent: &SubagentDisplayState) -> String {
-    // Show the most recent active tool name
-    if !subagent.active_tools.is_empty() {
-        let tool = subagent
-            .active_tools
-            .values()
-            .max_by_key(|t| t.started_at)
-            .unwrap();
-        return tool.tool_name.clone();
+    // Combine active + recent completed tools for the summary
+    let active_names: Vec<&str> = subagent
+        .active_tools
+        .values()
+        .map(|t| t.tool_name.as_str())
+        .collect();
+
+    // Also count completed tools for a richer summary
+    let completed_names: Vec<&str> = subagent
+        .completed_tools
+        .iter()
+        .map(|t| t.tool_name.as_str())
+        .collect();
+
+    if active_names.is_empty() && completed_names.is_empty() {
+        return "Initializing\u{2026}".to_string();
     }
-    // No active tools but has completed — show last completed tool name
-    if let Some(last) = subagent.completed_tools.last() {
-        return last.tool_name.clone();
+
+    // Categorize ALL tools (active + completed) for the summary counts
+    let all_names: Vec<&str> = active_names
+        .iter()
+        .chain(completed_names.iter())
+        .copied()
+        .collect();
+
+    let mut search_count = 0usize;
+    let mut read_count = 0usize;
+    let mut other_names: Vec<&str> = Vec::new();
+
+    for name in &all_names {
+        match *name {
+            "search" | "grep" | "find_symbol" | "find_referencing_symbols" | "glob" => {
+                search_count += 1;
+            }
+            "read_file" | "list_files" => read_count += 1,
+            other => {
+                if !other_names.contains(&other) {
+                    other_names.push(other);
+                }
+            }
+        }
     }
-    // Truly no tools yet
-    "Initializing\u{2026}".to_string()
+
+    let mut parts: Vec<String> = Vec::new();
+    if search_count > 0 {
+        parts.push(format!(
+            "Searching for {} pattern{}",
+            search_count,
+            if search_count == 1 { "" } else { "s" }
+        ));
+    }
+    if read_count > 0 {
+        parts.push(format!(
+            "reading {} file{}",
+            read_count,
+            if read_count == 1 { "" } else { "s" }
+        ));
+    }
+    for name in other_names {
+        parts.push(name.to_string());
+    }
+
+    if parts.is_empty() {
+        "Working\u{2026}".to_string()
+    } else {
+        format!("{}\u{2026}", parts.join(", "))
+    }
 }
 
 /// Format a tool call as a styled line with category color coding.
@@ -1794,5 +1846,36 @@ mod tests {
             reformat_summary("Some unknown format"),
             "Some unknown format"
         );
+    }
+
+    #[test]
+    fn test_activity_summary_searching_and_reading() {
+        let mut state = SubagentDisplayState::new("Code-Explorer".into(), "Explore core".into());
+        state.add_tool_call("search".into(), "t1".into());
+        state.add_tool_call("search".into(), "t2".into());
+        state.add_tool_call("read_file".into(), "t3".into());
+        state.complete_tool_call("t1", true);
+        let summary = build_subagent_activity_summary(&state);
+        assert!(summary.contains("Searching for"), "got: {summary}");
+        assert!(summary.contains("reading"), "got: {summary}");
+    }
+
+    #[test]
+    fn test_activity_summary_empty() {
+        let state = SubagentDisplayState::new("Code-Explorer".into(), "Explore core".into());
+        let summary = build_subagent_activity_summary(&state);
+        assert_eq!(summary, "Initializing\u{2026}");
+    }
+
+    #[test]
+    fn test_activity_summary_mixed_tools() {
+        let mut state = SubagentDisplayState::new("Code-Explorer".into(), "Explore core".into());
+        state.add_tool_call("find_symbol".into(), "t1".into());
+        state.add_tool_call("list_files".into(), "t2".into());
+        state.add_tool_call("run_command".into(), "t3".into());
+        let summary = build_subagent_activity_summary(&state);
+        assert!(summary.contains("Searching for 1 pattern"), "got: {summary}");
+        assert!(summary.contains("reading 1 file"), "got: {summary}");
+        assert!(summary.contains("run_command"), "got: {summary}");
     }
 }
