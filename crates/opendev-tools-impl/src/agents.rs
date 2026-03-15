@@ -50,30 +50,6 @@ fn default_agent_types() -> Vec<AgentType> {
             ],
         },
         AgentType {
-            name: "web_clone".into(),
-            description: "Agent specialized in cloning web page designs. \
-                           Can fetch web pages, take screenshots, and generate code."
-                .into(),
-            tools: vec![
-                "web_fetch".into(),
-                "web_screenshot".into(),
-                "write_file".into(),
-                "read_file".into(),
-            ],
-        },
-        AgentType {
-            name: "web_generator".into(),
-            description: "Agent for generating web applications from descriptions. \
-                           Creates HTML, CSS, and JavaScript files."
-                .into(),
-            tools: vec![
-                "write_file".into(),
-                "read_file".into(),
-                "run_command".into(),
-                "edit_file".into(),
-            ],
-        },
-        AgentType {
             name: "ask_user".into(),
             description: "Agent that interacts with the user to gather information \
                            or clarify requirements."
@@ -605,7 +581,7 @@ mod tests {
     #[test]
     fn test_default_agent_types() {
         let agents = default_agent_types();
-        assert!(agents.len() >= 5);
+        assert!(agents.len() >= 3);
 
         let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"code_explorer"));

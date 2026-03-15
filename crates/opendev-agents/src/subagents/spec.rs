@@ -416,50 +416,6 @@ pub mod builtins {
         // No tools — UI-only interaction
     }
 
-    /// Create the PR Reviewer subagent spec.
-    pub fn pr_reviewer(system_prompt: &str) -> SubAgentSpec {
-        SubAgentSpec::new(
-            "PR-Reviewer",
-            "Reviews pull request changes for code quality, bugs, and best practices.",
-            system_prompt,
-        )
-        .with_tools(CODE_EXPLORER_TOOLS.iter().map(|s| s.to_string()).collect())
-    }
-
-    /// Create the Security Reviewer subagent spec.
-    pub fn security_reviewer(system_prompt: &str) -> SubAgentSpec {
-        SubAgentSpec::new(
-            "Security-Reviewer",
-            "Reviews code for security vulnerabilities and OWASP top 10 issues.",
-            system_prompt,
-        )
-        .with_tools(CODE_EXPLORER_TOOLS.iter().map(|s| s.to_string()).collect())
-    }
-
-    /// Create the Web Clone subagent spec.
-    pub fn web_clone(system_prompt: &str) -> SubAgentSpec {
-        SubAgentSpec::new(
-            "Web-Clone",
-            "Clones a website's visual design by fetching and analyzing its HTML/CSS.",
-            system_prompt,
-        )
-        .with_tools(
-            vec![
-                "read_file",
-                "write_file",
-                "edit_file",
-                "list_files",
-                "search",
-                "web_fetch",
-                "web_screenshot",
-                "run_command",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-        )
-    }
-
     /// Tools available to the Project Init subagent.
     pub const PROJECT_INIT_TOOLS: &[&str] = &["read_file", "list_files", "search", "run_command"];
 
@@ -473,27 +429,6 @@ pub mod builtins {
         .with_tools(PROJECT_INIT_TOOLS.iter().map(|s| s.to_string()).collect())
     }
 
-    /// Create the Web Generator subagent spec.
-    pub fn web_generator(system_prompt: &str) -> SubAgentSpec {
-        SubAgentSpec::new(
-            "Web-Generator",
-            "Generates web applications from descriptions or screenshots.",
-            system_prompt,
-        )
-        .with_tools(
-            vec![
-                "read_file",
-                "write_file",
-                "edit_file",
-                "list_files",
-                "search",
-                "run_command",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-        )
-    }
 }
 
 #[cfg(test)]
@@ -558,35 +493,6 @@ mod tests {
         let spec = builtins::ask_user("You ask questions.");
         assert_eq!(spec.name, "ask-user");
         assert!(!spec.has_tool_restriction()); // No tools
-    }
-
-    #[test]
-    fn test_pr_reviewer_builtin() {
-        let spec = builtins::pr_reviewer("You review PRs.");
-        assert_eq!(spec.name, "PR-Reviewer");
-        assert!(spec.has_tool_restriction());
-    }
-
-    #[test]
-    fn test_security_reviewer_builtin() {
-        let spec = builtins::security_reviewer("You review security.");
-        assert_eq!(spec.name, "Security-Reviewer");
-        assert!(spec.has_tool_restriction());
-    }
-
-    #[test]
-    fn test_web_clone_builtin() {
-        let spec = builtins::web_clone("You clone websites.");
-        assert_eq!(spec.name, "Web-Clone");
-        assert!(spec.tools.contains(&"web_fetch".to_string()));
-        assert!(spec.tools.contains(&"web_screenshot".to_string()));
-    }
-
-    #[test]
-    fn test_web_generator_builtin() {
-        let spec = builtins::web_generator("You generate web apps.");
-        assert_eq!(spec.name, "Web-Generator");
-        assert!(spec.tools.contains(&"write_file".to_string()));
     }
 
     #[test]

@@ -34,16 +34,8 @@ pub const SUBAGENTS_SUBAGENT_CODE_EXPLORER: &str =
     include_str!("../../templates/subagents/subagent-code-explorer.md");
 pub const SUBAGENTS_SUBAGENT_PLANNER: &str =
     include_str!("../../templates/subagents/subagent-planner.md");
-pub const SUBAGENTS_SUBAGENT_PR_REVIEWER: &str =
-    include_str!("../../templates/subagents/subagent-pr-reviewer.md");
 pub const SUBAGENTS_SUBAGENT_PROJECT_INIT: &str =
     include_str!("../../templates/subagents/subagent-project-init.md");
-pub const SUBAGENTS_SUBAGENT_SECURITY_REVIEWER: &str =
-    include_str!("../../templates/subagents/subagent-security-reviewer.md");
-pub const SUBAGENTS_SUBAGENT_WEB_CLONE: &str =
-    include_str!("../../templates/subagents/subagent-web-clone.md");
-pub const SUBAGENTS_SUBAGENT_WEB_GENERATOR: &str =
-    include_str!("../../templates/subagents/subagent-web-generator.md");
 
 // system/
 pub const SYSTEM_COMPACTION: &str = include_str!("../../templates/system/compaction.md");
@@ -180,7 +172,7 @@ pub const TOOLS_TOOL_WRITE_TODOS: &str = include_str!("../../templates/tools/too
 // ---------------------------------------------------------------------------
 
 /// Total number of embedded templates.
-pub const TEMPLATE_COUNT: usize = 88;
+pub const TEMPLATE_COUNT: usize = 84;
 
 /// All embedded templates indexed by their relative path.
 ///
@@ -221,24 +213,8 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     );
     m.insert("subagents/subagent-planner.md", SUBAGENTS_SUBAGENT_PLANNER);
     m.insert(
-        "subagents/subagent-pr-reviewer.md",
-        SUBAGENTS_SUBAGENT_PR_REVIEWER,
-    );
-    m.insert(
         "subagents/subagent-project-init.md",
         SUBAGENTS_SUBAGENT_PROJECT_INIT,
-    );
-    m.insert(
-        "subagents/subagent-security-reviewer.md",
-        SUBAGENTS_SUBAGENT_SECURITY_REVIEWER,
-    );
-    m.insert(
-        "subagents/subagent-web-clone.md",
-        SUBAGENTS_SUBAGENT_WEB_CLONE,
-    );
-    m.insert(
-        "subagents/subagent-web-generator.md",
-        SUBAGENTS_SUBAGENT_WEB_GENERATOR,
     );
 
     // system
@@ -527,7 +503,7 @@ mod tests {
     #[test]
     fn test_subagent_templates() {
         let templates = subagent_templates();
-        assert!(templates.len() >= 6);
+        assert!(templates.len() >= 4);
     }
 
     #[test]

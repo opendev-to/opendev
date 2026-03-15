@@ -23,10 +23,6 @@ pub enum SubagentType {
     CodeExplorer,
     Planner,
     AskUser,
-    PrReviewer,
-    SecurityReviewer,
-    WebClone,
-    WebGenerator,
     Custom,
 }
 
@@ -37,10 +33,6 @@ impl SubagentType {
             "Code-Explorer" | "code_explorer" => Self::CodeExplorer,
             "Planner" | "planner" => Self::Planner,
             "ask-user" | "ask_user" => Self::AskUser,
-            "PR-Reviewer" | "pr_reviewer" => Self::PrReviewer,
-            "Security-Reviewer" | "security_reviewer" => Self::SecurityReviewer,
-            "Web-Clone" | "web_clone" => Self::WebClone,
-            "Web-Generator" | "web_generator" => Self::WebGenerator,
             _ => Self::Custom,
         }
     }
@@ -51,10 +43,6 @@ impl SubagentType {
             Self::CodeExplorer => "Code-Explorer",
             Self::Planner => "Planner",
             Self::AskUser => "ask-user",
-            Self::PrReviewer => "PR-Reviewer",
-            Self::SecurityReviewer => "Security-Reviewer",
-            Self::WebClone => "Web-Clone",
-            Self::WebGenerator => "Web-Generator",
             Self::Custom => "custom",
         }
     }
@@ -117,8 +105,7 @@ impl SubagentManager {
     /// Create a manager pre-loaded with core built-in subagent specs.
     ///
     /// Registers only the essential subagents (Code-Explorer, Planner, project_init).
-    /// Additional subagents (PR-Reviewer, Security-Reviewer, Web-Clone, Web-Generator,
-    /// ask-user) can be loaded as custom agents from `~/.opendev/agents/*.md`.
+    /// Additional subagents can be loaded as custom agents from `~/.opendev/agents/*.md`.
     pub fn with_builtins() -> Self {
         use super::spec::builtins;
         use crate::prompts::embedded;

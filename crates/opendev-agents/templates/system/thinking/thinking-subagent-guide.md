@@ -13,8 +13,6 @@ When considering delegation to a subagent, reason through these questions:
 
 - **ask-user**: Need clarification on ambiguous requirements or user preferences? (e.g., which auth method, database choice)
 - **Code-Explorer**: Need to understand LOCAL codebase structure, find implementations, or trace patterns?
-- **Web-clone**: Need to replicate a website's UI/design from a URL?
-- **Web-Generator**: Need to create a new web application from scratch?
 - **Planner**: Need to create a detailed implementation plan? Spawn a Planner subagent.
 
 ## Is a subagent appropriate?
@@ -51,8 +49,6 @@ When considering delegation to a subagent, reason through these questions:
 - "Create a utils file" -> `write_file` with content
 
 ### Subagent Delegation (Spawn subagent):
-- "Clone this website" -> **Web-clone**
-- "Build a web app for X" -> **Web-Generator**
 - "How does authentication work in this codebase?" -> **Code-Explorer** (multi-file trace)
 - "Understand the database schema" -> **Code-Explorer** (models + migrations)
 - "What caching strategy is used?" -> **Code-Explorer** (find all cache uses)

@@ -16,25 +16,9 @@ Subagents are specialized agents with focused capabilities. Each has a specific 
 **Purpose**: Answer specific questions about LOCAL codebase with minimal context and maximum accuracy.
 **When to use**: Understanding code architecture, finding specific implementations, tracing code patterns, or researching implementation details in LOCAL files.
 
-## Security-Reviewer
-**Purpose**: Security-focused code review with structured vulnerability reporting.
-**When to use**: Security audits, reviewing code changes for vulnerabilities, pre-merge security checks. Reports findings with severity/confidence scoring.
-
-## PR-Reviewer
-**Purpose**: Review GitHub pull requests for correctness, style, performance, tests, and security.
-**When to use**: Reviewing PRs before merge, analyzing diffs, providing structured code review feedback.
-
 ## Project-Init
 **Purpose**: Analyze a codebase and generate an OPENDEV.md project instruction file.
 **When to use**: Setting up a new project, generating build/test/lint commands, documenting project structure.
-
-## Web-clone
-**Purpose**: Analyze websites and generate code to replicate their UI/design.
-**When to use**: Cloning landing pages, dashboards, or any web UI.
-
-## Web-Generator
-**Purpose**: Create beautiful, responsive web applications from scratch.
-**When to use**: Building new web apps, landing pages, dashboards, or UI-focused projects.
 
 ## Planner
 **Purpose**: Explore the codebase and create detailed implementation plans.

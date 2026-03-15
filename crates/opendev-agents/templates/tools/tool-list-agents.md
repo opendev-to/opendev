@@ -8,6 +8,6 @@ List available subagent types with their descriptions and tool access levels.
 
 ## Usage notes
 
-- Shows all registered subagent types (e.g., code_explorer, planner, web_generator)
+- Shows all registered subagent types (e.g., code_explorer, planner)
 - Includes description and list of allowed tools for each type
 - Useful for choosing the right subagent type when using spawn_subagent
