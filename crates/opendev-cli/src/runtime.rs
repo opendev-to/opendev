@@ -182,6 +182,8 @@ pub fn build_system_prompt(working_dir: &Path, config: &AppConfig) -> String {
         "is_git_repo".to_string(),
         serde_json::Value::Bool(working_dir.join(".git").exists()),
     );
+    // Enable the subagent guide section — spawn_subagent tool is always registered.
+    context.insert("has_subagents".to_string(), serde_json::Value::Bool(true));
 
     let base_prompt = composer.compose(&context);
 

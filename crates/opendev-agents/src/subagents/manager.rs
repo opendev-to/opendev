@@ -511,7 +511,10 @@ impl SubagentManager {
         // Build the subagent's system prompt by combining the spec prompt
         // with project instruction files (AGENTS.md, CLAUDE.md, etc.) so
         // subagents follow the same project rules as the main agent.
-        let system_prompt = {
+        // Exploration agents skip this to avoid answering from docs instead of code.
+        let system_prompt = if spec.skip_project_instructions {
+            spec.system_prompt.clone()
+        } else {
             let wd = std::path::Path::new(working_dir);
             let instructions = opendev_context::discover_instruction_files(wd);
             if instructions.is_empty() {

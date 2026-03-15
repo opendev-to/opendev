@@ -13,8 +13,8 @@ Subagents are specialized agents with focused capabilities. Each has a specific 
 **When to use**: Need to clarify ambiguous requirements, gather user preferences, or confirm critical decisions before implementation.
 
 ## Code-Explorer
-**Purpose**: Answer specific questions about LOCAL codebase with minimal context and maximum accuracy.
-**When to use**: Understanding code architecture, finding specific implementations, tracing code patterns, or researching implementation details in LOCAL files.
+**Purpose**: Search, explore, and analyze the LOCAL codebase. Operates in two modes: targeted (specific questions) and exploration (broad area mapping).
+**When to use**: Understanding code architecture, finding specific implementations, tracing code patterns, or exploring sections of the codebase. For broad exploration, spawn multiple Code-Explorers in parallel, each assigned a different area.
 
 ## Project-Init
 **Purpose**: Analyze a codebase and generate an OPENDEV.md project instruction file.
@@ -33,13 +33,16 @@ Subagents are specialized agents with focused capabilities. Each has a specific 
 
 ### Auto-parallel for broad exploration
 
-When the user asks to **"explore the codebase"**, **"summarize the project"**, **"understand the code"**, or any broad codebase exploration request:
-1. First call `list_files` to see the project structure
-2. Then spawn **2-4 Code-Explorer agents IN PARALLEL** (all in one message), each assigned a different area of the codebase. Example split:
-   - Agent 1: "Explore the core architecture and entry points in src/main, src/core, ..."
-   - Agent 2: "Explore configuration, utilities, and support modules in src/config, src/utils, ..."
-   - Agent 3: "Explore the UI layer and user-facing components in src/ui, src/cli, ..."
+**MANDATORY**: When the user asks to **"explore the codebase"**, **"summarize the project"**, **"understand the code"**, **"how does this project work"**, or any broad codebase exploration request, you MUST:
+
+1. Call `list_files` to see the project structure
+2. In your NEXT message, spawn **2-4 Code-Explorer agents IN PARALLEL** (all `spawn_subagent` calls in ONE message). Split the codebase into non-overlapping areas. Each agent's task MUST start with "Explore" to trigger the explorer's exploration mode. Example:
+   - `spawn_subagent(agent="Code-Explorer", task="Explore the core architecture and entry points in crates/opendev-cli, crates/opendev-agents, crates/opendev-runtime. List files, read key modules, identify main types and execution flow.")`
+   - `spawn_subagent(agent="Code-Explorer", task="Explore configuration, HTTP, and infrastructure in crates/opendev-config, crates/opendev-http, crates/opendev-context. List files, read key modules, document patterns.")`
+   - `spawn_subagent(agent="Code-Explorer", task="Explore the UI and tool layers in crates/opendev-tui, crates/opendev-tools-impl, crates/opendev-tools-core. List files, read key modules, describe the widget and tool architecture.")`
 3. After all agents return, synthesize their findings into a unified summary
+
+Do NOT try to answer broad exploration requests yourself — you lack the context window to read enough files. Subagents are the correct approach.
 
 When the user explicitly says **"spawn N agents"** or **"use N explorers"**, spawn exactly that many.
 

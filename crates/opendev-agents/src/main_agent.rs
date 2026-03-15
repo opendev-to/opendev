@@ -322,7 +322,7 @@ impl MainAgent {
         );
 
         let working_dir = self.config.working_dir.as_deref().unwrap_or(".");
-        let tool_context = ToolContext::new(working_dir);
+        let tool_context = ToolContext::new(working_dir).with_subagent(self.is_subagent);
 
         self.react_loop
             .run(

@@ -83,6 +83,12 @@ pub struct SubAgentSpec {
     /// Whether this agent is disabled (not available for use).
     #[serde(default)]
     pub disable: bool,
+
+    /// Whether to skip appending project instruction files (CLAUDE.md, etc.)
+    /// to this subagent's system prompt. Useful for exploration agents that
+    /// should discover code structure from source, not from documentation.
+    #[serde(default)]
+    pub skip_project_instructions: bool,
 }
 
 /// Action to take when a permission rule matches.
@@ -168,6 +174,7 @@ impl SubAgentSpec {
             color: None,
             permission: HashMap::new(),
             disable: false,
+            skip_project_instructions: false,
         }
     }
 
@@ -234,6 +241,12 @@ impl SubAgentSpec {
     /// Mark this agent as disabled.
     pub fn with_disable(mut self, disable: bool) -> Self {
         self.disable = disable;
+        self
+    }
+
+    /// Skip appending project instruction files to the system prompt.
+    pub fn with_skip_project_instructions(mut self, skip: bool) -> Self {
+        self.skip_project_instructions = skip;
         self
     }
 
@@ -395,6 +408,7 @@ pub mod builtins {
             system_prompt,
         )
         .with_tools(CODE_EXPLORER_TOOLS.iter().map(|s| s.to_string()).collect())
+        .with_skip_project_instructions(true)
     }
 
     /// Create the Planner subagent spec.
