@@ -25,7 +25,7 @@ pub const STAGE_COMPACT: f64 = 0.99;
 pub const PRUNE_PROTECTED_TOKENS: u64 = 40_000;
 
 /// Tool types whose outputs survive compaction pruning.
-pub const PROTECTED_TOOL_TYPES: &[&str] = &["skill", "present_plan", "read_file"];
+pub const PROTECTED_TOOL_TYPES: &[&str] = &["skill", "invoke_skill", "present_plan", "read_file"];
 
 /// Sliding window: number of recent messages to keep verbatim.
 pub const SLIDING_WINDOW_RECENT: usize = 50;

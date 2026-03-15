@@ -19,7 +19,9 @@ pub use compaction::{
     compact_preview, count_tokens,
 };
 pub use context_picker::{AssembledContext, ContextCategory, ContextPiece, ContextReason};
-pub use environment::EnvironmentContext;
+pub use environment::{
+    EnvironmentContext, InstructionFile, discover_instruction_files, resolve_instruction_paths,
+};
 pub use pair_validator::{MessagePairValidator, ValidationResult, ViolationType};
 pub use retrieval::{
     CodebaseIndexer, ContextRetriever, ContextTokenMonitor, Entities, EntityExtractor, FileMatch,
