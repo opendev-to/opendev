@@ -83,10 +83,25 @@ pub struct McpServerConfig {
     /// Optional OAuth 2.0 configuration for server authentication.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth: Option<McpOAuthConfig>,
+
+    /// Per-server request timeout in milliseconds.
+    /// If None, uses the default timeout (30 seconds).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
 }
+
+/// Default MCP request timeout in milliseconds.
+pub const DEFAULT_MCP_TIMEOUT_MS: u64 = 30_000;
 
 fn default_true() -> bool {
     true
+}
+
+impl McpServerConfig {
+    /// Get the effective timeout for this server.
+    pub fn effective_timeout_ms(&self) -> u64 {
+        self.timeout.unwrap_or(DEFAULT_MCP_TIMEOUT_MS)
+    }
 }
 
 impl Default for McpServerConfig {
@@ -101,6 +116,7 @@ impl Default for McpServerConfig {
             auto_start: true,
             transport: TransportType::Stdio,
             oauth: None,
+            timeout: None,
         }
     }
 }
@@ -214,6 +230,7 @@ pub fn prepare_server_config(config: &McpServerConfig) -> McpServerConfig {
             token_url: expand_env_vars(&o.token_url),
             scope: o.scope.as_ref().map(|s| expand_env_vars(s)),
         }),
+        timeout: config.timeout,
     }
 }
 
@@ -439,5 +456,37 @@ mod tests {
         let loaded = load_config(&config_path).unwrap();
         assert_eq!(loaded.mcp_servers.len(), 1);
         assert_eq!(loaded.mcp_servers["test"].command, "npx");
+    }
+
+    #[test]
+    fn test_timeout_default() {
+        let config = McpServerConfig::default();
+        assert!(config.timeout.is_none());
+        assert_eq!(config.effective_timeout_ms(), DEFAULT_MCP_TIMEOUT_MS);
+    }
+
+    #[test]
+    fn test_timeout_custom() {
+        let config = McpServerConfig {
+            timeout: Some(60_000),
+            ..Default::default()
+        };
+        assert_eq!(config.effective_timeout_ms(), 60_000);
+    }
+
+    #[test]
+    fn test_timeout_deserialization() {
+        let json = r#"{"mcpServers": {"slow-server": {"command": "node", "args": ["server.js"], "timeout": 120000}}}"#;
+        let config: McpConfig = serde_json::from_str(json).unwrap();
+        let server = &config.mcp_servers["slow-server"];
+        assert_eq!(server.timeout, Some(120_000));
+        assert_eq!(server.effective_timeout_ms(), 120_000);
+    }
+
+    #[test]
+    fn test_timeout_not_serialized_when_none() {
+        let config = McpServerConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("timeout"));
     }
 }

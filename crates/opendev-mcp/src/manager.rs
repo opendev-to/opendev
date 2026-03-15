@@ -24,8 +24,8 @@ use crate::config::{
 };
 use crate::error::{McpError, McpResult};
 use crate::models::{
-    JsonRpcNotification, JsonRpcRequest, McpContent, McpPromptSummary, McpServerInfo, McpTool,
-    McpToolResult, McpToolSchema,
+    JsonRpcNotification, JsonRpcRequest, McpContent, McpPromptResult, McpPromptSummary, McpResource,
+    McpServerInfo, McpTool, McpToolResult, McpToolSchema,
 };
 use crate::transport::{self, McpTransport};
 
@@ -40,6 +40,23 @@ const MAX_RESTART_ATTEMPTS: u32 = 5;
 
 /// Maximum backoff duration in seconds for restart attempts.
 const MAX_BACKOFF_SECS: u64 = 60;
+
+/// Sanitize a server or tool name for use in namespaced tool identifiers.
+///
+/// Replaces any character that is not alphanumeric, underscore, or hyphen with `_`.
+/// This prevents issues with special characters in tool names that could confuse
+/// the LLM or break JSON schemas.
+fn sanitize_mcp_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
 
 /// Health status of a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,7 +136,107 @@ pub struct McpManager {
     health_check_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
+/// Lightweight handle for notification listeners to refresh tools.
+///
+/// Contains only the Arc fields needed for `handle_tools_changed`,
+/// avoiding a full McpManager clone.
+struct NotificationHandle {
+    connections: Arc<RwLock<HashMap<String, ServerConnection>>>,
+    tool_schema_cache: Arc<RwLock<HashMap<String, ToolSchemaCache>>>,
+    request_id: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl NotificationHandle {
+    /// Invalidate cache and re-discover tools for a server.
+    async fn handle_tools_changed(&self, server_name: &str) {
+        info!(
+            server = server_name,
+            "Received tools/changed notification, refreshing tools"
+        );
+
+        // Invalidate the cache.
+        {
+            let mut cache = self.tool_schema_cache.write().await;
+            if let Some(entry) = cache.get_mut(server_name) {
+                entry.invalidated = true;
+            }
+        }
+
+        // Re-discover tools from the live transport.
+        let connections = self.connections.read().await;
+        let Some(conn) = connections.get(server_name) else {
+            warn!(server = server_name, "Server not found for tools refresh");
+            return;
+        };
+
+        let request_id = self
+            .request_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let request = crate::models::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: request_id,
+            method: "tools/list".to_string(),
+            params: None,
+        };
+
+        match conn.transport.send_request(&request).await {
+            Ok(response) => {
+                if let Some(result) = response.result
+                    && let Some(tools_val) = result.get("tools")
+                    && let Ok(tools) =
+                        serde_json::from_value::<Vec<McpTool>>(tools_val.clone())
+                {
+                    // Update cache.
+                    let mut cache = self.tool_schema_cache.write().await;
+                    cache.insert(
+                        server_name.to_string(),
+                        ToolSchemaCache {
+                            tools: tools.clone(),
+                            invalidated: false,
+                        },
+                    );
+                    drop(cache);
+                    drop(connections);
+
+                    // Update connection's tool list.
+                    let mut conns_write = self.connections.write().await;
+                    if let Some(conn) = conns_write.get_mut(server_name) {
+                        conn.tools = tools.clone();
+                    }
+
+                    info!(
+                        server = server_name,
+                        tools = tools.len(),
+                        "Tools refreshed after tools/changed notification"
+                    );
+                    return;
+                }
+                warn!(
+                    server = server_name,
+                    "Failed to parse tools/list response after notification"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    server = server_name,
+                    error = %e,
+                    "Failed to refresh tools after tools/changed notification"
+                );
+            }
+        }
+    }
+}
+
 impl McpManager {
+    /// Create a lightweight handle for notification listener tasks.
+    fn clone_for_notifications(&self) -> NotificationHandle {
+        NotificationHandle {
+            connections: Arc::clone(&self.connections),
+            tool_schema_cache: Arc::clone(&self.tool_schema_cache),
+            request_id: Arc::clone(&self.request_id),
+        }
+    }
+
     /// Create a new MCP manager.
     pub fn new(working_dir: Option<PathBuf>) -> Self {
         Self {
@@ -381,38 +498,71 @@ impl McpManager {
 
         let mut transport = transport::create_transport(&prepared)?;
 
+        let connect_timeout_ms = prepared.effective_timeout_ms();
+        let connect_timeout = std::time::Duration::from_millis(connect_timeout_ms);
+
         // Step 1: Connect the transport (e.g., spawn child process).
-        transport
-            .connect()
+        tokio::time::timeout(connect_timeout, transport.connect())
             .await
+            .map_err(|_| McpError::Timeout(connect_timeout_ms / 1000))?
             .map_err(|e| McpError::Connection {
                 server: name.to_string(),
                 message: format!("Transport connect failed: {}", e),
             })?;
 
         // Step 2: Run initialize handshake.
-        let _server_info = self
-            .initialize_handshake(transport.as_ref())
-            .await
-            .map_err(|e| McpError::Connection {
-                server: name.to_string(),
-                message: format!("Initialize handshake failed: {}", e),
-            })?;
+        let _server_info = tokio::time::timeout(
+            connect_timeout,
+            self.initialize_handshake(transport.as_ref()),
+        )
+        .await
+        .map_err(|_| McpError::Timeout(connect_timeout_ms / 1000))?
+        .map_err(|e| McpError::Connection {
+            server: name.to_string(),
+            message: format!("Initialize handshake failed: {}", e),
+        })?;
 
         // Step 3: Discover tools (use cache if available and not invalidated).
-        let tools = self
-            .get_or_discover_tools(name, transport.as_ref())
-            .await
-            .unwrap_or_else(|e| {
-                warn!("Failed to discover tools from '{}': {}", name, e);
-                Vec::new()
-            });
+        let tools = tokio::time::timeout(
+            connect_timeout,
+            self.get_or_discover_tools(name, transport.as_ref()),
+        )
+        .await
+        .map_err(|_| McpError::Timeout(connect_timeout_ms / 1000))?
+        .unwrap_or_else(|e| {
+            warn!("Failed to discover tools from '{}': {}", name, e);
+            Vec::new()
+        });
 
         info!(
             server = name,
             tools = tools.len(),
             "Connected to MCP server"
         );
+
+        // Take the notification receiver and spawn a listener task
+        // that handles server-initiated notifications like tools/changed.
+        if let Some(mut notif_rx) = transport.take_notification_receiver().await {
+            let server_name = name.to_string();
+            let manager = self.clone_for_notifications();
+            tokio::spawn(async move {
+                while let Some(notif) = notif_rx.recv().await {
+                    match notif.method.as_str() {
+                        "notifications/tools/list_changed" | "tools/changed" => {
+                            manager.handle_tools_changed(&server_name).await;
+                        }
+                        other => {
+                            debug!(
+                                server = %server_name,
+                                method = other,
+                                "Unhandled MCP server notification"
+                            );
+                        }
+                    }
+                }
+                debug!(server = %server_name, "Notification listener stopped");
+            });
+        }
 
         let connection = ServerConnection {
             transport,
@@ -580,9 +730,11 @@ impl McpManager {
         let mut schemas = Vec::new();
 
         for (server_name, conn) in connections.iter() {
+            let sanitized_server = sanitize_mcp_name(server_name);
             for tool in &conn.tools {
+                let sanitized_tool = sanitize_mcp_name(&tool.name);
                 schemas.push(McpToolSchema {
-                    name: format!("{}__{}", server_name, tool.name),
+                    name: format!("{}__{}", sanitized_server, sanitized_tool),
                     description: tool.description.clone(),
                     parameters: tool.input_schema.clone(),
                     server_name: server_name.clone(),
@@ -671,7 +823,13 @@ impl McpManager {
             params: Some(params),
         };
 
-        let response = conn.transport.send_request(&request).await?;
+        let timeout_ms = conn.config.effective_timeout_ms();
+        let response = tokio::time::timeout(
+            std::time::Duration::from_millis(timeout_ms),
+            conn.transport.send_request(&request),
+        )
+        .await
+        .map_err(|_| McpError::Timeout(timeout_ms / 1000))??;
 
         if let Some(error) = response.error {
             return Err(McpError::Protocol(format!(
@@ -1194,6 +1352,164 @@ impl McpManager {
         }
 
         prompts
+    }
+
+    /// Get a prompt from a specific server with optional arguments.
+    ///
+    /// Sends `prompts/get` to the server with the prompt name and any arguments.
+    /// Returns the prompt messages that can be injected into the conversation.
+    pub async fn get_prompt(
+        &self,
+        server_name: &str,
+        prompt_name: &str,
+        arguments: Option<HashMap<String, String>>,
+    ) -> McpResult<McpPromptResult> {
+        let connections = self.connections.read().await;
+        let conn = connections.get(server_name).ok_or_else(|| {
+            McpError::ServerNotFound(server_name.to_string())
+        })?;
+
+        let mut params = HashMap::new();
+        params.insert(
+            "name".to_string(),
+            serde_json::Value::String(prompt_name.to_string()),
+        );
+        if let Some(args) = arguments {
+            params.insert("arguments".to_string(), serde_json::to_value(args).unwrap());
+        }
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: self.next_request_id(),
+            method: "prompts/get".to_string(),
+            params: Some(params),
+        };
+
+        let response = conn.transport.send_request(&request).await?;
+
+        if let Some(error) = response.error {
+            return Err(McpError::Protocol(format!(
+                "prompts/get failed: {}",
+                error.message
+            )));
+        }
+
+        let result = response.result.ok_or_else(|| {
+            McpError::Protocol("prompts/get returned no result".to_string())
+        })?;
+
+        serde_json::from_value(result)
+            .map_err(|e| McpError::Protocol(format!("Failed to parse prompt result: {e}")))
+    }
+
+    /// List resources from all connected servers.
+    ///
+    /// Sends `resources/list` to each connected server and aggregates the results.
+    pub async fn list_resources(&self) -> Vec<(String, McpResource)> {
+        let connections = self.connections.read().await;
+        let mut resources = Vec::new();
+
+        for (server_name, conn) in connections.iter() {
+            let request = JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: self.next_request_id(),
+                method: "resources/list".to_string(),
+                params: None,
+            };
+
+            match conn.transport.send_request(&request).await {
+                Ok(response) => {
+                    if let Some(result) = response.result
+                        && let Some(resource_list) =
+                            result.get("resources").and_then(|r| r.as_array())
+                    {
+                        for res_val in resource_list {
+                            if let Ok(resource) =
+                                serde_json::from_value::<McpResource>(res_val.clone())
+                            {
+                                resources.push((server_name.clone(), resource));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to list resources from '{}': {}", server_name, e);
+                }
+            }
+        }
+
+        resources
+    }
+
+    /// Read a specific resource from a server.
+    ///
+    /// Sends `resources/read` with the resource URI and returns the content.
+    pub async fn read_resource(
+        &self,
+        server_name: &str,
+        resource_uri: &str,
+    ) -> McpResult<Vec<McpContent>> {
+        let connections = self.connections.read().await;
+        let conn = connections.get(server_name).ok_or_else(|| {
+            McpError::ServerNotFound(server_name.to_string())
+        })?;
+
+        let mut params = HashMap::new();
+        params.insert(
+            "uri".to_string(),
+            serde_json::Value::String(resource_uri.to_string()),
+        );
+
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: self.next_request_id(),
+            method: "resources/read".to_string(),
+            params: Some(params),
+        };
+
+        let response = conn.transport.send_request(&request).await?;
+
+        if let Some(error) = response.error {
+            return Err(McpError::Protocol(format!(
+                "resources/read failed: {}",
+                error.message
+            )));
+        }
+
+        let result = response.result.ok_or_else(|| {
+            McpError::Protocol("resources/read returned no result".to_string())
+        })?;
+
+        // Parse content array from response
+        let contents = result
+            .get("contents")
+            .and_then(|c| c.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v: &serde_json::Value| {
+                        // MCP resources return {uri, text?, blob?, mimeType?}
+                        let text = v.get("text").and_then(|t| t.as_str());
+                        if let Some(text) = text {
+                            Some(McpContent::Text {
+                                text: text.to_string(),
+                            })
+                        } else {
+                            let blob = v.get("blob").and_then(|b| b.as_str());
+                            let mime = v
+                                .get("mimeType")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("application/octet-stream");
+                            blob.map(|data: &str| McpContent::Image {
+                                data: data.to_string(),
+                                mime_type: mime.to_string(),
+                            })
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(contents)
     }
 
     /// Check if a server is connected.
@@ -1876,5 +2192,188 @@ while True:
         let parsed: McpOAuthConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.client_id, "cid");
         assert!(parsed.scope.is_none());
+    }
+
+    // --- stop_health_monitoring tests ---
+
+    #[tokio::test]
+    async fn test_stop_health_monitoring_when_not_running() {
+        let manager = McpManager::new(None);
+        // Should be a no-op, not panic
+        manager.stop_health_monitoring().await;
+        let handle = manager.health_check_handle.read().await;
+        assert!(handle.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stop_health_monitoring_clears_handle() {
+        let manager = McpManager::new(None);
+        // Manually set a dummy handle
+        {
+            let mut handle = manager.health_check_handle.write().await;
+            *handle = Some(tokio::spawn(async {
+                // Simulate long-running task
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }));
+        }
+        assert!(manager.health_check_handle.read().await.is_some());
+
+        manager.stop_health_monitoring().await;
+        assert!(manager.health_check_handle.read().await.is_none());
+    }
+
+    // --- connect_all tests ---
+
+    #[tokio::test]
+    async fn test_connect_all_skips_disabled_servers() {
+        let manager = McpManager::new(Some(PathBuf::from("/tmp")));
+        {
+            let mut config = manager.config.write().await;
+            let mut cfg = McpConfig::default();
+            cfg.mcp_servers.insert(
+                "disabled_server".to_string(),
+                McpServerConfig {
+                    enabled: false,
+                    auto_start: true,
+                    ..McpServerConfig::default()
+                },
+            );
+            cfg.mcp_servers.insert(
+                "non_autostart".to_string(),
+                McpServerConfig {
+                    enabled: true,
+                    auto_start: false,
+                    ..McpServerConfig::default()
+                },
+            );
+            *config = Some(cfg);
+        }
+
+        // Both servers should be skipped (no connection attempts)
+        let connected = manager.connect_all().await.unwrap();
+        assert!(connected.is_empty());
+    }
+
+    // --- disconnect_all tests ---
+
+    #[tokio::test]
+    async fn test_disconnect_all_empty() {
+        let manager = McpManager::new(None);
+        let result = manager.disconnect_all().await;
+        assert!(result.is_ok());
+        assert_eq!(manager.connected_count().await, 0);
+    }
+
+    // --- is_connected / connected_count explicit tests ---
+
+    #[tokio::test]
+    async fn test_is_connected_returns_false_for_unknown() {
+        let manager = McpManager::new(None);
+        assert!(!manager.is_connected("unknown").await);
+    }
+
+    #[tokio::test]
+    async fn test_connected_count_starts_at_zero() {
+        let manager = McpManager::new(None);
+        assert_eq!(manager.connected_count().await, 0);
+    }
+
+    // --- list_prompts empty ---
+
+    #[tokio::test]
+    async fn test_list_prompts_no_connections() {
+        let manager = McpManager::new(None);
+        let prompts = manager.list_prompts().await;
+        assert!(prompts.is_empty());
+    }
+
+    // --- handle_tools_changed on disconnected server ---
+
+    #[tokio::test]
+    async fn test_handle_tools_changed_nonexistent_server() {
+        let manager = McpManager::new(None);
+        // Should not panic, just log warning
+        manager.handle_tools_changed("nonexistent").await;
+    }
+
+    // --- get_health_state ---
+
+    #[tokio::test]
+    async fn test_get_health_state_unknown_server() {
+        let manager = McpManager::new(None);
+        let state = manager.get_health_state("unknown").await;
+        assert!(state.is_none());
+    }
+
+    // --- refresh_tools on disconnected server ---
+
+    #[tokio::test]
+    async fn test_refresh_tools_nonexistent_server() {
+        let manager = McpManager::new(None);
+        let result = manager.refresh_tools("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    // --- Tool name sanitization ---
+
+    #[test]
+    fn test_sanitize_mcp_name_simple() {
+        assert_eq!(sanitize_mcp_name("my-server"), "my-server");
+        assert_eq!(sanitize_mcp_name("my_tool"), "my_tool");
+        assert_eq!(sanitize_mcp_name("tool123"), "tool123");
+    }
+
+    #[test]
+    fn test_sanitize_mcp_name_special_chars() {
+        assert_eq!(sanitize_mcp_name("tool/name"), "tool_name");
+        assert_eq!(sanitize_mcp_name("my.server"), "my_server");
+        assert_eq!(sanitize_mcp_name("ns:tool"), "ns_tool");
+        assert_eq!(sanitize_mcp_name("a b c"), "a_b_c");
+    }
+
+    #[test]
+    fn test_sanitize_mcp_name_preserves_valid() {
+        assert_eq!(sanitize_mcp_name("ABC-xyz_123"), "ABC-xyz_123");
+        assert_eq!(sanitize_mcp_name(""), "");
+    }
+
+    // --- MCP get_prompt tests ---
+
+    #[tokio::test]
+    async fn test_get_prompt_disconnected_server() {
+        let manager = McpManager::new(None);
+        let result = manager.get_prompt("nonexistent", "test-prompt", None).await;
+        assert!(matches!(result, Err(McpError::ServerNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_prompt_with_arguments_disconnected() {
+        let manager = McpManager::new(None);
+        let mut args = HashMap::new();
+        args.insert("key".to_string(), "value".to_string());
+        let result = manager
+            .get_prompt("nonexistent", "test-prompt", Some(args))
+            .await;
+        assert!(matches!(result, Err(McpError::ServerNotFound(_))));
+    }
+
+    // --- MCP list_resources tests ---
+
+    #[tokio::test]
+    async fn test_list_resources_no_connections() {
+        let manager = McpManager::new(None);
+        let resources = manager.list_resources().await;
+        assert!(resources.is_empty());
+    }
+
+    // --- MCP read_resource tests ---
+
+    #[tokio::test]
+    async fn test_read_resource_disconnected_server() {
+        let manager = McpManager::new(None);
+        let result = manager
+            .read_resource("nonexistent", "file:///test.txt")
+            .await;
+        assert!(matches!(result, Err(McpError::ServerNotFound(_))));
     }
 }

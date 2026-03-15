@@ -39,6 +39,17 @@ pub trait McpTransport: Send + Sync {
 
     /// Get the transport type name.
     fn transport_type(&self) -> &str;
+
+    /// Take the notification receiver for server-initiated notifications.
+    ///
+    /// Returns `None` if the transport doesn't support notifications or
+    /// the receiver has already been taken. The caller should spawn a task
+    /// to consume incoming [`JsonRpcNotification`]s from the returned receiver.
+    async fn take_notification_receiver(
+        &mut self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>> {
+        None
+    }
 }
 
 /// Internal state for a running stdio child process.
@@ -57,17 +68,32 @@ pub struct StdioTransport {
     state: Arc<Mutex<Option<StdioProcess>>>,
     /// Handle for the background reader task.
     reader_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Channel for server-initiated notifications (e.g., tools/changed).
+    notification_tx: tokio::sync::mpsc::UnboundedSender<JsonRpcNotification>,
+    notification_rx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>>>>,
 }
 
 impl StdioTransport {
     pub fn new(command: String, args: Vec<String>, env: HashMap<String, String>) -> Self {
+        let (notification_tx, notification_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             command,
             args,
             env,
             state: Arc::new(Mutex::new(None)),
             reader_handle: Arc::new(Mutex::new(None)),
+            notification_tx,
+            notification_rx: Arc::new(Mutex::new(Some(notification_rx))),
         }
+    }
+
+    /// Take the notification receiver. Can only be called once; subsequent
+    /// calls return `None`. The caller should spawn a task to consume
+    /// incoming [`JsonRpcNotification`]s from the returned receiver.
+    pub async fn take_notification_receiver(
+        &self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>> {
+        self.notification_rx.lock().await.take()
     }
 
     /// Get the command that will be executed.
@@ -149,7 +175,9 @@ impl McpTransport for StdioTransport {
 
         // Spawn background reader that parses Content-Length framed JSON-RPC
         // responses from stdout and dispatches them to pending waiters.
+        // Server-initiated notifications are forwarded through notification_tx.
         let state = Arc::clone(&self.state);
+        let notif_tx = self.notification_tx.clone();
         let handle = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             loop {
@@ -167,8 +195,20 @@ impl McpTransport for StdioTransport {
                                         }
                                     }
                                 } else {
-                                    // Server-initiated notification (no id) — ignore for now.
-                                    debug!("Received server notification");
+                                    // Server-initiated notification (no id).
+                                    // Re-parse as notification to extract method name.
+                                    match serde_json::from_slice::<JsonRpcNotification>(&bytes) {
+                                        Ok(notif) => {
+                                            debug!(
+                                                method = %notif.method,
+                                                "Received server notification"
+                                            );
+                                            let _ = notif_tx.send(notif);
+                                        }
+                                        Err(e) => {
+                                            debug!("Received server notification (unparseable: {})", e);
+                                        }
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -291,6 +331,12 @@ impl McpTransport for StdioTransport {
 
     fn transport_type(&self) -> &str {
         "stdio"
+    }
+
+    async fn take_notification_receiver(
+        &mut self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>> {
+        self.notification_rx.lock().await.take()
     }
 }
 
