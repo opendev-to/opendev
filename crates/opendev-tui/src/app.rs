@@ -2830,9 +2830,15 @@ impl App {
                 subagent.advance_tick();
             }
         }
-        // Remove finished subagents immediately — their data has been
-        // transferred to nested_calls in the conversation history.
-        self.state.active_subagents.retain(|s| !s.finished);
+        // Keep subagents visible while any are still running so the
+        // multi-agent tree stays stable (no flickering 3→2→1).  Only
+        // clear the entire batch once ALL have finished — their data
+        // has been transferred to nested_calls in the conversation.
+        if !self.state.active_subagents.is_empty()
+            && self.state.active_subagents.iter().all(|s| s.finished)
+        {
+            self.state.active_subagents.clear();
+        }
 
         // Update task progress elapsed time from wall clock
         if let Some(ref mut progress) = self.state.task_progress {

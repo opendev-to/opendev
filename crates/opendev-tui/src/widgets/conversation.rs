@@ -501,8 +501,6 @@ impl<'a> ConversationWidget<'a> {
     /// These are rendered outside the scrollable area so that spinner
     /// animation (60ms ticks) doesn't shift scroll math or cause jitter.
     fn build_spinner_lines(&self) -> Vec<Line<'a>> {
-        const MAX_VISIBLE_NESTED: usize = 3;
-
         let mut lines: Vec<Line> = Vec::new();
 
         let has_subagents = !self.active_subagents.is_empty();
@@ -734,55 +732,23 @@ impl<'a> ConversationWidget<'a> {
                         ),
                     ]));
 
-                    if subagent.active_tools.is_empty() && subagent.completed_tools.is_empty() {
+                    // Show categorized activity summary (same as multi-agent path)
+                    let activity = build_subagent_activity_summary(subagent);
+                    let tool_count =
+                        subagent.completed_tools.len() + subagent.active_tools.len();
+                    if tool_count > 0 {
                         lines.push(Line::from(Span::styled(
-                            format!("  {}  Initializing\u{2026}", CONTINUATION_CHAR),
+                            format!(
+                                "  {}  {} \u{00b7} {} tool uses",
+                                CONTINUATION_CHAR, activity, tool_count,
+                            ),
                             Style::default().fg(style_tokens::SUBTLE),
                         )));
                     } else {
-                        let active_names: Vec<&str> = subagent
-                            .active_tools
-                            .values()
-                            .map(|t| t.tool_name.as_str())
-                            .collect();
-                        let completed_count = subagent.completed_tools.len();
-                        let completed_start = completed_count.saturating_sub(MAX_VISIBLE_NESTED);
-                        let visible_completed: Vec<&str> = subagent.completed_tools
-                            [completed_start..]
-                            .iter()
-                            .map(|t| t.tool_name.as_str())
-                            .collect();
-
-                        let total_tools = completed_count + active_names.len();
-                        let visible_count = visible_completed.len() + active_names.len();
-                        let hidden_count = total_tools.saturating_sub(visible_count);
-
-                        let all_visible: Vec<&str> = visible_completed
-                            .iter()
-                            .chain(active_names.iter())
-                            .copied()
-                            .collect();
-
-                        for (i, tool_name) in all_visible.iter().enumerate() {
-                            if i == 0 {
-                                lines.push(Line::from(Span::styled(
-                                    format!("  {}  {tool_name}", CONTINUATION_CHAR),
-                                    Style::default().fg(style_tokens::SUBTLE),
-                                )));
-                            } else {
-                                lines.push(Line::from(Span::styled(
-                                    format!("     {tool_name}"),
-                                    Style::default().fg(style_tokens::SUBTLE),
-                                )));
-                            }
-                        }
-
-                        if hidden_count > 0 {
-                            lines.push(Line::from(Span::styled(
-                                format!("     +{hidden_count} more tool uses (ctrl+o to expand)"),
-                                Style::default().fg(style_tokens::SUBTLE),
-                            )));
-                        }
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}  {activity}", CONTINUATION_CHAR),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        )));
                     }
                 }
             }
