@@ -21,6 +21,7 @@ web-ui/dist/
 # OpenDev local
 .opendev/
 .claude/
+CLAUDE.md
 
 # Logs
 *.log
