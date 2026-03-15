@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 dirs = "5"
+httpdate = "1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

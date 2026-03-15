@@ -115,7 +115,7 @@ impl HttpClient {
                     if let Some(status) = hr.status
                         && self.retry_config.is_retryable_status(status)
                     {
-                        let delay = self.get_retry_delay(hr.retry_after.as_deref(), attempt);
+                        let delay = self.get_retry_delay(hr.retry_after.as_deref(), hr.retry_after_ms.as_deref(), attempt);
                         last_result = Some(hr);
                         if attempt < self.retry_config.max_retries {
                             warn!(
@@ -142,9 +142,10 @@ impl HttpClient {
                 }
                 Ok(hr) if hr.retryable => {
                     let retry_after = hr.retry_after.clone();
+                    let retry_after_ms = hr.retry_after_ms.clone();
                     last_result = Some(hr);
                     if attempt < self.retry_config.max_retries {
-                        let delay = self.get_retry_delay(retry_after.as_deref(), attempt);
+                        let delay = self.get_retry_delay(retry_after.as_deref(), retry_after_ms.as_deref(), attempt);
                         warn!(
                             error = last_result.as_ref().and_then(|r| r.error.as_deref()),
                             attempt = attempt + 1,
@@ -236,15 +237,23 @@ impl HttpClient {
                 let status = resp.status().as_u16();
                 debug!(request_id = %request_id, status, "LLM response received");
                 if self.retry_config.is_retryable_status(status) {
-                    // Extract Retry-After header before consuming the response body
+                    // Extract Retry-After and retry-after-ms headers
                     let retry_after = resp
                         .headers()
                         .get("retry-after")
                         .and_then(|v| v.to_str().ok())
                         .map(String::from);
+                    let retry_after_ms = resp
+                        .headers()
+                        .get("retry-after-ms")
+                        .and_then(|v| v.to_str().ok())
+                        .map(String::from);
                     let body = resp.json::<serde_json::Value>().await.ok();
-                    return Ok(HttpResult::retryable_status(status, body, retry_after)
-                        .with_request_id(request_id));
+                    let mut result =
+                        HttpResult::retryable_status(status, body, retry_after)
+                            .with_request_id(request_id);
+                    result.retry_after_ms = retry_after_ms;
+                    return Ok(result);
                 }
                 let body = resp.json::<serde_json::Value>().await?;
                 if status >= 400 {
@@ -264,6 +273,7 @@ impl HttpClient {
                         retryable: false,
                         request_id: Some(request_id),
                         retry_after: None,
+                        retry_after_ms: None,
                     });
                 }
                 Ok(HttpResult::ok(status, body).with_request_id(request_id))
@@ -285,13 +295,19 @@ impl HttpClient {
         }
     }
 
-    /// Determine retry delay from Retry-After header value or default backoff.
-    fn get_retry_delay(&self, retry_after: Option<&str>, attempt: u32) -> Duration {
-        if let Some(val) = retry_after
-            && let Ok(secs) = val.parse::<f64>()
-            && secs > 0.0
+    /// Determine retry delay from Retry-After/retry-after-ms headers or default backoff.
+    fn get_retry_delay(
+        &self,
+        retry_after: Option<&str>,
+        retry_after_ms: Option<&str>,
+        attempt: u32,
+    ) -> Duration {
+        if let Some(parsed) =
+            crate::models::parse_retry_after(retry_after, retry_after_ms)
         {
-            return Duration::from_secs_f64(secs);
+            // Cap server-requested delay at max_delay_ms
+            let max = Duration::from_millis(self.retry_config.max_delay_ms);
+            return parsed.min(max);
         }
         self.retry_config.delay_for_attempt(attempt)
     }
@@ -362,17 +378,33 @@ mod tests {
     #[test]
     fn test_get_retry_delay_with_header() {
         let client = HttpClient::new("https://example.com", HeaderMap::new(), None).unwrap();
-        let delay = client.get_retry_delay(Some("5.0"), 0);
+        let delay = client.get_retry_delay(Some("5.0"), None, 0);
         assert_eq!(delay, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_get_retry_delay_with_ms_header() {
+        let client = HttpClient::new("https://example.com", HeaderMap::new(), None).unwrap();
+        // retry-after-ms takes precedence over retry-after
+        let delay = client.get_retry_delay(Some("10"), Some("500"), 0);
+        assert_eq!(delay, Duration::from_millis(500));
     }
 
     #[test]
     fn test_get_retry_delay_fallback() {
         let client = HttpClient::new("https://example.com", HeaderMap::new(), None).unwrap();
-        let delay = client.get_retry_delay(None, 0);
-        assert_eq!(delay, Duration::from_secs(1));
-        let delay = client.get_retry_delay(Some("invalid"), 1);
-        assert_eq!(delay, Duration::from_secs(2));
+        let delay = client.get_retry_delay(None, None, 0);
+        assert_eq!(delay, Duration::from_secs(2)); // 2000ms initial
+        let delay = client.get_retry_delay(Some("invalid"), None, 1);
+        assert_eq!(delay, Duration::from_secs(4)); // 2000 * 2^1 = 4000ms
+    }
+
+    #[test]
+    fn test_get_retry_delay_capped() {
+        let client = HttpClient::new("https://example.com", HeaderMap::new(), None).unwrap();
+        // Attempt 10: 2000 * 2^10 = 2,048,000ms, but capped at 30,000ms
+        let delay = client.get_retry_delay(None, None, 10);
+        assert_eq!(delay, Duration::from_millis(30000));
     }
 
     #[tokio::test]
