@@ -168,6 +168,7 @@ pub enum SubagentEvent {
         result_summary: String,
         tool_call_count: usize,
         shallow_warning: Option<String>,
+        total_tokens: u64,
     },
 }
 
@@ -222,13 +223,16 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
         success: bool,
         result_summary: &str,
         tool_call_count: usize,
+        shallow_warning: Option<&str>,
+        total_tokens: u64,
     ) {
         let _ = self.tx.send(SubagentEvent::Finished {
             subagent_name: subagent_name.to_string(),
             success,
             result_summary: result_summary.to_string(),
             tool_call_count,
-            shallow_warning: None,
+            shallow_warning: shallow_warning.map(|s| s.to_string()),
+            total_tokens,
         });
     }
 }
@@ -302,7 +306,11 @@ impl BaseTool for SpawnSubagentTool {
          This is the correct tool for 'summarize the codebase', 'how does X work', \
          'explore the code', etc. — NOT invoke_skill. \
          Do NOT spawn a subagent for tasks that only need 1-2 tool calls — \
-         use the tools directly instead."
+         use the tools directly instead. \
+         IMPORTANT: Launch multiple agents concurrently whenever possible to maximize \
+         performance. To do that, make ALL spawn_subagent calls in a SINGLE message \
+         with multiple tool_use blocks. If you make them in separate messages, they \
+         run sequentially which is much slower."
     }
 
     fn parameter_schema(&self) -> serde_json::Value {
@@ -434,20 +442,8 @@ impl BaseTool for SpawnSubagentTool {
                     output.push_str(warning);
                 }
 
-                // Send finished event with full details
-                if let Some(ref tx) = self.event_tx {
-                    let _ = tx.send(SubagentEvent::Finished {
-                        subagent_name: agent_type.to_string(),
-                        success: run_result.agent_result.success,
-                        result_summary: if output.len() > 200 {
-                            format!("{}...", &output[..200])
-                        } else {
-                            output.clone()
-                        },
-                        tool_call_count: run_result.tool_call_count,
-                        shallow_warning: run_result.shallow_warning.clone(),
-                    });
-                }
+                // NOTE: The Finished event is already sent by manager.spawn() via
+                // the progress callback. No duplicate send needed here.
 
                 if run_result.agent_result.success {
                     let mut metadata = HashMap::new();
@@ -672,6 +668,7 @@ mod tests {
             result_summary: "Found 5 TODOs".into(),
             tool_call_count: 3,
             shallow_warning: None,
+            total_tokens: 15000,
         };
         assert!(matches!(finished, SubagentEvent::Finished { .. }));
     }
@@ -685,7 +682,7 @@ mod tests {
         cb.on_started("test-agent", "do a thing");
         cb.on_tool_call("test-agent", "read_file", "tc-1");
         cb.on_tool_complete("test-agent", "read_file", "tc-1", true);
-        cb.on_finished("test-agent", true, "Done", 3);
+        cb.on_finished("test-agent", true, "Done", 3, None, 8000);
 
         let evt = rx.recv().await.unwrap();
         assert!(matches!(evt, SubagentEvent::Started { .. }));

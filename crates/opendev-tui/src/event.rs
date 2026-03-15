@@ -105,6 +105,7 @@ pub enum AppEvent {
         result_summary: String,
         tool_call_count: usize,
         shallow_warning: Option<String>,
+        total_tokens: u64,
     },
 
     // -- Thinking events --
@@ -473,6 +474,7 @@ impl RecordedEvent {
                 result_summary,
                 tool_call_count,
                 shallow_warning,
+                total_tokens,
             } => (
                 "SubagentFinished".to_string(),
                 serde_json::json!({
@@ -481,6 +483,7 @@ impl RecordedEvent {
                     "result_summary": result_summary,
                     "tool_call_count": tool_call_count,
                     "shallow_warning": shallow_warning,
+                    "total_tokens": total_tokens,
                 }),
             ),
             AppEvent::ThinkingTrace(s) => {
@@ -666,12 +669,18 @@ impl RecordedEvent {
                     .get("shallow_warning")
                     .and_then(|v| v.as_str())
                     .map(String::from);
+                let total_tokens = self
+                    .payload
+                    .get("total_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 Some(AppEvent::SubagentFinished {
                     subagent_name,
                     success,
                     result_summary,
                     tool_call_count,
                     shallow_warning,
+                    total_tokens,
                 })
             }
             "ThinkingTrace" => {
@@ -925,6 +934,7 @@ mod tests {
             result_summary: "Found 3 files".to_string(),
             tool_call_count: 5,
             shallow_warning: None,
+            total_tokens: 12500,
         };
 
         {
@@ -942,10 +952,12 @@ mod tests {
                 result_summary,
                 tool_call_count,
                 shallow_warning,
+                total_tokens,
             } => {
                 assert_eq!(subagent_name, "explorer");
                 assert!(success);
                 assert_eq!(result_summary, "Found 3 files");
+                assert_eq!(total_tokens, 12500);
                 assert_eq!(tool_call_count, 5);
                 assert!(shallow_warning.is_none());
             }

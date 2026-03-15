@@ -59,6 +59,8 @@ pub struct SubagentDisplayState {
     pub tick: usize,
     /// Optional shallow subagent warning.
     pub shallow_warning: Option<String>,
+    /// Total tokens consumed by this subagent.
+    pub total_tokens: u64,
 }
 
 impl SubagentDisplayState {
@@ -76,6 +78,7 @@ impl SubagentDisplayState {
             completed_tools: Vec::new(),
             tick: 0,
             shallow_warning: None,
+            total_tokens: 0,
         }
     }
 
@@ -111,12 +114,14 @@ impl SubagentDisplayState {
         result_summary: String,
         tool_call_count: usize,
         shallow_warning: Option<String>,
+        total_tokens: u64,
     ) {
         self.finished = true;
         self.success = success;
         self.result_summary = result_summary;
         self.tool_call_count = tool_call_count;
         self.shallow_warning = shallow_warning;
+        self.total_tokens = total_tokens;
     }
 
     /// Advance the animation tick.
@@ -364,11 +369,12 @@ mod tests {
     #[test]
     fn test_finish() {
         let mut state = SubagentDisplayState::new("test".into(), "task".into());
-        state.finish(true, "Done".into(), 3, None);
+        state.finish(true, "Done".into(), 3, None, 12500);
         assert!(state.finished);
         assert!(state.success);
         assert_eq!(state.result_summary, "Done");
         assert_eq!(state.tool_call_count, 3);
+        assert_eq!(state.total_tokens, 12500);
     }
 
     #[test]
@@ -379,6 +385,7 @@ mod tests {
             "Done".into(),
             1,
             Some("Shallow subagent warning".into()),
+            5000,
         );
         assert!(state.shallow_warning.is_some());
     }
@@ -413,7 +420,7 @@ mod tests {
         state.complete_tool_call("tc-1", true);
         state.add_tool_call("write_file".into(), "tc-2".into());
         state.complete_tool_call("tc-2", true);
-        state.finish(true, "Plan created".into(), 2, None);
+        state.finish(true, "Plan created".into(), 2, None, 8000);
         let subagents = vec![state];
         let _widget = NestedToolWidget::new(&subagents);
     }

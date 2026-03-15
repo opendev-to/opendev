@@ -281,6 +281,68 @@ impl MainAgent {
                 AgentError::ConfigError("HTTP client not configured. Call with_http_client() or set_http_client() before running.".into())
             })
     }
+
+    /// Return the total tokens consumed by the most recent run (summed from iteration metrics).
+    pub fn total_tokens(&self) -> u64 {
+        self.react_loop
+            .iteration_metrics()
+            .iter()
+            .map(|m| m.input_tokens + m.output_tokens)
+            .sum()
+    }
+
+    /// Run with an explicit event callback for subagent tool-level visibility.
+    ///
+    /// This variant is used by `SubagentManager::spawn()` so that each
+    /// tool call inside the subagent's ReAct loop is forwarded to the TUI.
+    pub async fn run_with_callback(
+        &self,
+        message: &str,
+        task_monitor: Option<&dyn TaskMonitor>,
+        event_callback: Option<&dyn crate::traits::AgentEventCallback>,
+    ) -> Result<AgentResult, AgentError> {
+        let http_client = self.require_http_client()?;
+
+        let mut messages = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": self.system_prompt
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": message
+            }),
+        ];
+
+        info!(
+            model = %self.config.model,
+            is_subagent = self.is_subagent,
+            message_count = messages.len(),
+            "Starting agent run (with callback)"
+        );
+
+        let working_dir = self.config.working_dir.as_deref().unwrap_or(".");
+        let tool_context = ToolContext::new(working_dir);
+
+        self.react_loop
+            .run(
+                &self.llm_caller,
+                http_client,
+                &mut messages,
+                &self.tool_schemas,
+                &self.tool_registry,
+                &tool_context,
+                task_monitor,
+                event_callback,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+    }
 }
 
 #[async_trait]

@@ -198,12 +198,14 @@ impl TuiRunner {
                                 result_summary,
                                 tool_call_count,
                                 shallow_warning,
+                                total_tokens,
                             } => AppEvent::SubagentFinished {
                                 subagent_name,
                                 success,
                                 result_summary,
                                 tool_call_count,
                                 shallow_warning,
+                                total_tokens,
                             },
                         };
                         let _ = subagent_tx.send(app_event);

@@ -1894,6 +1894,7 @@ impl App {
                 result_summary,
                 tool_call_count,
                 shallow_warning,
+                total_tokens,
             } => {
                 if let Some(subagent) = self
                     .state
@@ -1901,7 +1902,13 @@ impl App {
                     .iter_mut()
                     .find(|s| s.name == subagent_name && !s.finished)
                 {
-                    subagent.finish(success, result_summary, tool_call_count, shallow_warning);
+                    subagent.finish(
+                        success,
+                        result_summary,
+                        tool_call_count,
+                        shallow_warning,
+                        total_tokens,
+                    );
                 }
                 // nested_calls are populated when the ToolResult for spawn_subagent
                 // arrives (which happens after this event).

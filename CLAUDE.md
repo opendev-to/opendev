@@ -111,3 +111,7 @@ Or for interactive TUI testing, launch `opendev` and exercise the feature manual
 - Run `cargo fmt` before committing
 - Run `cargo clippy` and fix all warnings
 - Follow standard Rust naming conventions (snake_case functions, CamelCase types)
+
+## Commit Rules
+
+- Never add a `Co-Authored-By` line for Claude Code in commit messages

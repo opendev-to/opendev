@@ -24,7 +24,8 @@ use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts};
 use crate::widgets::nested_tool::SubagentDisplayState;
 use crate::widgets::progress::TaskProgress;
 use crate::widgets::spinner::{
-    COMPACTION_FRAMES, COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES,
+    COMPACTION_FRAMES, COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES, TREE_BRANCH, TREE_LAST,
+    TREE_VERTICAL,
 };
 
 /// Check if a tool name is an edit/write tool that produces diffs.
@@ -504,10 +505,14 @@ impl<'a> ConversationWidget<'a> {
 
         let mut lines: Vec<Line> = Vec::new();
 
+        let has_subagents = !self.active_subagents.is_empty();
         let active_unfinished: Vec<_> = self
             .active_tools
             .iter()
             .filter(|t| !t.is_finished())
+            // Hide spawn_subagent tool calls from the regular spinner when
+            // subagent display is active — avoids duplicate display.
+            .filter(|t| !(has_subagents && t.name == "spawn_subagent"))
             .collect();
 
         if self.compaction_active {
@@ -529,118 +534,255 @@ impl<'a> ConversationWidget<'a> {
         }
 
         // Render active subagents inline
-        for subagent in self.active_subagents {
-            if subagent.finished {
-                // Finished: ⏺ Explore(task) \n  ⎿  Done (N tool uses · Xs)
-                let verb = subagent.display_verb();
-                let task_preview = if subagent.task.len() > 50 {
-                    format!("{}…", &subagent.task[..50])
-                } else {
-                    subagent.task.clone()
-                };
+        if self.active_subagents.len() > 1 {
+            // Multi-agent tree display
+            let all_finished = self.active_subagents.iter().all(|s| s.finished);
+            let agent_count = self.active_subagents.len();
+
+            // Determine the dominant verb for the grouped header
+            let dominant_verb = {
+                let mut verb_counts: Vec<(&str, usize)> = Vec::new();
+                for s in self.active_subagents {
+                    let v = s.display_verb();
+                    if let Some(entry) = verb_counts.iter_mut().find(|(name, _)| *name == v) {
+                        entry.1 += 1;
+                    } else {
+                        verb_counts.push((v, 1));
+                    }
+                }
+                verb_counts.sort_by(|a, b| b.1.cmp(&a.1));
+                verb_counts.first().map_or("Agent", |(v, _)| *v)
+            };
+
+            // Grouped header line
+            if all_finished {
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("{COMPLETED_CHAR} "),
                         Style::default().fg(style_tokens::GREEN_BRIGHT),
                     ),
                     Span::styled(
-                        verb.to_string(),
+                        format!("Completed {agent_count} {dominant_verb} agents"),
                         Style::default()
                             .fg(style_tokens::PRIMARY)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        format!("({task_preview})"),
-                        Style::default().fg(style_tokens::SUBTLE),
-                    ),
                 ]));
-                lines.push(Line::from(Span::styled(
-                    format!(
-                        "  {}  Done ({} tool uses \u{00b7} {}s)",
-                        CONTINUATION_CHAR,
-                        subagent.tool_call_count,
-                        subagent.elapsed_secs()
-                    ),
-                    Style::default().fg(style_tokens::SUBTLE),
-                )));
             } else {
-                // Running: ⠋ Explore(task) with nested tools
-                let frame_idx = subagent.tick % SPINNER_FRAMES.len();
+                let first_tick = self
+                    .active_subagents
+                    .iter()
+                    .find(|s| !s.finished)
+                    .map_or(0, |s| s.tick);
+                let frame_idx = first_tick % SPINNER_FRAMES.len();
                 let spinner = SPINNER_FRAMES[frame_idx];
-                let verb = subagent.display_verb();
-                let task_preview = if subagent.task.len() > 50 {
-                    format!("{}…", &subagent.task[..50])
-                } else {
-                    subagent.task.clone()
-                };
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("{spinner} "),
                         Style::default().fg(style_tokens::BLUE_BRIGHT),
                     ),
                     Span::styled(
-                        verb.to_string(),
+                        format!(
+                            "Running {agent_count} {dominant_verb} agents\u{2026} (ctrl+o to expand)"
+                        ),
                         Style::default()
                             .fg(style_tokens::PRIMARY)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        format!("({task_preview})"),
-                        Style::default().fg(style_tokens::SUBTLE),
-                    ),
                 ]));
+            }
 
-                if subagent.active_tools.is_empty() && subagent.completed_tools.is_empty() {
+            // Tree branches for each subagent
+            let last_idx = agent_count - 1;
+            for (i, subagent) in self.active_subagents.iter().enumerate() {
+                let is_last = i == last_idx;
+                let branch = if is_last { TREE_LAST } else { TREE_BRANCH };
+                let cont_prefix = if is_last {
+                    "   "
+                } else {
+                    &format!("{TREE_VERTICAL}  ")
+                };
+
+                let verb = subagent.display_verb();
+                let task_preview = if subagent.task.len() > 50 {
+                    format!("{}…", &subagent.task[..50])
+                } else {
+                    subagent.task.clone()
+                };
+
+                if subagent.finished {
+                    // Branch line: ├─ Explore task · N tool uses · 39.0k tokens
+                    let token_str = if subagent.total_tokens > 0 {
+                        format!(" \u{00b7} {} tokens", format_tokens(subagent.total_tokens))
+                    } else {
+                        String::new()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!(" {branch} "),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                        Span::styled(
+                            format!("{verb} "),
+                            Style::default()
+                                .fg(style_tokens::PRIMARY)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!(
+                                "{task_preview} \u{00b7} {} tool uses{token_str}",
+                                subagent.tool_call_count,
+                            ),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                    ]));
+                    // Continuation: │  ⎿  Done
                     lines.push(Line::from(Span::styled(
-                        format!("  {}  Initializing\u{2026}", CONTINUATION_CHAR),
-                        Style::default()
-                            .fg(style_tokens::SUBTLE)
-                            .add_modifier(Modifier::ITALIC),
+                        format!(" {cont_prefix}{CONTINUATION_CHAR}  Done"),
+                        Style::default().fg(style_tokens::SUBTLE),
                     )));
                 } else {
-                    let active_names: Vec<&str> = subagent
-                        .active_tools
-                        .values()
-                        .map(|t| t.tool_name.as_str())
-                        .collect();
-                    let completed_count = subagent.completed_tools.len();
-                    let completed_start = completed_count.saturating_sub(MAX_VISIBLE_NESTED);
-                    let visible_completed: Vec<&str> = subagent.completed_tools[completed_start..]
-                        .iter()
-                        .map(|t| t.tool_name.as_str())
-                        .collect();
+                    // Branch line: ├─ Explore task · N tool uses · 39.0k tokens
+                    let tool_count = subagent.completed_tools.len() + subagent.active_tools.len();
+                    let token_str = if subagent.total_tokens > 0 {
+                        format!(" \u{00b7} {} tokens", format_tokens(subagent.total_tokens))
+                    } else {
+                        String::new()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!(" {branch} "),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                        Span::styled(
+                            format!("{verb} "),
+                            Style::default()
+                                .fg(style_tokens::PRIMARY)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("{task_preview} \u{00b7} {tool_count} tool uses{token_str}"),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                    ]));
+                    // Continuation: activity summary
+                    let activity = build_subagent_activity_summary(subagent);
+                    lines.push(Line::from(Span::styled(
+                        format!(" {cont_prefix}{CONTINUATION_CHAR}  {activity}"),
+                        Style::default().fg(style_tokens::SUBTLE),
+                    )));
+                }
+            }
+        } else {
+            // Single-agent display (original behavior)
+            for subagent in self.active_subagents {
+                if subagent.finished {
+                    let verb = subagent.display_verb();
+                    let task_preview = if subagent.task.len() > 50 {
+                        format!("{}…", &subagent.task[..50])
+                    } else {
+                        subagent.task.clone()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("{COMPLETED_CHAR} "),
+                            Style::default().fg(style_tokens::GREEN_BRIGHT),
+                        ),
+                        Span::styled(
+                            verb.to_string(),
+                            Style::default()
+                                .fg(style_tokens::PRIMARY)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("({task_preview})"),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                    ]));
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "  {}  Done ({} tool uses \u{00b7} {}s)",
+                            CONTINUATION_CHAR,
+                            subagent.tool_call_count,
+                            subagent.elapsed_secs()
+                        ),
+                        Style::default().fg(style_tokens::SUBTLE),
+                    )));
+                } else {
+                    let frame_idx = subagent.tick % SPINNER_FRAMES.len();
+                    let spinner = SPINNER_FRAMES[frame_idx];
+                    let verb = subagent.display_verb();
+                    let task_preview = if subagent.task.len() > 50 {
+                        format!("{}…", &subagent.task[..50])
+                    } else {
+                        subagent.task.clone()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("{spinner} "),
+                            Style::default().fg(style_tokens::BLUE_BRIGHT),
+                        ),
+                        Span::styled(
+                            verb.to_string(),
+                            Style::default()
+                                .fg(style_tokens::PRIMARY)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("({task_preview})"),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                    ]));
 
-                    let total_tools = completed_count + active_names.len();
-                    let visible_count = visible_completed.len() + active_names.len();
-                    let hidden_count = total_tools.saturating_sub(visible_count);
+                    if subagent.active_tools.is_empty() && subagent.completed_tools.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}  Initializing\u{2026}", CONTINUATION_CHAR),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        )));
+                    } else {
+                        let active_names: Vec<&str> = subagent
+                            .active_tools
+                            .values()
+                            .map(|t| t.tool_name.as_str())
+                            .collect();
+                        let completed_count = subagent.completed_tools.len();
+                        let completed_start = completed_count.saturating_sub(MAX_VISIBLE_NESTED);
+                        let visible_completed: Vec<&str> = subagent.completed_tools
+                            [completed_start..]
+                            .iter()
+                            .map(|t| t.tool_name.as_str())
+                            .collect();
 
-                    let all_visible: Vec<&str> = visible_completed
-                        .iter()
-                        .chain(active_names.iter())
-                        .copied()
-                        .collect();
+                        let total_tools = completed_count + active_names.len();
+                        let visible_count = visible_completed.len() + active_names.len();
+                        let hidden_count = total_tools.saturating_sub(visible_count);
 
-                    for (i, tool_name) in all_visible.iter().enumerate() {
-                        if i == 0 {
+                        let all_visible: Vec<&str> = visible_completed
+                            .iter()
+                            .chain(active_names.iter())
+                            .copied()
+                            .collect();
+
+                        for (i, tool_name) in all_visible.iter().enumerate() {
+                            if i == 0 {
+                                lines.push(Line::from(Span::styled(
+                                    format!("  {}  {tool_name}", CONTINUATION_CHAR),
+                                    Style::default().fg(style_tokens::SUBTLE),
+                                )));
+                            } else {
+                                lines.push(Line::from(Span::styled(
+                                    format!("     {tool_name}"),
+                                    Style::default().fg(style_tokens::SUBTLE),
+                                )));
+                            }
+                        }
+
+                        if hidden_count > 0 {
                             lines.push(Line::from(Span::styled(
-                                format!("  {}  {tool_name}", CONTINUATION_CHAR),
-                                Style::default().fg(style_tokens::SUBTLE),
-                            )));
-                        } else {
-                            lines.push(Line::from(Span::styled(
-                                format!("     {tool_name}"),
+                                format!("     +{hidden_count} more tool uses (ctrl+o to expand)"),
                                 Style::default().fg(style_tokens::SUBTLE),
                             )));
                         }
-                    }
-
-                    if hidden_count > 0 {
-                        lines.push(Line::from(Span::styled(
-                            format!("     +{hidden_count} more tool uses (ctrl+o to expand)"),
-                            Style::default()
-                                .fg(style_tokens::SUBTLE)
-                                .add_modifier(Modifier::ITALIC),
-                        )));
                     }
                 }
             }
@@ -691,6 +833,80 @@ impl<'a> ConversationWidget<'a> {
         }
 
         lines
+    }
+}
+
+/// Format a token count as a human-friendly string (e.g. 39000 → "39.0k").
+fn format_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Build a short activity summary for a running subagent's active tools.
+///
+/// Categorizes tools into search/read groups for concise display:
+/// - `search`, `grep`, `find_symbol` → "Searching for N patterns"
+/// - `read_file`, `list_files` → "reading N files"
+/// - Other tools listed by name
+fn build_subagent_activity_summary(subagent: &SubagentDisplayState) -> String {
+    if subagent.active_tools.is_empty() && subagent.completed_tools.is_empty() {
+        return "Initializing\u{2026}".to_string();
+    }
+
+    let active_names: Vec<&str> = subagent
+        .active_tools
+        .values()
+        .map(|t| t.tool_name.as_str())
+        .collect();
+
+    if active_names.is_empty() {
+        return "Working\u{2026}".to_string();
+    }
+
+    let mut search_count = 0usize;
+    let mut read_count = 0usize;
+    let mut other_names: Vec<&str> = Vec::new();
+
+    for name in &active_names {
+        match *name {
+            "search" | "grep" | "find_symbol" | "glob" => search_count += 1,
+            "read_file" | "list_files" => read_count += 1,
+            other => {
+                if !other_names.contains(&other) {
+                    other_names.push(other);
+                }
+            }
+        }
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if search_count > 0 {
+        parts.push(format!(
+            "Searching for {} pattern{}",
+            search_count,
+            if search_count == 1 { "" } else { "s" }
+        ));
+    }
+    if read_count > 0 {
+        parts.push(format!(
+            "reading {} file{}",
+            read_count,
+            if read_count == 1 { "" } else { "s" }
+        ));
+    }
+    for name in other_names {
+        parts.push(name.to_string());
+    }
+
+    if parts.is_empty() {
+        "Working\u{2026}".to_string()
+    } else {
+        format!("{}\u{2026}", parts.join(", "))
     }
 }
 

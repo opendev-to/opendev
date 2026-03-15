@@ -66,7 +66,47 @@ pub static PARALLELIZABLE_TOOLS: &[&str] = &[
     "search_tools",
     "find_symbol",
     "find_referencing_symbols",
+    "spawn_subagent",
 ];
+
+/// Poll a vec of futures concurrently, returning results in original order.
+///
+/// Unlike `tokio::spawn`, this works with borrowed references because it
+/// doesn't require `'static` lifetimes.
+async fn poll_all_futures<T>(
+    futs: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + '_>>>,
+) -> Vec<T> {
+    use std::task::Poll;
+
+    let len = futs.len();
+    let mut futs: Vec<Option<std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + '_>>>> =
+        futs.into_iter().map(Some).collect();
+    let mut results: Vec<Option<T>> = (0..len).map(|_| None).collect();
+    let mut remaining = len;
+
+    while remaining > 0 {
+        // Use poll_fn to check each future once per wakeup
+        std::future::poll_fn(|cx| {
+            for i in 0..len {
+                if let Some(fut) = futs[i].as_mut()
+                    && let Poll::Ready(val) = fut.as_mut().poll(cx)
+                {
+                    results[i] = Some(val);
+                    futs[i] = None;
+                    remaining -= 1;
+                }
+            }
+            if remaining == 0 {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+    }
+
+    results.into_iter().map(|r| r.unwrap()).collect()
+}
 
 use crate::prompts::embedded;
 use crate::prompts::reminders::{
@@ -1082,342 +1122,125 @@ impl ReactLoop {
                         DoomLoopAction::None => {}
                     }
 
-                    // Execute tool calls
+                    // Execute tool calls — parallel path for spawn_subagent
                     let total_tool_count = tool_calls.len();
                     let mut completed_tool_count: usize = 0;
                     let mut any_tool_failed = false;
-                    for tc in &tool_calls {
-                        // Check for task_complete — block if todos are incomplete
-                        if Self::is_task_complete(tc) {
-                            if let Some(mgr) = todo_manager
-                                && let Ok(mgr) = mgr.lock()
-                                && mgr.has_incomplete_todos()
-                                && todo_nudge_count < self.config.max_todo_nudges
-                            {
-                                todo_nudge_count += 1;
-                                let count = mgr.total() - mgr.completed_count();
-                                let titles: Vec<_> = mgr
-                                    .all()
-                                    .iter()
-                                    .filter(|t| t.status != TodoStatus::Completed)
-                                    .take(3)
-                                    .map(|t| format!("  - {}", t.title))
-                                    .collect();
-                                let nudge = get_reminder(
-                                    "incomplete_todos_nudge",
-                                    &[
-                                        ("count", &count.to_string()),
-                                        ("todo_list", &titles.join("\n")),
-                                    ],
-                                );
-                                append_nudge(messages, &nudge);
-                                // Skip task_complete, continue to next tool call
-                                // (or continue loop if this was the only call)
-                                continue;
-                            }
-                            let (summary, status) = Self::extract_task_complete_args(tc);
-                            // Prefer the assistant's text content over the
-                            // task_complete summary.  When thinking guides
-                            // the model to produce a natural conversational
-                            // reply, the real answer lives in
-                            // `response.content` while the summary is just
-                            // a terse label like "Greeted the user".
-                            let display_text = response
-                                .content
-                                .as_deref()
-                                .filter(|c| !c.trim().is_empty())
-                                .map(|c| c.to_string())
-                                .unwrap_or(summary);
-                            // Emit as agent chunk so TUI displays it
-                            if let Some(cb) = event_callback {
-                                cb.on_agent_chunk(&display_text);
-                            }
-                            iter_metrics.total_duration_ms =
-                                iter_start.elapsed().as_millis() as u64;
-                            self.push_metrics(iter_metrics);
-                            play_finish_sound();
-                            let mut result = AgentResult::ok(display_text, messages.clone());
-                            result.completion_status = Some(status);
-                            return Ok(result);
-                        }
 
-                        let tool_name = tc
-                            .get("function")
-                            .and_then(|f| f.get("name"))
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("unknown");
-
-                        let args_str = tc
-                            .get("function")
-                            .and_then(|f| f.get("arguments"))
-                            .and_then(|a| a.as_str())
-                            .unwrap_or("{}");
-
-                        // Parse args JSON string into a HashMap for the registry
-                        let args_value: Value =
-                            serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-                        let mut args_map: std::collections::HashMap<String, Value> = args_value
-                            .as_object()
-                            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                            .unwrap_or_default();
-
-                        let tool_call_id_str =
-                            tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
-
-                        if let Some(cb) = event_callback {
-                            cb.on_tool_started(tool_call_id_str, tool_name, &args_map);
-                        }
-
-                        // Per-agent permission enforcement.
-                        // For pattern-level rules (e.g. bash commands), use the
-                        // command argument as the arg_pattern.
-                        let mut permission_allows = false;
-                        if !self.config.permission.is_empty() {
-                            let arg_pattern = args_map
-                                .get("command")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            if let Some(action) =
-                                self.config.evaluate_permission(tool_name, arg_pattern)
-                            {
-                                match action {
-                                    PermissionAction::Deny => {
-                                        debug!(
-                                            tool = tool_name,
-                                            "Tool call denied by permission rules"
-                                        );
-                                        let result_content = Self::format_tool_result(
-                                            tool_name,
-                                            &serde_json::json!({
-                                                "success": false,
-                                                "error": format!(
-                                                    "Permission denied: '{}' is not allowed by agent permission rules",
-                                                    tool_name
-                                                )
-                                            }),
-                                        );
-                                        messages.push(serde_json::json!({
-                                            "role": "tool",
-                                            "tool_call_id": tool_call_id_str,
-                                            "name": tool_name,
-                                            "content": result_content,
-                                        }));
-                                        if let Some(cb) = event_callback {
-                                            cb.on_tool_result(
-                                                tool_call_id_str,
-                                                tool_name,
-                                                "Permission denied by agent rules",
-                                                false,
-                                            );
-                                            cb.on_tool_finished(tool_call_id_str, false);
-                                        }
-                                        continue;
-                                    }
-                                    PermissionAction::Allow => {
-                                        // Explicitly allowed — skip the interactive approval
-                                        // gate below (even for run_command).
-                                        permission_allows = true;
-                                    }
-                                    PermissionAction::Ask => {
-                                        // For non-bash tools, route through the approval
-                                        // channel if available.
-                                        if tool_name != "run_command"
-                                            && let Some(approval_tx) = tool_approval_tx
-                                        {
-                                            let desc = format!("{} {}", tool_name, arg_pattern);
-                                            let (resp_tx, resp_rx) =
-                                                tokio::sync::oneshot::channel();
-                                            let req = opendev_runtime::ToolApprovalRequest {
-                                                tool_name: tool_name.to_string(),
-                                                command: desc,
-                                                working_dir: tool_context
-                                                    .working_dir
-                                                    .display()
-                                                    .to_string(),
-                                                response_tx: resp_tx,
-                                            };
-                                            if approval_tx.send(req).is_ok() {
-                                                match resp_rx.await {
-                                                    Ok(d) if !d.approved => {
-                                                        let result_content =
-                                                            Self::format_tool_result(
-                                                                tool_name,
-                                                                &serde_json::json!({
-                                                                    "success": false,
-                                                                    "error": "Tool call denied by user"
-                                                                }),
-                                                            );
-                                                        messages.push(serde_json::json!({
-                                                            "role": "tool",
-                                                            "tool_call_id": tool_call_id_str,
-                                                            "name": tool_name,
-                                                            "content": result_content,
-                                                        }));
-                                                        if let Some(cb) = event_callback {
-                                                            cb.on_tool_result(
-                                                                tool_call_id_str,
-                                                                tool_name,
-                                                                "Tool call denied by user",
-                                                                false,
-                                                            );
-                                                            cb.on_tool_finished(
-                                                                tool_call_id_str,
-                                                                false,
-                                                            );
-                                                        }
-                                                        continue;
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                        }
-                                        // For run_command with Ask, fall through to the
-                                        // existing bash approval gate below.
-                                    }
-                                }
-                            }
-                        }
-
-                        // Tool approval gate for bash/run_command and MCP tools.
-                        // MCP tools (mcp__*) are external and should require approval
-                        // by default, same as run_command.
-                        // Skip if permission rules explicitly allow this tool,
-                        // or if the user previously approved this tool with "always".
-                        let needs_approval_gate =
-                            tool_name == "run_command" || tool_name.starts_with("mcp__");
-                        let auto_approved = auto_approved_patterns.contains(tool_name);
-                        if needs_approval_gate
-                            && !permission_allows
-                            && !auto_approved
-                            && let Some(approval_tx) = tool_approval_tx
-                        {
-                            let command = if tool_name == "run_command" {
-                                args_map
-                                    .get("command")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string()
-                            } else {
-                                // For MCP and other tools, summarize the args
-                                serde_json::to_string_pretty(&serde_json::Value::Object(
-                                    args_map
-                                        .iter()
-                                        .map(|(k, v)| (k.clone(), v.clone()))
-                                        .collect(),
-                                ))
-                                .unwrap_or_default()
-                            };
-                            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                            let req = opendev_runtime::ToolApprovalRequest {
-                                tool_name: tool_name.to_string(),
-                                command: command.clone(),
-                                working_dir: tool_context.working_dir.display().to_string(),
-                                response_tx: resp_tx,
-                            };
-                            if approval_tx.send(req).is_ok() {
-                                match resp_rx.await {
-                                    Ok(d) if !d.approved => {
-                                        // Push denial as tool result
-                                        let result_content = Self::format_tool_result(
-                                            tool_name,
-                                            &serde_json::json!({"success": false, "error": "Command denied by user"}),
-                                        );
-                                        messages.push(serde_json::json!({
-                                            "role": "tool",
-                                            "tool_call_id": tool_call_id_str,
-                                            "name": tool_name,
-                                            "content": result_content,
-                                        }));
-                                        if let Some(cb) = event_callback {
-                                            cb.on_tool_result(
-                                                tool_call_id_str,
-                                                tool_name,
-                                                "Command denied by user",
-                                                false,
-                                            );
-                                            cb.on_tool_finished(tool_call_id_str, false);
-                                        }
-                                        continue;
-                                    }
-                                    Ok(d) => {
-                                        // "yes_remember" — auto-approve this tool for rest of session
-                                        if d.choice == "yes_remember" {
-                                            auto_approved_patterns.insert(tool_name.to_string());
-                                            debug!(
-                                                tool = tool_name,
-                                                "Auto-approving tool for remainder of session"
-                                            );
-                                        }
-                                        // Update command if edited by user
-                                        if d.command != command {
-                                            args_map.insert(
-                                                "command".to_string(),
-                                                serde_json::json!(d.command),
-                                            );
-                                        }
-                                    }
-                                    Err(_) => {
-                                        // Channel dropped — proceed without approval
-                                    }
-                                }
-                            }
-                        }
-
-                        // Build tool context with cancel token for this execution
-                        let exec_tool_context = match cancel {
-                            Some(ct) => {
-                                let mut ctx = tool_context.clone();
-                                ctx.cancel_token = Some(ct.child_token());
-                                ctx
-                            }
-                            None => tool_context.clone(),
-                        };
-
-                        let tool_start = Instant::now();
-                        let (tool_result, was_interrupted) = {
-                            let exec_fut = async {
-                                tool_registry
-                                    .execute(tool_name, args_map, &exec_tool_context)
-                                    .await
-                            }
-                            .instrument(info_span!(
-                                "tool_execution",
-                                tool_name = tool_name,
-                                tool_call_id = tool_call_id_str,
-                                iteration = iteration,
-                            ));
-
-                            match cancel {
-                                Some(ct) => {
-                                    tokio::select! {
-                                        result = exec_fut => (result, false),
-                                        _ = ct.cancelled() => {
-                                            (ToolResult::fail("Interrupted by user"), true)
-                                        }
-                                    }
-                                }
-                                None => (exec_fut.await, false),
-                            }
-                        };
-                        let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
-
-                        iter_metrics.tool_calls.push(ToolCallMetric {
-                            tool_name: tool_name.to_string(),
-                            duration_ms: tool_duration_ms,
-                            success: tool_result.success,
+                    // When ALL tool calls are spawn_subagent, execute them
+                    // concurrently so multiple subagents run in parallel.
+                    let all_spawn = total_tool_count > 1
+                        && tool_calls.iter().all(|tc| {
+                            tc.get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|n| n.as_str())
+                                == Some("spawn_subagent")
                         });
 
-                        // Record file operations in the artifact index
-                        if tool_result.success
-                            && let Some(ai) = artifact_index
-                        {
-                            record_artifact(ai, tool_name, &args_value, &tool_result);
+                    if all_spawn {
+                        info!(
+                            count = total_tool_count,
+                            "Executing spawn_subagent calls in parallel"
+                        );
+
+                        // Prepare all tasks
+                        struct SpawnTask {
+                            tool_call_id: String,
+                            tool_name: String,
+                            args_map: HashMap<String, Value>,
+                            args_value: Value,
                         }
 
-                        if let Some(cb) = event_callback {
-                            // Skip emitting the tool result to the TUI when interrupted —
-                            // the AgentInterrupted event already shows the message.
-                            if !was_interrupted {
+                        let mut tasks = Vec::new();
+                        for tc in &tool_calls {
+                            let tool_name = tc
+                                .get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("spawn_subagent")
+                                .to_string();
+                            let args_str = tc
+                                .get("function")
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("{}");
+                            let args_value: Value =
+                                serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                            let args_map: HashMap<String, Value> = args_value
+                                .as_object()
+                                .map(|obj| {
+                                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                                })
+                                .unwrap_or_default();
+                            let tool_call_id = tc
+                                .get("id")
+                                .and_then(|id| id.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+
+                            if let Some(cb) = event_callback {
+                                cb.on_tool_started(&tool_call_id, &tool_name, &args_map);
+                            }
+
+                            tasks.push(SpawnTask {
+                                tool_call_id,
+                                tool_name,
+                                args_map,
+                                args_value,
+                            });
+                        }
+
+                        // Execute all spawn_subagent calls concurrently.
+                        // Build a Vec of futures, then poll them all with
+                        // tokio::join on a pinned vec via a manual select loop.
+                        // Since we can't use tokio::spawn (tool_registry is
+                        // borrowed), we use a simple concurrent poll pattern.
+                        use std::future::Future;
+                        use std::pin::Pin;
+
+                        let mut futs: Vec<Pin<Box<dyn Future<Output = ToolResult> + Send + '_>>> =
+                            Vec::with_capacity(tasks.len());
+                        for task in &tasks {
+                            let exec_tool_context = match cancel {
+                                Some(ct) => {
+                                    let mut ctx = tool_context.clone();
+                                    ctx.cancel_token = Some(ct.child_token());
+                                    ctx
+                                }
+                                None => tool_context.clone(),
+                            };
+                            let name = task.tool_name.clone();
+                            let args = task.args_map.clone();
+                            futs.push(Box::pin(async move {
+                                tool_registry.execute(&name, args, &exec_tool_context).await
+                            }));
+                        }
+
+                        // Poll all futures concurrently until all complete
+                        let results = poll_all_futures(futs).await;
+
+                        // Process results in order
+                        for (i, tool_result) in results.into_iter().enumerate() {
+                            let task = &tasks[i];
+
+                            iter_metrics.tool_calls.push(ToolCallMetric {
+                                tool_name: task.tool_name.clone(),
+                                duration_ms: 0, // wall-clock not meaningful for parallel
+                                success: tool_result.success,
+                            });
+
+                            if let Some(ai) = artifact_index
+                                && tool_result.success
+                            {
+                                record_artifact(
+                                    ai,
+                                    &task.tool_name,
+                                    &task.args_value,
+                                    &tool_result,
+                                );
+                            }
+
+                            if let Some(cb) = event_callback {
                                 let output_str = if tool_result.success {
                                     tool_result.output.as_deref().unwrap_or("")
                                 } else {
@@ -1427,172 +1250,565 @@ impl ReactLoop {
                                         .unwrap_or("Tool execution failed")
                                 };
                                 cb.on_tool_result(
-                                    tool_call_id_str,
-                                    tool_name,
+                                    &task.tool_call_id,
+                                    &task.tool_name,
                                     output_str,
                                     tool_result.success,
                                 );
+                                cb.on_tool_finished(&task.tool_call_id, tool_result.success);
                             }
-                            cb.on_tool_finished(tool_call_id_str, tool_result.success);
-                        }
 
-                        // Generate concise summary for session persistence / context
-                        let _result_summary = summarize_tool_result(
-                            tool_name,
-                            tool_result.output.as_deref(),
-                            if tool_result.success {
-                                None
+                            if !tool_result.success {
+                                any_tool_failed = true;
+                            }
+
+                            let mut result_value = if tool_result.success {
+                                serde_json::json!({
+                                    "success": true,
+                                    "output": tool_result.output.as_deref().unwrap_or(""),
+                                })
                             } else {
-                                tool_result.error.as_deref()
-                            },
-                        );
-                        debug!(tool = tool_name, summary = %_result_summary, "Tool result summary");
-
-                        // Convert ToolResult to the Value format expected by format_tool_result
-                        let mut result_value = if tool_result.success {
-                            serde_json::json!({
-                                "success": true,
-                                "output": tool_result.output.as_deref().unwrap_or(""),
-                            })
-                        } else {
-                            serde_json::json!({
-                                "success": false,
-                                "error": tool_result.error.as_deref().unwrap_or("Tool execution failed"),
-                            })
-                        };
-                        if let Some(ref suffix) = tool_result.llm_suffix {
-                            result_value["llm_suffix"] = serde_json::json!(suffix);
-                        }
-
-                        let formatted = Self::format_tool_result(tool_name, &result_value);
-
-                        messages.push(serde_json::json!({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id_str,
-                            "name": tool_name,
-                            "content": formatted,
-                        }));
-
-                        // Capture skill model/agent overrides from invoke_skill.
-                        // When a skill specifies model: in its frontmatter,
-                        // switch to that model for subsequent LLM calls.
-                        if tool_name == "invoke_skill"
-                            && tool_result.success
-                            && let Some(model) = tool_result
-                                .metadata
-                                .get("skill_model")
-                                .and_then(|v| v.as_str())
-                        {
-                            info!(model, "Skill model override activated");
-                            skill_model_override = Some(model.to_string());
-                        }
-
-                        // Lazy per-subdirectory instruction injection.
-                        // When the agent reads/edits a file, check if there are
-                        // AGENTS.md/CLAUDE.md files in that file's directory tree
-                        // that haven't been injected yet.
-                        if tool_result.success
-                            && matches!(
-                                tool_name,
-                                "read_file" | "edit_file" | "write_file" | "search"
-                            )
-                        {
-                            let file_path_str = args_value
-                                .get("file_path")
-                                .or_else(|| args_value.get("path"))
-                                .and_then(|v| v.as_str());
-                            if let Some(fp) = file_path_str {
-                                let path = std::path::Path::new(fp);
-                                let instructions = subdir_tracker.check_file_read(path);
-                                for instr in &instructions {
-                                    let note = format!(
-                                        "<system-reminder>\nThe following project instructions apply to files in this directory ({}):\n\n{}\n</system-reminder>",
-                                        instr.relative_path, instr.content,
-                                    );
-                                    append_directive(messages, &note);
-                                    debug!(
-                                        path = %instr.relative_path,
-                                        "Injected subdirectory instruction file"
-                                    );
-                                }
-                            }
-                        }
-
-                        // Error directive after tool failure — reaches thinking model
-                        // so it can plan a different approach
-                        if !tool_result.success {
-                            any_tool_failed = true;
-                            let error_text = tool_result.error.as_deref().unwrap_or("");
-                            let error_type = Self::classify_error(error_text);
-                            let nudge_name = format!("nudge_{error_type}");
-                            let nudge = get_reminder(&nudge_name, &[]);
-                            if nudge.is_empty() {
-                                let generic = get_reminder("failed_tool_nudge", &[]);
-                                if !generic.is_empty() {
-                                    append_directive(messages, &generic);
-                                }
-                            } else {
-                                append_directive(messages, &nudge);
-                            }
-                        }
-
-                        completed_tool_count += 1;
-
-                        // Check for interrupt between tool executions —
-                        // preserve partial work (completed tool results
-                        // already appended to messages above).
-                        let interrupted_by_monitor =
-                            task_monitor.is_some_and(|m| m.should_interrupt());
-                        let interrupted_by_cancel = cancel.is_some_and(|c| c.is_cancelled());
-                        if interrupted_by_monitor || interrupted_by_cancel {
-                            // Append stub results for remaining unexecuted tool calls
-                            // so message history doesn't have dangling tool_calls
-                            for remaining_tc in &tool_calls[completed_tool_count..] {
-                                let tc_id = remaining_tc
-                                    .get("id")
-                                    .and_then(|id| id.as_str())
-                                    .unwrap_or("");
-                                let tc_name = remaining_tc
-                                    .get("function")
-                                    .and_then(|f| f.get("name"))
-                                    .and_then(|n| n.as_str())
-                                    .unwrap_or("unknown");
-                                messages.push(serde_json::json!({
-                                    "role": "tool",
-                                    "tool_call_id": tc_id,
-                                    "name": tc_name,
-                                    "content": "[Interrupted by user]",
-                                }));
+                                serde_json::json!({
+                                    "success": false,
+                                    "error": tool_result.error.as_deref().unwrap_or("Tool execution failed"),
+                                })
+                            };
+                            if let Some(ref suffix) = tool_result.llm_suffix {
+                                result_value["llm_suffix"] = serde_json::json!(suffix);
                             }
 
-                            // Collect partial assistant text from this iteration
-                            let partial_content =
-                                response.content.as_deref().unwrap_or("").to_string();
+                            let formatted =
+                                Self::format_tool_result(&task.tool_name, &result_value);
+                            messages.push(serde_json::json!({
+                                "role": "tool",
+                                "tool_call_id": task.tool_call_id,
+                                "name": task.tool_name,
+                                "content": formatted,
+                            }));
 
-                            iter_metrics.total_duration_ms =
-                                iter_start.elapsed().as_millis() as u64;
-                            self.push_metrics(iter_metrics);
+                            completed_tool_count += 1;
+                        }
 
-                            // Build structured partial result
-                            let partial = PartialResult::from_interrupted_state(
-                                messages,
-                                response.content.as_deref(),
-                                iteration,
-                                completed_tool_count,
-                                total_tool_count,
-                            );
-
-                            let mut result = AgentResult::interrupted(messages.clone());
-                            result.partial_result = Some(partial);
-                            if !partial_content.is_empty() {
-                                result.content = format!(
-                                    "Task interrupted by user (partial): {}",
-                                    partial_content
-                                );
-                            }
-                            return Ok(result);
+                        // Inject subagent_complete signal after all parallel subagents finish
+                        let subagent_complete = get_reminder("subagent_complete_signal", &[]);
+                        if !subagent_complete.is_empty() {
+                            append_directive(messages, &subagent_complete);
                         }
                     }
+
+                    // Sequential path for non-parallel tool calls
+                    if !all_spawn {
+                        for tc in &tool_calls {
+                            // Check for task_complete — block if todos are incomplete
+                            if Self::is_task_complete(tc) {
+                                if let Some(mgr) = todo_manager
+                                    && let Ok(mgr) = mgr.lock()
+                                    && mgr.has_incomplete_todos()
+                                    && todo_nudge_count < self.config.max_todo_nudges
+                                {
+                                    todo_nudge_count += 1;
+                                    let count = mgr.total() - mgr.completed_count();
+                                    let titles: Vec<_> = mgr
+                                        .all()
+                                        .iter()
+                                        .filter(|t| t.status != TodoStatus::Completed)
+                                        .take(3)
+                                        .map(|t| format!("  - {}", t.title))
+                                        .collect();
+                                    let nudge = get_reminder(
+                                        "incomplete_todos_nudge",
+                                        &[
+                                            ("count", &count.to_string()),
+                                            ("todo_list", &titles.join("\n")),
+                                        ],
+                                    );
+                                    append_nudge(messages, &nudge);
+                                    // Skip task_complete, continue to next tool call
+                                    // (or continue loop if this was the only call)
+                                    continue;
+                                }
+                                let (summary, status) = Self::extract_task_complete_args(tc);
+                                // Prefer the assistant's text content over the
+                                // task_complete summary.  When thinking guides
+                                // the model to produce a natural conversational
+                                // reply, the real answer lives in
+                                // `response.content` while the summary is just
+                                // a terse label like "Greeted the user".
+                                let display_text = response
+                                    .content
+                                    .as_deref()
+                                    .filter(|c| !c.trim().is_empty())
+                                    .map(|c| c.to_string())
+                                    .unwrap_or(summary);
+                                // Emit as agent chunk so TUI displays it
+                                if let Some(cb) = event_callback {
+                                    cb.on_agent_chunk(&display_text);
+                                }
+                                iter_metrics.total_duration_ms =
+                                    iter_start.elapsed().as_millis() as u64;
+                                self.push_metrics(iter_metrics);
+                                play_finish_sound();
+                                let mut result = AgentResult::ok(display_text, messages.clone());
+                                result.completion_status = Some(status);
+                                return Ok(result);
+                            }
+
+                            let tool_name = tc
+                                .get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("unknown");
+
+                            let args_str = tc
+                                .get("function")
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("{}");
+
+                            // Parse args JSON string into a HashMap for the registry
+                            let args_value: Value =
+                                serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+                            let mut args_map: std::collections::HashMap<String, Value> = args_value
+                                .as_object()
+                                .map(|obj| {
+                                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                                })
+                                .unwrap_or_default();
+
+                            let tool_call_id_str =
+                                tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
+
+                            if let Some(cb) = event_callback {
+                                cb.on_tool_started(tool_call_id_str, tool_name, &args_map);
+                            }
+
+                            // Per-agent permission enforcement.
+                            // For pattern-level rules (e.g. bash commands), use the
+                            // command argument as the arg_pattern.
+                            let mut permission_allows = false;
+                            if !self.config.permission.is_empty() {
+                                let arg_pattern = args_map
+                                    .get("command")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                if let Some(action) =
+                                    self.config.evaluate_permission(tool_name, arg_pattern)
+                                {
+                                    match action {
+                                        PermissionAction::Deny => {
+                                            debug!(
+                                                tool = tool_name,
+                                                "Tool call denied by permission rules"
+                                            );
+                                            let result_content = Self::format_tool_result(
+                                                tool_name,
+                                                &serde_json::json!({
+                                                    "success": false,
+                                                    "error": format!(
+                                                        "Permission denied: '{}' is not allowed by agent permission rules",
+                                                        tool_name
+                                                    )
+                                                }),
+                                            );
+                                            messages.push(serde_json::json!({
+                                                "role": "tool",
+                                                "tool_call_id": tool_call_id_str,
+                                                "name": tool_name,
+                                                "content": result_content,
+                                            }));
+                                            if let Some(cb) = event_callback {
+                                                cb.on_tool_result(
+                                                    tool_call_id_str,
+                                                    tool_name,
+                                                    "Permission denied by agent rules",
+                                                    false,
+                                                );
+                                                cb.on_tool_finished(tool_call_id_str, false);
+                                            }
+                                            continue;
+                                        }
+                                        PermissionAction::Allow => {
+                                            // Explicitly allowed — skip the interactive approval
+                                            // gate below (even for run_command).
+                                            permission_allows = true;
+                                        }
+                                        PermissionAction::Ask => {
+                                            // For non-bash tools, route through the approval
+                                            // channel if available.
+                                            if tool_name != "run_command"
+                                                && let Some(approval_tx) = tool_approval_tx
+                                            {
+                                                let desc = format!("{} {}", tool_name, arg_pattern);
+                                                let (resp_tx, resp_rx) =
+                                                    tokio::sync::oneshot::channel();
+                                                let req = opendev_runtime::ToolApprovalRequest {
+                                                    tool_name: tool_name.to_string(),
+                                                    command: desc,
+                                                    working_dir: tool_context
+                                                        .working_dir
+                                                        .display()
+                                                        .to_string(),
+                                                    response_tx: resp_tx,
+                                                };
+                                                if approval_tx.send(req).is_ok() {
+                                                    match resp_rx.await {
+                                                        Ok(d) if !d.approved => {
+                                                            let result_content =
+                                                                Self::format_tool_result(
+                                                                    tool_name,
+                                                                    &serde_json::json!({
+                                                                        "success": false,
+                                                                        "error": "Tool call denied by user"
+                                                                    }),
+                                                                );
+                                                            messages.push(serde_json::json!({
+                                                                "role": "tool",
+                                                                "tool_call_id": tool_call_id_str,
+                                                                "name": tool_name,
+                                                                "content": result_content,
+                                                            }));
+                                                            if let Some(cb) = event_callback {
+                                                                cb.on_tool_result(
+                                                                    tool_call_id_str,
+                                                                    tool_name,
+                                                                    "Tool call denied by user",
+                                                                    false,
+                                                                );
+                                                                cb.on_tool_finished(
+                                                                    tool_call_id_str,
+                                                                    false,
+                                                                );
+                                                            }
+                                                            continue;
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                            }
+                                            // For run_command with Ask, fall through to the
+                                            // existing bash approval gate below.
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Tool approval gate for bash/run_command and MCP tools.
+                            // MCP tools (mcp__*) are external and should require approval
+                            // by default, same as run_command.
+                            // Skip if permission rules explicitly allow this tool,
+                            // or if the user previously approved this tool with "always".
+                            let needs_approval_gate =
+                                tool_name == "run_command" || tool_name.starts_with("mcp__");
+                            let auto_approved = auto_approved_patterns.contains(tool_name);
+                            if needs_approval_gate
+                                && !permission_allows
+                                && !auto_approved
+                                && let Some(approval_tx) = tool_approval_tx
+                            {
+                                let command = if tool_name == "run_command" {
+                                    args_map
+                                        .get("command")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string()
+                                } else {
+                                    // For MCP and other tools, summarize the args
+                                    serde_json::to_string_pretty(&serde_json::Value::Object(
+                                        args_map
+                                            .iter()
+                                            .map(|(k, v)| (k.clone(), v.clone()))
+                                            .collect(),
+                                    ))
+                                    .unwrap_or_default()
+                                };
+                                let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                                let req = opendev_runtime::ToolApprovalRequest {
+                                    tool_name: tool_name.to_string(),
+                                    command: command.clone(),
+                                    working_dir: tool_context.working_dir.display().to_string(),
+                                    response_tx: resp_tx,
+                                };
+                                if approval_tx.send(req).is_ok() {
+                                    match resp_rx.await {
+                                        Ok(d) if !d.approved => {
+                                            // Push denial as tool result
+                                            let result_content = Self::format_tool_result(
+                                                tool_name,
+                                                &serde_json::json!({"success": false, "error": "Command denied by user"}),
+                                            );
+                                            messages.push(serde_json::json!({
+                                                "role": "tool",
+                                                "tool_call_id": tool_call_id_str,
+                                                "name": tool_name,
+                                                "content": result_content,
+                                            }));
+                                            if let Some(cb) = event_callback {
+                                                cb.on_tool_result(
+                                                    tool_call_id_str,
+                                                    tool_name,
+                                                    "Command denied by user",
+                                                    false,
+                                                );
+                                                cb.on_tool_finished(tool_call_id_str, false);
+                                            }
+                                            continue;
+                                        }
+                                        Ok(d) => {
+                                            // "yes_remember" — auto-approve this tool for rest of session
+                                            if d.choice == "yes_remember" {
+                                                auto_approved_patterns
+                                                    .insert(tool_name.to_string());
+                                                debug!(
+                                                    tool = tool_name,
+                                                    "Auto-approving tool for remainder of session"
+                                                );
+                                            }
+                                            // Update command if edited by user
+                                            if d.command != command {
+                                                args_map.insert(
+                                                    "command".to_string(),
+                                                    serde_json::json!(d.command),
+                                                );
+                                            }
+                                        }
+                                        Err(_) => {
+                                            // Channel dropped — proceed without approval
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Build tool context with cancel token for this execution
+                            let exec_tool_context = match cancel {
+                                Some(ct) => {
+                                    let mut ctx = tool_context.clone();
+                                    ctx.cancel_token = Some(ct.child_token());
+                                    ctx
+                                }
+                                None => tool_context.clone(),
+                            };
+
+                            let tool_start = Instant::now();
+                            let (tool_result, was_interrupted) = {
+                                let exec_fut = async {
+                                    tool_registry
+                                        .execute(tool_name, args_map, &exec_tool_context)
+                                        .await
+                                }
+                                .instrument(info_span!(
+                                    "tool_execution",
+                                    tool_name = tool_name,
+                                    tool_call_id = tool_call_id_str,
+                                    iteration = iteration,
+                                ));
+
+                                match cancel {
+                                    Some(ct) => {
+                                        tokio::select! {
+                                            result = exec_fut => (result, false),
+                                            _ = ct.cancelled() => {
+                                                (ToolResult::fail("Interrupted by user"), true)
+                                            }
+                                        }
+                                    }
+                                    None => (exec_fut.await, false),
+                                }
+                            };
+                            let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+
+                            iter_metrics.tool_calls.push(ToolCallMetric {
+                                tool_name: tool_name.to_string(),
+                                duration_ms: tool_duration_ms,
+                                success: tool_result.success,
+                            });
+
+                            // Record file operations in the artifact index
+                            if tool_result.success
+                                && let Some(ai) = artifact_index
+                            {
+                                record_artifact(ai, tool_name, &args_value, &tool_result);
+                            }
+
+                            if let Some(cb) = event_callback {
+                                // Skip emitting the tool result to the TUI when interrupted —
+                                // the AgentInterrupted event already shows the message.
+                                if !was_interrupted {
+                                    let output_str = if tool_result.success {
+                                        tool_result.output.as_deref().unwrap_or("")
+                                    } else {
+                                        tool_result
+                                            .error
+                                            .as_deref()
+                                            .unwrap_or("Tool execution failed")
+                                    };
+                                    cb.on_tool_result(
+                                        tool_call_id_str,
+                                        tool_name,
+                                        output_str,
+                                        tool_result.success,
+                                    );
+                                }
+                                cb.on_tool_finished(tool_call_id_str, tool_result.success);
+                            }
+
+                            // Generate concise summary for session persistence / context
+                            let _result_summary = summarize_tool_result(
+                                tool_name,
+                                tool_result.output.as_deref(),
+                                if tool_result.success {
+                                    None
+                                } else {
+                                    tool_result.error.as_deref()
+                                },
+                            );
+                            debug!(tool = tool_name, summary = %_result_summary, "Tool result summary");
+
+                            // Convert ToolResult to the Value format expected by format_tool_result
+                            let mut result_value = if tool_result.success {
+                                serde_json::json!({
+                                    "success": true,
+                                    "output": tool_result.output.as_deref().unwrap_or(""),
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "success": false,
+                                    "error": tool_result.error.as_deref().unwrap_or("Tool execution failed"),
+                                })
+                            };
+                            if let Some(ref suffix) = tool_result.llm_suffix {
+                                result_value["llm_suffix"] = serde_json::json!(suffix);
+                            }
+
+                            let formatted = Self::format_tool_result(tool_name, &result_value);
+
+                            messages.push(serde_json::json!({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id_str,
+                                "name": tool_name,
+                                "content": formatted,
+                            }));
+
+                            // Capture skill model/agent overrides from invoke_skill.
+                            // When a skill specifies model: in its frontmatter,
+                            // switch to that model for subsequent LLM calls.
+                            if tool_name == "invoke_skill"
+                                && tool_result.success
+                                && let Some(model) = tool_result
+                                    .metadata
+                                    .get("skill_model")
+                                    .and_then(|v| v.as_str())
+                            {
+                                info!(model, "Skill model override activated");
+                                skill_model_override = Some(model.to_string());
+                            }
+
+                            // Lazy per-subdirectory instruction injection.
+                            // When the agent reads/edits a file, check if there are
+                            // AGENTS.md/CLAUDE.md files in that file's directory tree
+                            // that haven't been injected yet.
+                            if tool_result.success
+                                && matches!(
+                                    tool_name,
+                                    "read_file" | "edit_file" | "write_file" | "search"
+                                )
+                            {
+                                let file_path_str = args_value
+                                    .get("file_path")
+                                    .or_else(|| args_value.get("path"))
+                                    .and_then(|v| v.as_str());
+                                if let Some(fp) = file_path_str {
+                                    let path = std::path::Path::new(fp);
+                                    let instructions = subdir_tracker.check_file_read(path);
+                                    for instr in &instructions {
+                                        let note = format!(
+                                            "<system-reminder>\nThe following project instructions apply to files in this directory ({}):\n\n{}\n</system-reminder>",
+                                            instr.relative_path, instr.content,
+                                        );
+                                        append_directive(messages, &note);
+                                        debug!(
+                                            path = %instr.relative_path,
+                                            "Injected subdirectory instruction file"
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Error directive after tool failure — reaches thinking model
+                            // so it can plan a different approach
+                            if !tool_result.success {
+                                any_tool_failed = true;
+                                let error_text = tool_result.error.as_deref().unwrap_or("");
+                                let error_type = Self::classify_error(error_text);
+                                let nudge_name = format!("nudge_{error_type}");
+                                let nudge = get_reminder(&nudge_name, &[]);
+                                if nudge.is_empty() {
+                                    let generic = get_reminder("failed_tool_nudge", &[]);
+                                    if !generic.is_empty() {
+                                        append_directive(messages, &generic);
+                                    }
+                                } else {
+                                    append_directive(messages, &nudge);
+                                }
+                            }
+
+                            completed_tool_count += 1;
+
+                            // Check for interrupt between tool executions —
+                            // preserve partial work (completed tool results
+                            // already appended to messages above).
+                            let interrupted_by_monitor =
+                                task_monitor.is_some_and(|m| m.should_interrupt());
+                            let interrupted_by_cancel = cancel.is_some_and(|c| c.is_cancelled());
+                            if interrupted_by_monitor || interrupted_by_cancel {
+                                // Append stub results for remaining unexecuted tool calls
+                                // so message history doesn't have dangling tool_calls
+                                for remaining_tc in &tool_calls[completed_tool_count..] {
+                                    let tc_id = remaining_tc
+                                        .get("id")
+                                        .and_then(|id| id.as_str())
+                                        .unwrap_or("");
+                                    let tc_name = remaining_tc
+                                        .get("function")
+                                        .and_then(|f| f.get("name"))
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("unknown");
+                                    messages.push(serde_json::json!({
+                                        "role": "tool",
+                                        "tool_call_id": tc_id,
+                                        "name": tc_name,
+                                        "content": "[Interrupted by user]",
+                                    }));
+                                }
+
+                                // Collect partial assistant text from this iteration
+                                let partial_content =
+                                    response.content.as_deref().unwrap_or("").to_string();
+
+                                iter_metrics.total_duration_ms =
+                                    iter_start.elapsed().as_millis() as u64;
+                                self.push_metrics(iter_metrics);
+
+                                // Build structured partial result
+                                let partial = PartialResult::from_interrupted_state(
+                                    messages,
+                                    response.content.as_deref(),
+                                    iteration,
+                                    completed_tool_count,
+                                    total_tool_count,
+                                );
+
+                                let mut result = AgentResult::interrupted(messages.clone());
+                                result.partial_result = Some(partial);
+                                if !partial_content.is_empty() {
+                                    result.content = format!(
+                                        "Task interrupted by user (partial): {}",
+                                        partial_content
+                                    );
+                                }
+                                return Ok(result);
+                            }
+                        }
+                    } // end if !all_spawn
 
                     // Consecutive reads detection
                     let all_reads = tool_calls.iter().all(|tc| {

@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 use super::spec::SubAgentSpec;
 use crate::main_agent::{MainAgent, MainAgentConfig};
 use crate::react_loop::{ReactLoop, ReactLoopConfig};
-use crate::traits::{AgentDeps, AgentError, AgentResult, BaseAgent, TaskMonitor};
+use crate::traits::{AgentError, AgentResult, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_tools_core::ToolRegistry;
 
@@ -75,6 +75,8 @@ pub trait SubagentProgressCallback: Send + Sync {
         success: bool,
         result_summary: &str,
         tool_call_count: usize,
+        shallow_warning: Option<&str>,
+        total_tokens: u64,
     );
 }
 
@@ -86,7 +88,54 @@ impl SubagentProgressCallback for NoopProgressCallback {
     fn on_started(&self, _name: &str, _task: &str) {}
     fn on_tool_call(&self, _name: &str, _tool: &str, _id: &str) {}
     fn on_tool_complete(&self, _name: &str, _tool: &str, _id: &str, _success: bool) {}
-    fn on_finished(&self, _name: &str, _success: bool, _summary: &str, _count: usize) {}
+    fn on_finished(
+        &self,
+        _name: &str,
+        _success: bool,
+        _summary: &str,
+        _count: usize,
+        _shallow_warning: Option<&str>,
+        _total_tokens: u64,
+    ) {
+    }
+}
+
+/// Adapter that bridges `AgentEventCallback` (used by the ReAct loop) to
+/// `SubagentProgressCallback` (used by the TUI event channel).
+///
+/// This allows each tool call *inside* a subagent's ReAct loop to be
+/// forwarded to the parent, so the TUI can show real-time tool activity
+/// per subagent (e.g. "Searching for 3 patterns, reading 5 files…").
+struct SubagentEventAdapter<'a> {
+    subagent_name: String,
+    progress: &'a dyn SubagentProgressCallback,
+}
+
+impl crate::traits::AgentEventCallback for SubagentEventAdapter<'_> {
+    fn on_tool_started(
+        &self,
+        tool_id: &str,
+        tool_name: &str,
+        _args: &std::collections::HashMap<String, serde_json::Value>,
+    ) {
+        self.progress
+            .on_tool_call(&self.subagent_name, tool_name, tool_id);
+    }
+
+    fn on_tool_finished(&self, tool_id: &str, success: bool) {
+        // We don't have the tool_name here, but on_tool_complete needs it.
+        // Pass an empty string — the TUI matches by tool_id, not name.
+        self.progress
+            .on_tool_complete(&self.subagent_name, "", tool_id, success);
+    }
+
+    fn on_agent_chunk(&self, _text: &str) {
+        // Subagent text chunks are not shown to the user.
+    }
+
+    fn on_thinking(&self, _content: &str) {}
+    fn on_critique(&self, _content: &str) {}
+    fn on_thinking_refined(&self, _content: &str) {}
 }
 
 /// Result of spawning a subagent, containing the result and diagnostic info.
@@ -98,6 +147,8 @@ pub struct SubagentRunResult {
     pub tool_call_count: usize,
     /// Whether the shallow subagent warning applies.
     pub shallow_warning: Option<String>,
+    /// Total tokens consumed by the subagent.
+    pub total_tokens: u64,
 }
 
 /// Manages subagent registration, lookup, and execution.
@@ -492,9 +543,17 @@ impl SubagentManager {
 
         debug!(subagent = %spec.name, "Running subagent ReAct loop");
 
-        // Run the isolated ReAct loop
-        let deps = AgentDeps::new();
-        let result = agent.run(task, &deps, None, task_monitor).await;
+        // Create an event adapter so the subagent's tool calls are
+        // forwarded to the progress callback (and thus to the TUI).
+        let event_adapter = SubagentEventAdapter {
+            subagent_name: spec.name.clone(),
+            progress,
+        };
+
+        // Run the isolated ReAct loop with the event adapter.
+        let result = agent
+            .run_with_callback(task, task_monitor, Some(&event_adapter))
+            .await;
 
         match result {
             Ok(agent_result) => {
@@ -504,6 +563,7 @@ impl SubagentManager {
                     &agent_result.messages,
                     agent_result.success,
                 );
+                let total_tokens = agent.total_tokens();
 
                 if let Some(ref warning) = shallow_warning {
                     warn!(
@@ -519,17 +579,25 @@ impl SubagentManager {
                 } else {
                     agent_result.content.clone()
                 };
-                progress.on_finished(&spec.name, agent_result.success, &summary, tool_call_count);
+                progress.on_finished(
+                    &spec.name,
+                    agent_result.success,
+                    &summary,
+                    tool_call_count,
+                    shallow_warning.as_deref(),
+                    total_tokens,
+                );
 
                 Ok(SubagentRunResult {
                     agent_result,
                     tool_call_count,
                     shallow_warning,
+                    total_tokens,
                 })
             }
             Err(e) => {
                 let err_msg = e.to_string();
-                progress.on_finished(&spec.name, false, &err_msg, 0);
+                progress.on_finished(&spec.name, false, &err_msg, 0, None, 0);
                 Err(e)
             }
         }

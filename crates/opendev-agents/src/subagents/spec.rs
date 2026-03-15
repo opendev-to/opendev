@@ -366,7 +366,14 @@ pub mod builtins {
     use super::SubAgentSpec;
 
     /// Tools available to the Code Explorer subagent.
-    pub const CODE_EXPLORER_TOOLS: &[&str] = &["read_file", "search", "list_files"];
+    pub const CODE_EXPLORER_TOOLS: &[&str] = &[
+        "read_file",
+        "search",
+        "list_files",
+        "find_symbol",
+        "find_referencing_symbols",
+        "run_command",
+    ];
 
     /// Tools available to the Planner subagent.
     pub const PLANNER_TOOLS: &[&str] = &[
