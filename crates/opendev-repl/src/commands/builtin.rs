@@ -272,10 +272,6 @@ impl BuiltinCommands {
                 println!("  - Code-Explorer    Explore and understand codebase structure");
                 println!("  - Planner          Create and refine implementation plans");
                 println!("  - Ask-User         Request clarification from the user");
-                println!("  - PR-Reviewer      Review pull requests for issues");
-                println!("  - Security-Reviewer Audit code for security vulnerabilities");
-                println!("  - Web-Clone        Clone and adapt web pages");
-                println!("  - Web-Generator    Generate web applications from prompts");
             }
             _ => {
                 println!("Usage: /agents [list]");

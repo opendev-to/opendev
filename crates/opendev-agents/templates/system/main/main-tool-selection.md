@@ -28,9 +28,7 @@ When choosing tools, prefer the more specific option:
 - "How does authentication work?" → **Code-Explorer** (requires multi-file exploration)
 - "What's the architecture of module X?" → **Code-Explorer** (needs comprehensive analysis)
 - "Explain the error handling strategy" → **Code-Explorer** (multi-file trace)
-- "Clone this website" → **Web-clone** (specialized task)
 - "Should I use Redis or Memcached?" → **ask-user** (user preference needed)
-- "Create a landing page for X" → **Web-Generator** (full web app creation)
 
 **Use the Planner subagent for planning and design tasks**:
 - "Design a caching layer" → **Planner** subagent (requires planning and design)

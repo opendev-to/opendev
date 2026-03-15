@@ -120,7 +120,6 @@ impl BaseTool for InvokeSkillTool {
                 // Check if the user is confusing invoke_skill with spawn_subagent.
                 let subagent_types = [
                     "code-explorer", "code_explorer", "planner",
-                    "web-clone", "web_clone", "web-generator", "web_generator",
                     "ask-user", "ask_user",
                 ];
                 let normalized = skill_name.to_lowercase();
@@ -543,7 +542,7 @@ mod tests {
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
 
-        for name in &["code-explorer", "code_explorer", "planner", "web_clone"] {
+        for name in &["code-explorer", "code_explorer", "planner", "ask_user"] {
             let mut args = HashMap::new();
             args.insert("skill_name".to_string(), serde_json::json!(name));
 

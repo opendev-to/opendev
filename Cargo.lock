@@ -2063,6 +2063,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dirs 5.0.1",
+ "httpdate",
  "opendev-config",
  "opendev-models",
  "reqwest 0.13.2",

@@ -476,6 +476,26 @@ pub fn format_tool_call_parts(
 ) -> (String, String) {
     let entry = lookup_tool(tool_name);
 
+    // Special case: spawn_subagent shows "AgentType(task_summary)" instead of "Spawn(subagent)"
+    if tool_name == "spawn_subagent" {
+        let verb = args
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                // Prettify: "Code-Explorer" → "Explorer", "Planner" → "Plan", etc.
+                match s {
+                    "Code-Explorer" | "code_explorer" => "Explorer".to_string(),
+                    "Planner" | "planner" => "Plan".to_string(),
+                    "ask-user" | "ask_user" => "AskUser".to_string(),
+                    other => other.to_string(),
+                }
+            })
+            .unwrap_or_else(|| "Agent".to_string());
+        let task = extract_arg_from_keys(&["task"], args)
+            .unwrap_or_else(|| "working...".to_string());
+        return (verb, task);
+    }
+
     // Try to extract a meaningful summary from args
     if let Some(summary) = extract_arg_from_keys(entry.primary_arg_keys, args) {
         return (entry.verb.to_string(), summary);

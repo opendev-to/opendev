@@ -961,8 +961,8 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
             .collect();
-        // Tool calls now use format_tool_call_display: Spawn(subagent), Read(file)
-        assert!(text.contains("Spawn"));
+        // Tool calls now use format_tool_call_display: Agent(working...), Read(file)
+        assert!(text.contains("Agent"));
         assert!(text.contains("Read"));
     }
 
