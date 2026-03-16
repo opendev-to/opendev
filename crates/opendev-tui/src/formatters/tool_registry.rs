@@ -467,12 +467,39 @@ pub fn format_tool_call_display(
     format!("{verb}({arg})")
 }
 
+/// Strip the working directory prefix from a path to show relative paths.
+///
+/// E.g., `/Users/me/project/src/main.rs` with working_dir `/Users/me/project` → `src/main.rs`
+fn make_relative(path: &str, working_dir: Option<&str>) -> String {
+    if let Some(wd) = working_dir {
+        if !wd.is_empty() && path.starts_with(wd) {
+            let rel = path.strip_prefix(wd).unwrap_or(path);
+            let rel = rel.strip_prefix('/').unwrap_or(rel);
+            if !rel.is_empty() {
+                return rel.to_string();
+            }
+        }
+    }
+    path.to_string()
+}
+
 /// Format a tool call into separate verb and arg parts.
 ///
-/// Returns `(verb, arg_summary)` — e.g. `("Read", "/path/to/file.rs")` or `("Bash", "ls -la")`.
+/// Returns `(verb, arg_summary)` — e.g. `("Read", "src/main.rs")` or `("Bash", "ls -la")`.
+/// If `working_dir` is provided, file paths are shown relative to it.
 pub fn format_tool_call_parts(
     tool_name: &str,
     args: &HashMap<String, serde_json::Value>,
+) -> (String, String) {
+    format_tool_call_parts_with_wd(tool_name, args, None)
+}
+
+/// Format a tool call into separate verb and arg parts, with optional working directory
+/// for displaying relative paths.
+pub fn format_tool_call_parts_with_wd(
+    tool_name: &str,
+    args: &HashMap<String, serde_json::Value>,
+    working_dir: Option<&str>,
 ) -> (String, String) {
     let entry = lookup_tool(tool_name);
 
@@ -484,7 +511,7 @@ pub fn format_tool_call_parts(
             .map(|s| {
                 // Prettify: "Code-Explorer" → "Explorer", "Planner" → "Plan", etc.
                 match s {
-                    "Code-Explorer" | "code_explorer" => "Explorer".to_string(),
+                    "Code-Explorer" | "code_explorer" => "Explore".to_string(),
                     "Planner" | "planner" => "Plan".to_string(),
                     "ask-user" | "ask_user" => "AskUser".to_string(),
                     other => other.to_string(),
@@ -498,6 +525,16 @@ pub fn format_tool_call_parts(
 
     // Try to extract a meaningful summary from args
     if let Some(summary) = extract_arg_from_keys(entry.primary_arg_keys, args) {
+        // Strip working dir prefix from file path args
+        let is_path_arg = entry
+            .primary_arg_keys
+            .first()
+            .is_some_and(|k| *k == "file_path" || *k == "path");
+        let summary = if is_path_arg {
+            make_relative(&summary, working_dir)
+        } else {
+            summary
+        };
         return (entry.verb.to_string(), summary);
     }
 

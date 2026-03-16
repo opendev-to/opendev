@@ -314,56 +314,53 @@ impl SubagentRunner for SimpleReactRunner {
             // Reset nudge counter whenever the LLM makes tool calls
             completion_nudges = 0;
 
-            // Execute tools
-            let all_parallel = tool_calls.len() > 1
-                && tool_calls.iter().all(|tc| {
-                    let (_, name, _) = Self::extract_tool_info(tc);
-                    parallelizable.contains(name.as_str())
-                });
-
-            if all_parallel {
-                // Collect tool info first, then execute all in parallel
-                let mut tool_infos: Vec<(String, String, HashMap<String, Value>)> = Vec::new();
+            // Execute tools — split into parallel batch (read-only) and sequential (side effects)
+            {
+                // Partition into parallelizable and sequential tool calls
+                let mut parallel_infos: Vec<(String, String, HashMap<String, Value>)> = Vec::new();
+                let mut sequential_tcs: Vec<&Value> = Vec::new();
 
                 for tc in &tool_calls {
-                    let info = Self::extract_tool_info(tc);
-                    total_tool_calls += 1;
-                    // Emit tool started
-                    if let Some(cb) = ctx.event_callback {
-                        cb.on_tool_started(&info.0, &info.1, &info.2);
+                    let (id, name, args) = Self::extract_tool_info(tc);
+                    if parallelizable.contains(name.as_str()) {
+                        total_tool_calls += 1;
+                        if let Some(cb) = ctx.event_callback {
+                            cb.on_tool_started(&id, &name, &args);
+                        }
+                        parallel_infos.push((id, name, args));
+                    } else {
+                        sequential_tcs.push(tc);
                     }
-                    tool_infos.push(info);
                 }
 
-                // Build futures with owned names
-                let futures: Vec<_> = tool_infos
-                    .iter()
-                    .map(|(_, name, args)| {
-                        ctx.tool_registry.execute(name, args.clone(), ctx.tool_context)
-                    })
-                    .collect();
+                // Execute parallel batch
+                if !parallel_infos.is_empty() {
+                    let futures: Vec<_> = parallel_infos
+                        .iter()
+                        .map(|(_, name, args)| {
+                            ctx.tool_registry.execute(name, args.clone(), ctx.tool_context)
+                        })
+                        .collect();
 
-                let results = futures::future::join_all(futures).await;
+                    let results = futures::future::join_all(futures).await;
 
-                for ((id, name, _), result) in tool_infos.iter().zip(results.iter()) {
-                    // Emit tool finished
-                    if let Some(cb) = ctx.event_callback {
-                        cb.on_tool_finished(id, result.success);
+                    for ((id, name, _), result) in parallel_infos.iter().zip(results.iter()) {
+                        if let Some(cb) = ctx.event_callback {
+                            cb.on_tool_finished(id, result.success);
+                        }
+                        let result_value = serde_json::to_value(result).unwrap_or_default();
+                        let content = ReactLoop::format_tool_result(name, &result_value);
+                        messages.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": id,
+                            "name": name,
+                            "content": content,
+                        }));
                     }
-
-                    // Format result as message
-                    let result_value = serde_json::to_value(result).unwrap_or_default();
-                    let content = ReactLoop::format_tool_result(name, &result_value);
-                    messages.push(serde_json::json!({
-                        "role": "tool",
-                        "tool_call_id": id,
-                        "name": name,
-                        "content": content,
-                    }));
                 }
-            } else {
-                // Execute sequentially
-                for tc in &tool_calls {
+
+                // Execute sequential tools
+                for tc in sequential_tcs {
                     let (id, name, mut args) = Self::extract_tool_info(tc);
                     total_tool_calls += 1;
 

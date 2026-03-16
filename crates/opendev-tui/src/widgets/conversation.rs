@@ -20,7 +20,7 @@ use crate::app::{DisplayMessage, DisplayRole, DisplayToolCall, RoleStyle, ToolEx
 use crate::formatters::display::strip_system_reminders;
 use crate::formatters::markdown::MarkdownRenderer;
 use crate::formatters::style_tokens::{self, Indent};
-use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts};
+use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts_with_wd};
 use crate::widgets::progress::TaskProgress;
 use crate::widgets::spinner::{COMPACTION_CHAR, COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
 
@@ -409,7 +409,7 @@ impl<'a> ConversationWidget<'a> {
 
             // Tool call summary with color coding
             if let Some(ref tc) = msg.tool_call {
-                let tool_line = format_tool_call(tc);
+                let tool_line = format_tool_call(tc, Some(self.working_dir));
                 lines.push(tool_line);
 
                 // Collapsible result lines (diff tools are never collapsed)
@@ -469,7 +469,7 @@ impl<'a> ConversationWidget<'a> {
 
                 // Nested tool calls (from subagent execution)
                 for nested in &tc.nested_calls {
-                    let nested_line = format_nested_tool_call(nested, 1);
+                    let nested_line = format_nested_tool_call(nested, 1, Some(self.working_dir));
                     lines.push(nested_line);
                 }
             }
@@ -579,7 +579,7 @@ impl<'a> ConversationWidget<'a> {
                                 ('\u{2717}', style_tokens::ERROR)
                             };
                             let (verb, arg) =
-                                format_tool_call_parts(&ct.tool_name, &ct.args);
+                                format_tool_call_parts_with_wd(&ct.tool_name, &ct.args, Some(self.working_dir));
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     format!("  {CONTINUATION_CHAR}  "),
@@ -605,7 +605,7 @@ impl<'a> ConversationWidget<'a> {
                             let at_idx = at.tick % SPINNER_FRAMES.len();
                             let at_ch = SPINNER_FRAMES[at_idx];
                             let (verb, arg) =
-                                format_tool_call_parts(&at.tool_name, &at.args);
+                                format_tool_call_parts_with_wd(&at.tool_name, &at.args, Some(self.working_dir));
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     format!("  {CONTINUATION_CHAR}  "),
@@ -655,7 +655,7 @@ impl<'a> ConversationWidget<'a> {
                     }
                 } else {
                     // Normal tool: ⠋ verb(arg) (Xs)
-                    let (verb, arg) = format_tool_call_parts(&tool.name, &tool.args);
+                    let (verb, arg) = format_tool_call_parts_with_wd(&tool.name, &tool.args, Some(self.working_dir));
                     lines.push(Line::from(vec![
                         Span::styled(
                             format!("{spinner} "),
@@ -701,7 +701,7 @@ impl<'a> ConversationWidget<'a> {
 }
 
 /// Format a tool call as a styled line with category color coding.
-fn format_tool_call(tc: &DisplayToolCall) -> Line<'static> {
+fn format_tool_call(tc: &DisplayToolCall, working_dir: Option<&str>) -> Line<'static> {
     let (icon, icon_color) = if tc.success {
         (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
     } else {
@@ -721,41 +721,7 @@ fn format_tool_call(tc: &DisplayToolCall) -> Line<'static> {
         ]);
     }
 
-    // For spawn_subagent, display as "⏺ AgentName(task)" instead of raw args
-    if tc.name == "spawn_subagent" {
-        let agent_name = tc
-            .arguments
-            .get("agent_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Agent")
-            .to_string();
-        let task = tc
-            .arguments
-            .get("task")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let task_short = if task.len() > 60 {
-            format!("{}...", &task[..60])
-        } else {
-            task.to_string()
-        };
-
-        return Line::from(vec![
-            Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-            Span::styled(
-                agent_name,
-                Style::default()
-                    .fg(style_tokens::PRIMARY)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("({task_short})"),
-                Style::default().fg(style_tokens::SUBTLE),
-            ),
-        ]);
-    }
-
-    let (verb, arg) = format_tool_call_parts(&tc.name, &tc.arguments);
+    let (verb, arg) = format_tool_call_parts_with_wd(&tc.name, &tc.arguments, working_dir);
 
     Line::from(vec![
         Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
@@ -773,14 +739,14 @@ fn format_tool_call(tc: &DisplayToolCall) -> Line<'static> {
 }
 
 /// Format a nested tool call with ⎿ continuation indent (Python style).
-fn format_nested_tool_call(tc: &DisplayToolCall, _depth: usize) -> Line<'static> {
+fn format_nested_tool_call(tc: &DisplayToolCall, _depth: usize, working_dir: Option<&str>) -> Line<'static> {
     let (icon, icon_color) = if tc.success {
         (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
     } else {
         ('\u{2717}', style_tokens::ERROR) // ✗
     };
 
-    let (verb, arg) = format_tool_call_parts(&tc.name, &tc.arguments);
+    let (verb, arg) = format_tool_call_parts_with_wd(&tc.name, &tc.arguments, working_dir);
 
     Line::from(vec![
         Span::styled(

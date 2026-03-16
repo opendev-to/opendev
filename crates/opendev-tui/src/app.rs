@@ -768,6 +768,7 @@ impl App {
                     next_role,
                     &mut self.state.cached_lines,
                     &mut self.state.markdown_cache,
+                    Some(&self.state.working_dir),
                 );
             }
 
@@ -785,11 +786,12 @@ impl App {
         next_role: Option<&DisplayRole>,
         lines: &mut Vec<ratatui::text::Line<'static>>,
         markdown_cache: &mut HashMap<u64, Vec<ratatui::text::Line<'static>>>,
+        working_dir: Option<&str>,
     ) {
         use crate::formatters::display::strip_system_reminders;
         use crate::formatters::markdown::MarkdownRenderer;
         use crate::formatters::style_tokens::{self, Indent};
-        use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts};
+        use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts_with_wd};
         use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR};
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
@@ -913,7 +915,7 @@ impl App {
             } else {
                 (COMPLETED_CHAR, style_tokens::ERROR)
             };
-            let (verb, arg) = format_tool_call_parts(&tc.name, &tc.arguments);
+            let (verb, arg) = format_tool_call_parts_with_wd(&tc.name, &tc.arguments, working_dir);
             lines.push(Line::from(vec![
                 Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
                 Span::styled(
@@ -987,7 +989,7 @@ impl App {
                 } else {
                     (COMPLETED_CHAR, style_tokens::ERROR)
                 };
-                let (n_verb, n_arg) = format_tool_call_parts(&nested.name, &nested.arguments);
+                let (n_verb, n_arg) = format_tool_call_parts_with_wd(&nested.name, &nested.arguments, working_dir);
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("{}\u{2514}\u{2500} ", Indent::CONT),
@@ -1749,12 +1751,14 @@ impl App {
 
                 // For spawn_subagent, populate nested_calls from tracked subagent state
                 let (nested_calls, subagent_stats) = if tool_name == "spawn_subagent" {
-                    // Find the matching finished subagent and extract its tool history
+                    // Find the matching subagent (finished or not — the Finished event
+                    // may not have been processed yet, but tool_call_count is already
+                    // tracked via add_tool_call())
                     let subagent_idx = self
                         .state
                         .active_subagents
                         .iter()
-                        .position(|s| s.finished);
+                        .position(|_| true);
                     if let Some(idx) = subagent_idx {
                         let subagent = self.state.active_subagents.remove(idx);
                         let stats = (

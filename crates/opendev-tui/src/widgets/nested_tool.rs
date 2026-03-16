@@ -17,7 +17,7 @@ use ratatui::{
 };
 
 use crate::formatters::style_tokens;
-use crate::formatters::tool_registry::format_tool_call_parts;
+use crate::formatters::tool_registry::format_tool_call_parts_with_wd;
 
 /// Tree connector characters (UTF-8 box drawing).
 const TREE_BRANCH: &str = "\u{251c}\u{2500}";
@@ -214,11 +214,17 @@ pub struct CompletedToolCall {
 /// Widget that renders the nested subagent tool display.
 pub struct NestedToolWidget<'a> {
     subagents: &'a [SubagentDisplayState],
+    working_dir: Option<&'a str>,
 }
 
 impl<'a> NestedToolWidget<'a> {
     pub fn new(subagents: &'a [SubagentDisplayState]) -> Self {
-        Self { subagents }
+        Self { subagents, working_dir: None }
+    }
+
+    pub fn working_dir(mut self, wd: &'a str) -> Self {
+        self.working_dir = Some(wd);
+        self
     }
 }
 
@@ -337,7 +343,7 @@ impl Widget for NestedToolWidget<'_> {
                 let spinner_idx = tool_state.tick % SPINNER_CHARS.len();
                 let spinner_ch = SPINNER_CHARS[spinner_idx];
                 let tool_elapsed = tool_state.started_at.elapsed().as_secs();
-                let (verb, arg) = format_tool_call_parts(&tool_state.tool_name, &tool_state.args);
+                let (verb, arg) = format_tool_call_parts_with_wd(&tool_state.tool_name, &tool_state.args, self.working_dir);
 
                 lines.push(Line::from(vec![
                     Span::styled(
@@ -371,7 +377,7 @@ impl Widget for NestedToolWidget<'_> {
                 } else {
                     ("\u{23fa}", style_tokens::ERROR)
                 };
-                let (verb, arg) = format_tool_call_parts(&completed.tool_name, &completed.args);
+                let (verb, arg) = format_tool_call_parts_with_wd(&completed.tool_name, &completed.args, self.working_dir);
 
                 lines.push(Line::from(vec![
                     Span::styled(
