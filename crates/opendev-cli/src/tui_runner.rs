@@ -179,11 +179,13 @@ impl TuiRunner {
                                 subagent_name,
                                 tool_name,
                                 tool_id,
+                                args,
                             } => AppEvent::SubagentToolCall {
                                 subagent_id,
                                 subagent_name,
                                 tool_name,
                                 tool_id,
+                                args,
                             },
                             SubagentEvent::ToolComplete {
                                 subagent_id,

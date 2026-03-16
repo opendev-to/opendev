@@ -95,6 +95,7 @@ pub enum AppEvent {
         subagent_name: String,
         tool_name: String,
         tool_id: String,
+        args: std::collections::HashMap<String, serde_json::Value>,
     },
     /// A subagent tool call completed.
     SubagentToolComplete {
@@ -464,6 +465,7 @@ impl RecordedEvent {
                 subagent_name,
                 tool_name,
                 tool_id,
+                args,
             } => (
                 "SubagentToolCall".to_string(),
                 serde_json::json!({
@@ -471,6 +473,7 @@ impl RecordedEvent {
                     "subagent_name": subagent_name,
                     "tool_name": tool_name,
                     "tool_id": tool_id,
+                    "args": args,
                 }),
             ),
             AppEvent::SubagentToolComplete {
@@ -679,11 +682,17 @@ impl RecordedEvent {
                 let subagent_name = self.payload.get("subagent_name")?.as_str()?.to_string();
                 let tool_name = self.payload.get("tool_name")?.as_str()?.to_string();
                 let tool_id = self.payload.get("tool_id")?.as_str()?.to_string();
+                let args: std::collections::HashMap<String, serde_json::Value> =
+                    serde_json::from_value(
+                        self.payload.get("args").cloned().unwrap_or_default(),
+                    )
+                    .unwrap_or_default();
                 Some(AppEvent::SubagentToolCall {
                     subagent_id,
                     subagent_name,
                     tool_name,
                     tool_id,
+                    args,
                 })
             }
             "SubagentToolComplete" => {

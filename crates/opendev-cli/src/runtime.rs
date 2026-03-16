@@ -470,6 +470,21 @@ impl AgentRuntime {
             None => AdaptedClient::new(raw_http_client),
         });
 
+        // Check model capabilities via models.dev metadata
+        let (supports_temperature, model_max_tokens) = {
+            let paths = opendev_config::Paths::new(Some(working_dir.to_path_buf()));
+            let registry =
+                opendev_config::ModelRegistry::load_from_cache(&paths.global_cache_dir());
+            let model_info = registry.find_model_by_id(&config.model);
+            let supports_temp = model_info
+                .map(|(_, _, m)| m.supports_temperature)
+                .unwrap_or(true);
+            let max_tok = model_info
+                .and_then(|(_, _, m)| m.max_tokens)
+                .unwrap_or(config.max_tokens as u64);
+            (supports_temp, max_tok)
+        };
+
         // Register SpawnSubagentTool now that we have Arc<ToolRegistry> and Arc<HttpClient>
         let session_dir = session_manager.session_dir().to_path_buf();
         let mut subagent_manager = opendev_agents::SubagentManager::with_builtins_and_custom(
@@ -496,24 +511,15 @@ impl AgentRuntime {
                 &config.model,
                 working_dir.display().to_string(),
             )
-            .with_event_sender(subagent_event_tx),
+            .with_event_sender(subagent_event_tx)
+            .with_tool_approval_tx(tool_approval_tx.clone())
+            .with_parent_max_tokens(model_max_tokens),
         ));
         channel_receivers.subagent_event_rx = Some(subagent_event_rx);
         info!(
             tool_count = tool_registry.tool_names().len(),
             "Registered all tools including spawn_subagent"
         );
-
-        // Check if model supports temperature via models.dev metadata
-        let supports_temperature = {
-            let paths = opendev_config::Paths::new(Some(working_dir.to_path_buf()));
-            let registry =
-                opendev_config::ModelRegistry::load_from_cache(&paths.global_cache_dir());
-            registry
-                .find_model_by_id(&config.model)
-                .map(|(_, _, m)| m.supports_temperature)
-                .unwrap_or(true)
-        };
 
         // Configure LLM caller
         let llm_caller = LlmCaller::new(LlmCallConfig {
@@ -523,7 +529,7 @@ impl AgentRuntime {
             } else {
                 None
             },
-            max_tokens: Some(config.max_tokens as u64),
+            max_tokens: Some(model_max_tokens),
         });
 
         let react_loop = ReactLoop::new(ReactLoopConfig::default());

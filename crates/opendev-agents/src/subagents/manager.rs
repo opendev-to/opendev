@@ -11,9 +11,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use super::spec::SubAgentSpec;
-use crate::main_agent::{MainAgent, MainAgentConfig};
 use crate::react_loop::{ReactLoop, ReactLoopConfig};
-use crate::traits::{AgentDeps, AgentError, AgentResult, BaseAgent, TaskMonitor};
+use crate::traits::{AgentError, AgentResult, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_tools_core::ToolRegistry;
 
@@ -63,7 +62,13 @@ pub trait SubagentProgressCallback: Send + Sync {
     fn on_started(&self, subagent_name: &str, task: &str);
 
     /// Called when the subagent invokes a tool.
-    fn on_tool_call(&self, subagent_name: &str, tool_name: &str, tool_id: &str);
+    fn on_tool_call(
+        &self,
+        subagent_name: &str,
+        tool_name: &str,
+        tool_id: &str,
+        args: &HashMap<String, serde_json::Value>,
+    );
 
     /// Called when a subagent tool call completes.
     fn on_tool_complete(&self, subagent_name: &str, tool_name: &str, tool_id: &str, success: bool);
@@ -81,7 +86,14 @@ pub struct NoopProgressCallback;
 
 impl SubagentProgressCallback for NoopProgressCallback {
     fn on_started(&self, _name: &str, _task: &str) {}
-    fn on_tool_call(&self, _name: &str, _tool: &str, _id: &str) {}
+    fn on_tool_call(
+        &self,
+        _name: &str,
+        _tool: &str,
+        _id: &str,
+        _args: &HashMap<String, serde_json::Value>,
+    ) {
+    }
     fn on_tool_complete(&self, _name: &str, _tool: &str, _id: &str, _success: bool) {}
     fn on_finished(&self, _name: &str, _success: bool, _summary: &str) {}
 }
@@ -110,7 +122,7 @@ impl crate::traits::AgentEventCallback for SubagentEventBridge {
         &self,
         tool_id: &str,
         tool_name: &str,
-        _args: &std::collections::HashMap<String, serde_json::Value>,
+        args: &std::collections::HashMap<String, serde_json::Value>,
     ) {
         debug!(
             subagent = %self.subagent_name,
@@ -119,7 +131,7 @@ impl crate::traits::AgentEventCallback for SubagentEventBridge {
             "SubagentEventBridge: forwarding tool_started → on_tool_call"
         );
         self.progress
-            .on_tool_call(&self.subagent_name, tool_name, tool_id);
+            .on_tool_call(&self.subagent_name, tool_name, tool_id, args);
     }
 
     fn on_tool_finished(&self, tool_id: &str, success: bool) {
@@ -141,6 +153,34 @@ impl crate::traits::AgentEventCallback for SubagentEventBridge {
     fn on_token_usage(&self, input_tokens: u64, output_tokens: u64) {
         self.progress
             .on_token_usage(&self.subagent_name, input_tokens, output_tokens);
+    }
+}
+
+/// Select the appropriate runner for a subagent based on its type.
+fn select_runner(
+    spec: &SubAgentSpec,
+    task: &str,
+) -> Box<dyn super::runner::SubagentRunner> {
+    use super::runner::{SimpleReactRunner, StandardReactRunner};
+
+    match SubagentType::from_name(&spec.name) {
+        SubagentType::CodeExplorer => {
+            let max_iterations = spec.max_steps.unwrap_or(200) as usize;
+            Box::new(SimpleReactRunner::new(max_iterations))
+        }
+        _ => {
+            // Default to 25 iterations for non-Explorer agents (matches old behavior)
+            let max_iterations = Some(spec.max_steps.unwrap_or(25) as usize);
+            Box::new(StandardReactRunner::new(ReactLoopConfig {
+                max_iterations,
+                max_nudge_attempts: 3,
+                max_todo_nudges: 2,
+                thinking_level: opendev_runtime::ThinkingLevel::Off,
+                original_task: Some(task.to_string()),
+                permission: spec.permission.clone(),
+                ..Default::default()
+            }))
+        }
     }
 }
 
@@ -448,7 +488,9 @@ impl SubagentManager {
         http_client: Arc<AdaptedClient>,
         working_dir: &str,
         progress: Arc<dyn SubagentProgressCallback>,
-        task_monitor: Option<&dyn TaskMonitor>,
+        _task_monitor: Option<&dyn TaskMonitor>,
+        tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
+        parent_max_tokens: u64,
     ) -> Result<SubagentRunResult, AgentError> {
         let spec = self.get(subagent_name).ok_or_else(|| {
             AgentError::ConfigError(format!("Unknown subagent type: {subagent_name}"))
@@ -497,22 +539,6 @@ impl SubagentManager {
             }
         }
 
-        // Create an isolated MainAgent for this subagent
-        let temperature = spec.temperature.map(|t| t as f64).unwrap_or(0.7);
-        let config = MainAgentConfig {
-            model,
-            model_thinking: None,
-            model_critique: None,
-            temperature: Some(temperature),
-            max_tokens: Some(spec.max_tokens.unwrap_or(4096) as u64),
-            working_dir: Some(working_dir.to_string()),
-            allowed_tools,
-            model_provider: None,
-        };
-
-        let mut agent = MainAgent::new(config, tool_registry);
-        agent.set_http_client(http_client);
-
         // Build the subagent's system prompt by combining the spec prompt
         // with project instruction files (AGENTS.md, CLAUDE.md, etc.) so
         // subagents follow the same project rules as the main agent.
@@ -535,30 +561,58 @@ impl SubagentManager {
                 parts.join("\n")
             }
         };
-        agent.set_system_prompt(&system_prompt);
 
-        // Subagents get a limited iteration budget (spec override or default 25)
-        let max_iterations = spec.max_steps.unwrap_or(25) as usize;
-        agent.set_react_config(ReactLoopConfig {
-            max_iterations: Some(max_iterations),
-            max_nudge_attempts: 2,
-            max_todo_nudges: 2,
-            permission: spec.permission.clone(),
-            ..Default::default()
+        // Build LlmCaller with subagent config
+        let temperature = spec.temperature.map(|t| t as f64).unwrap_or(0.7);
+        let llm_caller = crate::llm_calls::LlmCaller::new(crate::llm_calls::LlmCallConfig {
+            model: model.clone(),
+            temperature: Some(temperature),
+            max_tokens: Some(spec.max_tokens.unwrap_or(parent_max_tokens as u32) as u64),
         });
+
+        // Build tool schemas (filtered to allowed tools)
+        let tool_schemas =
+            crate::main_agent::MainAgent::build_schemas_pub(&tool_registry, allowed_tools.as_deref());
+
+        // Build tool context
+        let mut tool_context = opendev_tools_core::ToolContext::new(working_dir);
+        tool_context.is_subagent = true;
 
         // Wire event bridge so subagent tool calls are visible to the TUI
         let bridge = Arc::new(SubagentEventBridge::new(
             spec.name.clone(),
             Arc::clone(&progress),
         ));
-        agent.set_event_callback(bridge);
 
-        debug!(subagent = %spec.name, "Running subagent ReAct loop");
+        // Select the runner based on subagent type
+        let runner = select_runner(spec, task);
 
-        // Run the isolated ReAct loop
-        let deps = AgentDeps::new();
-        let result = agent.run(task, &deps, None, task_monitor).await;
+        debug!(
+            subagent = %spec.name,
+            runner = runner.name(),
+            "Running subagent via runner"
+        );
+
+        // Prepare initial messages
+        let mut messages = vec![
+            serde_json::json!({"role": "system", "content": system_prompt}),
+            serde_json::json!({"role": "user", "content": task}),
+        ];
+
+        // Build runner context
+        let runner_ctx = super::runner::RunnerContext {
+            caller: &llm_caller,
+            http_client: &http_client,
+            tool_schemas: &tool_schemas,
+            tool_registry: &tool_registry,
+            tool_context: &tool_context,
+            event_callback: Some(bridge.as_ref() as &dyn crate::traits::AgentEventCallback),
+            cancel: None, // Subagents don't support cancellation tokens yet
+            tool_approval_tx: tool_approval_tx,
+        };
+
+        // Run the isolated ReAct loop via the selected runner
+        let result = runner.run(&runner_ctx, &mut messages).await;
 
         match result {
             Ok(agent_result) => {
@@ -1308,7 +1362,13 @@ mod tests {
                 .unwrap()
                 .push(format!("started:{name}:{task}"));
         }
-        fn on_tool_call(&self, name: &str, tool: &str, id: &str) {
+        fn on_tool_call(
+            &self,
+            name: &str,
+            tool: &str,
+            id: &str,
+            _args: &HashMap<String, serde_json::Value>,
+        ) {
             self.events
                 .lock()
                 .unwrap()

@@ -1748,7 +1748,7 @@ impl App {
                 };
 
                 // For spawn_subagent, populate nested_calls from tracked subagent state
-                let nested_calls = if tool_name == "spawn_subagent" {
+                let (nested_calls, subagent_stats) = if tool_name == "spawn_subagent" {
                     // Find the matching finished subagent and extract its tool history
                     let subagent_idx = self
                         .state
@@ -1757,30 +1757,52 @@ impl App {
                         .position(|s| s.finished);
                     if let Some(idx) = subagent_idx {
                         let subagent = self.state.active_subagents.remove(idx);
-                        subagent
+                        let stats = (
+                            subagent.tool_call_count,
+                            subagent.token_count,
+                            subagent.started_at.elapsed(),
+                        );
+                        let calls = subagent
                             .completed_tools
                             .iter()
                             .map(|ct| DisplayToolCall {
                                 name: ct.tool_name.clone(),
-                                arguments: std::collections::HashMap::new(),
+                                arguments: ct.args.clone(),
                                 summary: None,
                                 success: ct.success,
                                 collapsed: false,
                                 result_lines: Vec::new(),
                                 nested_calls: Vec::new(),
                             })
-                            .collect()
+                            .collect();
+                        (calls, Some(stats))
                     } else {
-                        Vec::new()
+                        (Vec::new(), None)
                     }
                 } else {
-                    Vec::new()
+                    (Vec::new(), None)
                 };
 
-                // For spawn_subagent, show "Done (N tool uses)" summary
+                // For spawn_subagent, show "Done (N tool uses · Xk tokens · Ym Zs)" summary
                 let (final_lines, final_collapsed) = if tool_name == "spawn_subagent" {
-                    let tool_count = nested_calls.len();
-                    let summary = format!("Done ({tool_count} tool uses)");
+                    let summary = if let Some((tool_count, token_count, elapsed)) = subagent_stats {
+                        let elapsed_secs = elapsed.as_secs();
+                        let elapsed_str = if elapsed_secs >= 60 {
+                            format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
+                        } else {
+                            format!("{elapsed_secs}s")
+                        };
+                        let token_str = if token_count > 0 {
+                            let k = token_count as f64 / 1000.0;
+                            format!(" \u{00b7} {k:.1}k tokens")
+                        } else {
+                            String::new()
+                        };
+                        format!("Done ({tool_count} tool uses{token_str} \u{00b7} {elapsed_str})")
+                    } else {
+                        let tool_count = nested_calls.len();
+                        format!("Done ({tool_count} tool uses)")
+                    };
                     (vec![summary], false)
                 } else {
                     (display_lines, collapsed)
@@ -1903,6 +1925,7 @@ impl App {
                 subagent_id,
                 tool_name,
                 tool_id,
+                args,
                 ..
             } => {
                 if let Some(subagent) = self
@@ -1911,7 +1934,7 @@ impl App {
                     .iter_mut()
                     .find(|s| s.subagent_id == subagent_id)
                 {
-                    subagent.add_tool_call(tool_name, tool_id);
+                    subagent.add_tool_call(tool_name, tool_id, args);
                 }
                 self.state.dirty = true;
             }

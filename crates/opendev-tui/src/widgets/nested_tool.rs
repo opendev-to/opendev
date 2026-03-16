@@ -17,6 +17,7 @@ use ratatui::{
 };
 
 use crate::formatters::style_tokens;
+use crate::formatters::tool_registry::format_tool_call_parts;
 
 /// Tree connector characters (UTF-8 box drawing).
 const TREE_BRANCH: &str = "\u{251c}\u{2500}";
@@ -86,13 +87,19 @@ impl SubagentDisplayState {
     }
 
     /// Record a new tool call starting.
-    pub fn add_tool_call(&mut self, tool_name: String, tool_id: String) {
+    pub fn add_tool_call(
+        &mut self,
+        tool_name: String,
+        tool_id: String,
+        args: HashMap<String, serde_json::Value>,
+    ) {
         self.tool_call_count += 1;
         self.active_tools.insert(
             tool_id.clone(),
             NestedToolCallState {
                 tool_name,
                 tool_id,
+                args,
                 started_at: Instant::now(),
                 tick: 0,
             },
@@ -109,6 +116,7 @@ impl SubagentDisplayState {
         if let Some(state) = self.active_tools.remove(tool_id) {
             self.completed_tools.push(CompletedToolCall {
                 tool_name: state.tool_name,
+                args: state.args,
                 elapsed: state.started_at.elapsed(),
                 success,
             });
@@ -189,6 +197,7 @@ impl SubagentDisplayState {
 pub struct NestedToolCallState {
     pub tool_name: String,
     pub tool_id: String,
+    pub args: HashMap<String, serde_json::Value>,
     pub started_at: Instant,
     pub tick: usize,
 }
@@ -197,6 +206,7 @@ pub struct NestedToolCallState {
 #[derive(Debug, Clone)]
 pub struct CompletedToolCall {
     pub tool_name: String,
+    pub args: HashMap<String, serde_json::Value>,
     pub elapsed: std::time::Duration,
     pub success: bool,
 }
@@ -327,6 +337,7 @@ impl Widget for NestedToolWidget<'_> {
                 let spinner_idx = tool_state.tick % SPINNER_CHARS.len();
                 let spinner_ch = SPINNER_CHARS[spinner_idx];
                 let tool_elapsed = tool_state.started_at.elapsed().as_secs();
+                let (verb, arg) = format_tool_call_parts(&tool_state.tool_name, &tool_state.args);
 
                 lines.push(Line::from(vec![
                     Span::styled(
@@ -337,8 +348,9 @@ impl Widget for NestedToolWidget<'_> {
                         format!("{spinner_ch} "),
                         Style::default().fg(GREEN_GRADIENT[color_idx]),
                     ),
+                    Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
                     Span::styled(
-                        tool_state.tool_name.clone(),
+                        format!("({arg})"),
                         Style::default().fg(style_tokens::SUBTLE),
                     ),
                     Span::styled(
@@ -359,6 +371,7 @@ impl Widget for NestedToolWidget<'_> {
                 } else {
                     ("\u{23fa}", style_tokens::ERROR)
                 };
+                let (verb, arg) = format_tool_call_parts(&completed.tool_name, &completed.args);
 
                 lines.push(Line::from(vec![
                     Span::styled(
@@ -366,8 +379,9 @@ impl Widget for NestedToolWidget<'_> {
                         Style::default().fg(style_tokens::SUBTLE),
                     ),
                     Span::styled(format!("{icon} "), Style::default().fg(color)),
+                    Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
                     Span::styled(
-                        completed.tool_name.clone(),
+                        format!("({arg})"),
                         Style::default().fg(style_tokens::SUBTLE),
                     ),
                     Span::styled(
@@ -417,7 +431,7 @@ mod tests {
     #[test]
     fn test_add_and_complete_tool_call() {
         let mut state = SubagentDisplayState::new("id-test".into(), "test".into(), "task".into());
-        state.add_tool_call("read_file".into(), "tc-1".into());
+        state.add_tool_call("read_file".into(), "tc-1".into(), HashMap::new());
         assert_eq!(state.tool_call_count, 1);
         assert!(state.active_tools.contains_key("tc-1"));
 
@@ -452,7 +466,7 @@ mod tests {
     #[test]
     fn test_advance_tick() {
         let mut state = SubagentDisplayState::new("id-test".into(), "test".into(), "task".into());
-        state.add_tool_call("read_file".into(), "tc-1".into());
+        state.add_tool_call("read_file".into(), "tc-1".into(), HashMap::new());
         state.advance_tick();
         assert_eq!(state.tick, 1);
         assert_eq!(state.active_tools["tc-1"].tick, 1);
@@ -467,7 +481,7 @@ mod tests {
     #[test]
     fn test_widget_with_active_subagent() {
         let mut state = SubagentDisplayState::new("id-1".into(), "Code-Explorer".into(), "Find TODOs".into());
-        state.add_tool_call("read_file".into(), "tc-1".into());
+        state.add_tool_call("read_file".into(), "tc-1".into(), HashMap::new());
         let subagents = vec![state];
         let _widget = NestedToolWidget::new(&subagents);
     }
@@ -488,7 +502,7 @@ mod tests {
         // Add 150 tool calls and complete them all
         for i in 0..150 {
             let id = format!("tc-{i}");
-            state.add_tool_call("read_file".into(), id.clone());
+            state.add_tool_call("read_file".into(), id.clone(), HashMap::new());
             state.complete_tool_call(&id, true);
         }
         // Should be capped at 100
@@ -499,17 +513,17 @@ mod tests {
     #[test]
     fn test_activity_summary_reading() {
         let mut state = SubagentDisplayState::new("id-act".into(), "test".into(), "task".into());
-        state.add_tool_call("read_file".into(), "tc-1".into());
-        state.add_tool_call("read_file".into(), "tc-2".into());
-        state.add_tool_call("read_file".into(), "tc-3".into());
+        state.add_tool_call("read_file".into(), "tc-1".into(), HashMap::new());
+        state.add_tool_call("read_file".into(), "tc-2".into(), HashMap::new());
+        state.add_tool_call("read_file".into(), "tc-3".into(), HashMap::new());
         assert_eq!(state.activity_summary(), "Reading 3 files...");
     }
 
     #[test]
     fn test_activity_summary_searching() {
         let mut state = SubagentDisplayState::new("id-act2".into(), "test".into(), "task".into());
-        state.add_tool_call("search".into(), "tc-1".into());
-        state.add_tool_call("list_files".into(), "tc-2".into());
+        state.add_tool_call("search".into(), "tc-1".into(), HashMap::new());
+        state.add_tool_call("list_files".into(), "tc-2".into(), HashMap::new());
         assert_eq!(state.activity_summary(), "Searching for 2 patterns...");
     }
 
@@ -529,9 +543,9 @@ mod tests {
     #[test]
     fn test_widget_with_finished_subagent() {
         let mut state = SubagentDisplayState::new("id-2".into(), "Planner".into(), "Create plan".into());
-        state.add_tool_call("read_file".into(), "tc-1".into());
+        state.add_tool_call("read_file".into(), "tc-1".into(), HashMap::new());
         state.complete_tool_call("tc-1", true);
-        state.add_tool_call("write_file".into(), "tc-2".into());
+        state.add_tool_call("write_file".into(), "tc-2".into(), HashMap::new());
         state.complete_tool_call("tc-2", true);
         state.finish(true, "Plan created".into(), 2, None);
         let subagents = vec![state];

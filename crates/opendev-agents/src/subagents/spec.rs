@@ -61,7 +61,7 @@ pub struct SubAgentSpec {
     pub mode: AgentMode,
 
     /// Override max_tokens for this subagent's LLM calls.
-    /// If None, uses the default (4096).
+    /// If None, inherits parent agent's max_tokens from model registry.
     #[serde(default)]
     pub max_tokens: Option<u32>,
 
@@ -367,7 +367,7 @@ pub mod builtins {
     use super::SubAgentSpec;
 
     /// Tools available to the Code Explorer subagent.
-    pub const CODE_EXPLORER_TOOLS: &[&str] = &["read_file", "search", "list_files"];
+    pub const CODE_EXPLORER_TOOLS: &[&str] = &["read_file", "search", "list_files", "run_command"];
 
     /// Tools available to the Planner subagent.
     pub const PLANNER_TOOLS: &[&str] = &[

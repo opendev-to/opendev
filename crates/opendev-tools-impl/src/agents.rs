@@ -158,6 +158,7 @@ pub enum SubagentEvent {
         subagent_name: String,
         tool_name: String,
         tool_id: String,
+        args: HashMap<String, serde_json::Value>,
     },
     /// A subagent tool call completed.
     ToolComplete {
@@ -216,12 +217,19 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
         });
     }
 
-    fn on_tool_call(&self, subagent_name: &str, tool_name: &str, tool_id: &str) {
+    fn on_tool_call(
+        &self,
+        subagent_name: &str,
+        tool_name: &str,
+        tool_id: &str,
+        args: &HashMap<String, serde_json::Value>,
+    ) {
         let _ = self.tx.send(SubagentEvent::ToolCall {
             subagent_id: self.subagent_id.clone(),
             subagent_name: subagent_name.to_string(),
             tool_name: tool_name.to_string(),
             tool_id: tool_id.to_string(),
+            args: args.clone(),
         });
     }
 
@@ -235,15 +243,9 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
         });
     }
 
-    fn on_finished(&self, subagent_name: &str, success: bool, result_summary: &str) {
-        let _ = self.tx.send(SubagentEvent::Finished {
-            subagent_id: self.subagent_id.clone(),
-            subagent_name: subagent_name.to_string(),
-            success,
-            result_summary: result_summary.to_string(),
-            tool_call_count: 0,
-            shallow_warning: None,
-        });
+    fn on_finished(&self, _subagent_name: &str, _success: bool, _result_summary: &str) {
+        // Don't emit Finished here — SpawnSubagentTool::execute() sends the
+        // authoritative Finished event with correct tool_call_count and shallow_warning.
     }
 
     fn on_token_usage(&self, subagent_name: &str, input_tokens: u64, output_tokens: u64) {
@@ -281,6 +283,10 @@ pub struct SpawnSubagentTool {
     working_dir: String,
     /// Optional channel for sending progress events to the TUI.
     event_tx: Option<mpsc::UnboundedSender<SubagentEvent>>,
+    /// Optional tool approval sender for bash/run_command approval.
+    tool_approval_tx: Option<opendev_runtime::ToolApprovalSender>,
+    /// Parent agent's max_tokens from model registry (subagents inherit this as fallback).
+    parent_max_tokens: u64,
 }
 
 impl SpawnSubagentTool {
@@ -301,12 +307,26 @@ impl SpawnSubagentTool {
             parent_model: parent_model.into(),
             working_dir: working_dir.into(),
             event_tx: None,
+            tool_approval_tx: None,
+            parent_max_tokens: 16384,
         }
     }
 
     /// Set the event channel for progress reporting.
     pub fn with_event_sender(mut self, tx: mpsc::UnboundedSender<SubagentEvent>) -> Self {
         self.event_tx = Some(tx);
+        self
+    }
+
+    /// Set the tool approval sender for bash/run_command approval.
+    pub fn with_tool_approval_tx(mut self, tx: opendev_runtime::ToolApprovalSender) -> Self {
+        self.tool_approval_tx = Some(tx);
+        self
+    }
+
+    /// Set the parent agent's max_tokens (subagents inherit this as fallback).
+    pub fn with_parent_max_tokens(mut self, max_tokens: u64) -> Self {
+        self.parent_max_tokens = max_tokens;
         self
     }
 }
@@ -424,6 +444,8 @@ impl BaseTool for SpawnSubagentTool {
                 wd,
                 progress,
                 None,
+                self.tool_approval_tx.as_ref(),
+                self.parent_max_tokens,
             )
             .await;
 
@@ -712,8 +734,9 @@ mod tests {
 
         use opendev_agents::SubagentProgressCallback;
         cb.on_started("test-agent", "do a thing");
-        cb.on_tool_call("test-agent", "read_file", "tc-1");
+        cb.on_tool_call("test-agent", "read_file", "tc-1", &std::collections::HashMap::new());
         cb.on_tool_complete("test-agent", "read_file", "tc-1", true);
+        // on_finished is intentionally a no-op (SpawnSubagentTool sends the real Finished event)
         cb.on_finished("test-agent", true, "Done");
 
         let evt = rx.recv().await.unwrap();
@@ -722,8 +745,8 @@ mod tests {
         assert!(matches!(evt, SubagentEvent::ToolCall { .. }));
         let evt = rx.recv().await.unwrap();
         assert!(matches!(evt, SubagentEvent::ToolComplete { .. }));
-        let evt = rx.recv().await.unwrap();
-        assert!(matches!(evt, SubagentEvent::Finished { .. }));
+        // No Finished event expected — on_finished is a no-op
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -752,6 +775,7 @@ mod tests {
                 subagent_name,
                 tool_name,
                 tool_id,
+                args: _,
             } => {
                 assert_eq!(id, "test-sa-id");
                 assert_eq!(subagent_name, "Explorer");

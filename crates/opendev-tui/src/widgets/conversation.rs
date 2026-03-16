@@ -578,6 +578,8 @@ impl<'a> ConversationWidget<'a> {
                             } else {
                                 ('\u{2717}', style_tokens::ERROR)
                             };
+                            let (verb, arg) =
+                                format_tool_call_parts(&ct.tool_name, &ct.args);
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     format!("  {CONTINUATION_CHAR}  "),
@@ -588,8 +590,12 @@ impl<'a> ConversationWidget<'a> {
                                     Style::default().fg(color),
                                 ),
                                 Span::styled(
-                                    ct.tool_name.clone(),
+                                    verb,
                                     Style::default().fg(style_tokens::SUBTLE),
+                                ),
+                                Span::styled(
+                                    format!("({arg})"),
+                                    Style::default().fg(style_tokens::GREY),
                                 ),
                             ]));
                         }
@@ -598,6 +604,8 @@ impl<'a> ConversationWidget<'a> {
                         for at in sa.active_tools.values() {
                             let at_idx = at.tick % SPINNER_FRAMES.len();
                             let at_ch = SPINNER_FRAMES[at_idx];
+                            let (verb, arg) =
+                                format_tool_call_parts(&at.tool_name, &at.args);
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     format!("  {CONTINUATION_CHAR}  "),
@@ -608,8 +616,12 @@ impl<'a> ConversationWidget<'a> {
                                     Style::default().fg(style_tokens::BLUE_BRIGHT),
                                 ),
                                 Span::styled(
-                                    at.tool_name.clone(),
+                                    verb,
                                     Style::default().fg(style_tokens::SUBTLE),
+                                ),
+                                Span::styled(
+                                    format!("({arg})"),
+                                    Style::default().fg(style_tokens::GREY),
                                 ),
                             ]));
                         }
@@ -768,15 +780,18 @@ fn format_nested_tool_call(tc: &DisplayToolCall, _depth: usize) -> Line<'static>
         ('\u{2717}', style_tokens::ERROR) // ✗
     };
 
+    let (verb, arg) = format_tool_call_parts(&tc.name, &tc.arguments);
+
     Line::from(vec![
         Span::styled(
             format!("  {CONTINUATION_CHAR}  "),
             Style::default().fg(style_tokens::GREY),
         ),
         Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+        Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
         Span::styled(
-            tc.name.clone(),
-            Style::default().fg(style_tokens::SUBTLE),
+            format!("({arg})"),
+            Style::default().fg(style_tokens::GREY),
         ),
     ])
 }
@@ -1156,9 +1171,9 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
             .collect();
-        // spawn_subagent renders as AgentName(task), nested calls show tool name
+        // spawn_subagent renders as AgentName(task), nested calls show formatted verb
         assert!(text.contains("Agent"));
-        assert!(text.contains("read_file"));
+        assert!(text.contains("Read"));
     }
 
     #[test]

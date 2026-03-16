@@ -204,6 +204,13 @@ impl MainAgent {
     ///
     /// Tool patterns support wildcards: `"read_*"` matches `read_file`, `read_pdf`, etc.
     /// `"mcp__*"` matches all MCP tools. Exact names also work: `"read_file"`.
+    ///
+    /// Public variant for use by subagent runners.
+    pub fn build_schemas_pub(registry: &ToolRegistry, allowed_tools: Option<&[String]>) -> Vec<Value> {
+        Self::build_schemas(registry, allowed_tools)
+    }
+
+    /// Build tool schemas, optionally filtering to allowed tools only.
     fn build_schemas(registry: &ToolRegistry, allowed_tools: Option<&[String]>) -> Vec<Value> {
         let all_schemas = registry.get_schemas();
         match allowed_tools {
