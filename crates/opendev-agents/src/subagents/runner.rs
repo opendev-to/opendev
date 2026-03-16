@@ -185,6 +185,104 @@ impl SimpleReactRunner {
         (id, name, args)
     }
 
+    /// Build an exploration observation from message history.
+    ///
+    /// Scans all assistant messages for tool calls and produces a structured
+    /// summary of what has been explored. Used to give the model informed
+    /// context when it tries to stop, so it can self-evaluate whether the
+    /// exploration is sufficient.
+    fn build_exploration_observation(messages: &[Value], task: &str) -> String {
+        let mut files_read: Vec<String> = Vec::new();
+        let mut searches: Vec<String> = Vec::new();
+        let mut dirs_listed: Vec<String> = Vec::new();
+        let mut commands_run: Vec<String> = Vec::new();
+
+        for msg in messages {
+            if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+                continue;
+            }
+            let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) else {
+                continue;
+            };
+            for tc in tool_calls {
+                let function = tc.get("function").cloned().unwrap_or_default();
+                let name = function
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("");
+                let args_str = function
+                    .get("arguments")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("{}");
+                let args: HashMap<String, Value> =
+                    serde_json::from_str(args_str).unwrap_or_default();
+
+                match name {
+                    "read_file" => {
+                        if let Some(path) = args.get("file_path").and_then(|v| v.as_str()) {
+                            if !files_read.contains(&path.to_string()) {
+                                files_read.push(path.to_string());
+                            }
+                        }
+                    }
+                    "search" => {
+                        if let Some(pattern) = args.get("pattern").and_then(|v| v.as_str()) {
+                            searches.push(pattern.to_string());
+                        }
+                    }
+                    "list_files" => {
+                        if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                            dirs_listed.push(path.to_string());
+                        } else {
+                            dirs_listed.push(".".to_string());
+                        }
+                    }
+                    "run_command" => {
+                        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+                            commands_run.push(cmd.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let total = files_read.len() + searches.len() + dirs_listed.len() + commands_run.len();
+
+        let mut obs = String::new();
+        obs.push_str("## Exploration Status\n\n");
+        obs.push_str(&format!("**Original task**: {task}\n\n"));
+        obs.push_str(&format!("**Actions taken** ({total} tool calls):\n"));
+
+        if !files_read.is_empty() {
+            obs.push_str(&format!("- Files read ({}): {}\n", files_read.len(), files_read.join(", ")));
+        }
+        if !searches.is_empty() {
+            obs.push_str(&format!("- Searches ({}): {}\n", searches.len(),
+                searches.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ")));
+        }
+        if !dirs_listed.is_empty() {
+            obs.push_str(&format!("- Directories listed ({}): {}\n", dirs_listed.len(), dirs_listed.join(", ")));
+        }
+        if !commands_run.is_empty() {
+            obs.push_str(&format!("- Commands run ({}): {}\n", commands_run.len(),
+                commands_run.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", ")));
+        }
+
+        if total < 10 {
+            obs.push_str("\nYou have made very few tool calls. For a thorough exploration, \
+                          you should investigate more files, directories, and patterns. \
+                          Continue exploring — read key entry points, trace imports, \
+                          search for important types and interfaces.\n");
+        } else {
+            obs.push_str("\nBased on the original task and your exploration so far, decide:\n");
+            obs.push_str("- If important areas remain unexplored, continue investigating.\n");
+            obs.push_str("- If you have sufficient information, provide your final summary.\n");
+        }
+
+        obs
+    }
+
     /// Normalize file path arguments against the working directory.
     ///
     /// LLMs often pass redundant paths like `project/src/main.rs` when cwd is
@@ -257,12 +355,19 @@ impl SubagentRunner for SimpleReactRunner {
     ) -> Result<AgentResult, AgentError> {
         let parallelizable: std::collections::HashSet<&str> =
             PARALLELIZABLE_TOOLS.iter().copied().collect();
-        const MAX_COMPLETION_NUDGES: usize = 3;
         let mut total_tool_calls = 0usize;
-        let mut completion_nudges: usize = 0;
+        let mut observation_count = 0usize;
         let mut auto_approved_patterns: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let start_time = Instant::now();
+
+        // Extract the original task from the first user message for observation context
+        let original_task = messages
+            .iter()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+            .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+            .unwrap_or("explore the codebase")
+            .to_string();
 
         for iteration in 1..=self.max_iterations {
             // Check cancellation
@@ -332,36 +437,44 @@ impl SubagentRunner for SimpleReactRunner {
                 messages.push(msg);
             }
 
-            // If no tool calls → nudge up to MAX_COMPLETION_NUDGES times, then accept
+            // If no tool calls → model wants to stop
             if tool_calls.is_empty() {
                 let content = Self::parse_content(&body)
                     .unwrap_or_else(|| "Done.".to_string());
 
-                if completion_nudges < MAX_COMPLETION_NUDGES {
-                    completion_nudges += 1;
+                // Observation-based continuation: show the model what it has
+                // explored and let it decide whether to continue.
+                // - First observation is always given
+                // - Second observation only if total_tool_calls < 10 (thin exploration)
+                // - After 2 observations, accept the model's decision
+                let should_observe = observation_count == 0
+                    || (observation_count == 1 && total_tool_calls < 10);
+                if should_observe {
+                    observation_count += 1;
+                    let observation = Self::build_exploration_observation(
+                        messages,
+                        &original_task,
+                    );
                     debug!(
                         iteration,
                         total_tool_calls,
-                        nudge = completion_nudges,
-                        "SimpleReactRunner: completion attempt, nudging ({}/{})",
-                        completion_nudges,
-                        MAX_COMPLETION_NUDGES,
+                        observation_count,
+                        "SimpleReactRunner: injecting exploration observation",
                     );
                     messages.push(serde_json::json!({
                         "role": "user",
-                        "content": "You stopped exploring but your task may not be complete yet. \
-                                    Continue using tools to investigate further. \
-                                    Do not provide a final summary until you have thoroughly covered \
-                                    all relevant areas of the codebase."
+                        "content": observation,
                     }));
                     continue;
                 }
 
+                let elapsed = start_time.elapsed();
                 debug!(
                     iteration,
                     tool_calls = total_tool_calls,
-                    "SimpleReactRunner: completed (no tool calls after {} nudges)",
-                    MAX_COMPLETION_NUDGES,
+                    elapsed_secs = elapsed.as_secs(),
+                    "SimpleReactRunner: completed (model confirmed done after {} observations)",
+                    observation_count,
                 );
                 return Ok(AgentResult {
                     content,
@@ -372,9 +485,6 @@ impl SubagentRunner for SimpleReactRunner {
                     partial_result: None,
                 });
             }
-
-            // Reset nudge counter whenever the LLM makes tool calls
-            completion_nudges = 0;
 
             // Execute tools — split into parallel batch (read-only) and sequential (side effects)
             {
@@ -641,6 +751,65 @@ mod tests {
             args.get("file_path").and_then(|v| v.as_str()),
             Some("/src/main.rs")
         );
+    }
+
+    #[test]
+    fn test_build_exploration_observation() {
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": "You are an explorer."}),
+            serde_json::json!({"role": "user", "content": "Explore the codebase"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                    {"id": "1", "function": {"name": "list_files", "arguments": "{\"path\": \"src\"}"}},
+                    {"id": "2", "function": {"name": "read_file", "arguments": "{\"file_path\": \"src/main.rs\"}"}},
+                    {"id": "3", "function": {"name": "read_file", "arguments": "{\"file_path\": \"Cargo.toml\"}"}}
+                ]
+            }),
+            serde_json::json!({"role": "tool", "tool_call_id": "1", "content": "file list"}),
+            serde_json::json!({"role": "tool", "tool_call_id": "2", "content": "fn main(){}"}),
+            serde_json::json!({"role": "tool", "tool_call_id": "3", "content": "[package]"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                    {"id": "4", "function": {"name": "search", "arguments": "{\"pattern\": \"fn main\"}"}}
+                ]
+            }),
+            serde_json::json!({"role": "tool", "tool_call_id": "4", "content": "matches"}),
+        ];
+
+        let obs = SimpleReactRunner::build_exploration_observation(
+            &messages,
+            "Explore the codebase",
+        );
+        assert!(obs.contains("**Original task**: Explore the codebase"));
+        assert!(obs.contains("4 tool calls"));
+        assert!(obs.contains("Files read (2)"));
+        assert!(obs.contains("src/main.rs"));
+        assert!(obs.contains("Cargo.toml"));
+        assert!(obs.contains("Searches (1)"));
+        assert!(obs.contains("`fn main`"));
+        assert!(obs.contains("Directories listed (1)"));
+        assert!(obs.contains("src"));
+        // Should not contain commands since none were run
+        assert!(!obs.contains("Commands run"));
+    }
+
+    #[test]
+    fn test_build_exploration_observation_deduplicates_files() {
+        let messages = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "1", "function": {"name": "read_file", "arguments": "{\"file_path\": \"src/main.rs\"}"}},
+                    {"id": "2", "function": {"name": "read_file", "arguments": "{\"file_path\": \"src/main.rs\"}"}}
+                ]
+            }),
+        ];
+        let obs = SimpleReactRunner::build_exploration_observation(&messages, "test");
+        assert!(obs.contains("Files read (1)"));
     }
 
     #[test]
