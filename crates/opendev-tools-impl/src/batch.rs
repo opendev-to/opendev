@@ -235,7 +235,9 @@ impl BaseTool for BatchTool {
             "Batch completed: {success_count} succeeded, {fail_count} failed"
         ));
         if discarded > 0 {
-            output_parts.push(format!("({discarded} invocations discarded — exceeds limit of {MAX_BATCH_SIZE})"));
+            output_parts.push(format!(
+                "({discarded} invocations discarded — exceeds limit of {MAX_BATCH_SIZE})"
+            ));
         }
         if !errors.is_empty() {
             output_parts.push(format!("Validation errors:\n{}", errors.join("\n")));
@@ -501,12 +503,10 @@ mod tests {
     fn test_batch_format_validation_error() {
         let registry = make_registry_with_tools();
         let tool = BatchTool::new(registry);
-        let errors = vec![
-            ValidationError {
-                path: "invocations".to_string(),
-                message: "Missing required parameter: 'invocations'".to_string(),
-            },
-        ];
+        let errors = vec![ValidationError {
+            path: "invocations".to_string(),
+            message: "Missing required parameter: 'invocations'".to_string(),
+        }];
         let formatted = tool.format_validation_error(&errors);
         assert!(formatted.is_some());
         let msg = formatted.unwrap();

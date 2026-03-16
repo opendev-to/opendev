@@ -239,8 +239,7 @@ impl BaseTool for MultiEditTool {
             }
 
             // --- Generate combined diff ---
-            let diff_text =
-                edit_replacers::unified_diff(file_path, &original_content, &content, 3);
+            let diff_text = edit_replacers::unified_diff(file_path, &original_content, &content, 3);
 
             // --- Atomic write ---
             let dir = path.parent().unwrap_or(Path::new("."));

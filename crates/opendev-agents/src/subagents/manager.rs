@@ -157,10 +157,7 @@ impl crate::traits::AgentEventCallback for SubagentEventBridge {
 }
 
 /// Select the appropriate runner for a subagent based on its type.
-fn select_runner(
-    spec: &SubAgentSpec,
-    task: &str,
-) -> Box<dyn super::runner::SubagentRunner> {
+fn select_runner(spec: &SubAgentSpec, task: &str) -> Box<dyn super::runner::SubagentRunner> {
     use super::runner::{SimpleReactRunner, StandardReactRunner};
 
     match SubagentType::from_name(&spec.name) {
@@ -325,7 +322,9 @@ impl SubagentManager {
                 SubAgentSpec::new(
                     name,
                     cfg.description.as_deref().unwrap_or("Custom agent"),
-                    cfg.prompt.as_deref().unwrap_or("You are a helpful assistant."),
+                    cfg.prompt
+                        .as_deref()
+                        .unwrap_or("You are a helpful assistant."),
                 )
             });
 
@@ -432,10 +431,7 @@ impl SubagentManager {
                 } else if spec.hidden {
                     tracing::warn!(agent = name, "default_agent is hidden, falling back");
                 } else if !spec.mode.can_be_primary() {
-                    tracing::warn!(
-                        agent = name,
-                        "default_agent is subagent-only, falling back"
-                    );
+                    tracing::warn!(agent = name, "default_agent is subagent-only, falling back");
                 } else {
                     return Some(&spec.name);
                 }
@@ -551,12 +547,11 @@ impl SubagentManager {
                 let mut parts = vec![spec.system_prompt.clone()];
                 parts.push("\n\n# Project Instructions\n".to_string());
                 for instr in &instructions {
-                    let filename = instr
-                        .path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    parts.push(format!("## {} ({})\n{}", filename, instr.scope, instr.content));
+                    let filename = instr.path.file_name().unwrap_or_default().to_string_lossy();
+                    parts.push(format!(
+                        "## {} ({})\n{}",
+                        filename, instr.scope, instr.content
+                    ));
                 }
                 parts.join("\n")
             }
@@ -571,8 +566,10 @@ impl SubagentManager {
         });
 
         // Build tool schemas (filtered to allowed tools)
-        let tool_schemas =
-            crate::main_agent::MainAgent::build_schemas_pub(&tool_registry, allowed_tools.as_deref());
+        let tool_schemas = crate::main_agent::MainAgent::build_schemas_pub(
+            &tool_registry,
+            allowed_tools.as_deref(),
+        );
 
         // Build tool context
         let mut tool_context = opendev_tools_core::ToolContext::new(working_dir);
@@ -594,10 +591,40 @@ impl SubagentManager {
         );
 
         // Prepare initial messages
-        let mut messages = vec![
-            serde_json::json!({"role": "system", "content": system_prompt}),
-            serde_json::json!({"role": "user", "content": task}),
-        ];
+        let mut messages = vec![serde_json::json!({"role": "system", "content": system_prompt})];
+
+        // Auto-scout: inject project structure for Code-Explorer so it doesn't
+        // waste tool calls discovering layout (and parallel explorers see the
+        // same tree, helping them pick different areas).
+        if matches!(
+            SubagentType::from_name(&spec.name),
+            SubagentType::CodeExplorer
+        ) {
+            let structure = scan_project_structure(std::path::Path::new(working_dir), 3);
+            if !structure.is_empty() {
+                messages.push(serde_json::json!({
+                    "role": "user",
+                    "content": format!(
+                        "Here is the project structure to help you navigate:\n\n{structure}\n\
+                        IMPORTANT: Only use paths that appear in this tree or that you discover via list_files. \
+                        Do NOT guess or hallucinate paths — if you're unsure whether a directory or file exists, \
+                        use list_files to check first."
+                    )
+                }));
+                messages.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": "Thank you for the project structure. I'll only use paths from this tree or ones I discover via list_files — no guessing. Let me now address your task."
+                }));
+            } else {
+                warn!(
+                    subagent = %spec.name,
+                    working_dir = %working_dir,
+                    "Auto-scout: project structure scan returned empty — working directory may be invalid"
+                );
+            }
+        }
+
+        messages.push(serde_json::json!({"role": "user", "content": task}));
 
         // Build runner context
         let runner_ctx = super::runner::RunnerContext {
@@ -650,6 +677,110 @@ impl SubagentManager {
                 progress.on_finished(&spec.name, false, &err_msg);
                 Err(e)
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-scout: project structure scanner for Code-Explorer
+// ---------------------------------------------------------------------------
+
+/// Directories to skip when scanning project structure.
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    ".git",
+    "__pycache__",
+    "dist",
+    "build",
+    "vendor",
+    ".venv",
+    ".vscode",
+    ".idea",
+    ".next",
+    ".cache",
+    ".tox",
+    "venv",
+    "env",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+];
+
+/// Cap on total entries to avoid flooding context.
+const MAX_SCAN_ENTRIES: usize = 100;
+
+/// Scan a directory tree up to `max_depth` levels and return a tree-style
+/// string listing. Returns an empty string if the directory cannot be read.
+fn scan_project_structure(root: &std::path::Path, max_depth: usize) -> String {
+    let mut entries: Vec<String> = Vec::new();
+    scan_dir(root, "", max_depth, 0, &mut entries);
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("Project structure:\n");
+    for line in &entries {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Recursive helper that collects tree lines into `out`.
+fn scan_dir(
+    dir: &std::path::Path,
+    prefix: &str,
+    max_depth: usize,
+    depth: usize,
+    out: &mut Vec<String>,
+) {
+    if out.len() >= MAX_SCAN_ENTRIES {
+        return;
+    }
+
+    let mut children: Vec<std::fs::DirEntry> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return,
+    };
+
+    // Sort entries: directories first, then alphabetical.
+    children.sort_by(|a, b| {
+        let a_dir = a.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        let b_dir = b.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        b_dir
+            .cmp(&a_dir)
+            .then_with(|| a.file_name().cmp(&b.file_name()))
+    });
+
+    let total = children.len();
+    for (i, entry) in children.into_iter().enumerate() {
+        if out.len() >= MAX_SCAN_ENTRIES {
+            out.push(format!("{prefix}... (truncated)"));
+            return;
+        }
+
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let is_last = i == total - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+
+        if is_dir {
+            // Skip excluded directories
+            if SKIP_DIRS.iter().any(|&s| s == name_str) {
+                continue;
+            }
+            out.push(format!("{prefix}{connector}{name_str}/"));
+            if depth < max_depth {
+                let child_prefix = if is_last {
+                    format!("{prefix}    ")
+                } else {
+                    format!("{prefix}│   ")
+                };
+                scan_dir(&entry.path(), &child_prefix, max_depth, depth + 1, out);
+            }
+        } else {
+            out.push(format!("{prefix}{connector}{name_str}"));
         }
     }
 }
@@ -818,9 +949,7 @@ mod tests {
     fn test_hidden_agents_excluded_from_names() {
         let mut mgr = SubagentManager::new();
         mgr.register(make_spec("visible"));
-        mgr.register(
-            SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true),
-        );
+        mgr.register(SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true));
 
         let names = mgr.names();
         assert!(names.contains(&"visible"));
@@ -836,9 +965,7 @@ mod tests {
     fn test_hidden_agents_excluded_from_enum_description() {
         let mut mgr = SubagentManager::new();
         mgr.register(make_spec("visible"));
-        mgr.register(
-            SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true),
-        );
+        mgr.register(SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true));
 
         let descs = mgr.build_enum_description();
         assert_eq!(descs.len(), 1);
@@ -848,9 +975,7 @@ mod tests {
     #[test]
     fn test_hidden_agents_still_gettable() {
         let mut mgr = SubagentManager::new();
-        mgr.register(
-            SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true),
-        );
+        mgr.register(SubAgentSpec::new("hidden-agent", "Hidden", "prompt").with_hidden(true));
 
         // Hidden agents can still be retrieved by name (for programmatic spawning)
         assert!(mgr.get("hidden-agent").is_some());
@@ -948,9 +1073,7 @@ mod tests {
     fn test_disabled_agents_excluded_from_names() {
         let mut mgr = SubagentManager::new();
         mgr.register(make_spec("active"));
-        mgr.register(
-            SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true),
-        );
+        mgr.register(SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true));
 
         let names = mgr.names();
         assert!(names.contains(&"active"));
@@ -964,9 +1087,7 @@ mod tests {
     fn test_disabled_agents_excluded_from_enum_description() {
         let mut mgr = SubagentManager::new();
         mgr.register(make_spec("active"));
-        mgr.register(
-            SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true),
-        );
+        mgr.register(SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true));
 
         let descs = mgr.build_enum_description();
         assert_eq!(descs.len(), 1);
@@ -976,9 +1097,7 @@ mod tests {
     #[test]
     fn test_disabled_agents_still_gettable() {
         let mut mgr = SubagentManager::new();
-        mgr.register(
-            SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true),
-        );
+        mgr.register(SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true));
 
         // Disabled agents can still be looked up (but spawn will fail)
         assert!(mgr.get("disabled-agent").is_some());
@@ -987,9 +1106,7 @@ mod tests {
     #[test]
     fn test_disabled_agents_in_all_names() {
         let mut mgr = SubagentManager::new();
-        mgr.register(
-            SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true),
-        );
+        mgr.register(SubAgentSpec::new("disabled-agent", "Disabled", "prompt").with_disable(true));
 
         let all = mgr.all_names();
         assert!(
@@ -1056,7 +1173,10 @@ mod tests {
         );
         mgr.apply_config_overrides(&overrides);
 
-        assert!(mgr.get("build").is_none(), "Disabled agent should be removed");
+        assert!(
+            mgr.get("build").is_none(),
+            "Disabled agent should be removed"
+        );
     }
 
     #[test]
@@ -1264,7 +1384,11 @@ mod tests {
         );
 
         let result = mgr.resolve_default_agent(Some("nonexistent"));
-        assert_eq!(result, Some("build"), "Should fall back to first primary-capable agent");
+        assert_eq!(
+            result,
+            Some("build"),
+            "Should fall back to first primary-capable agent"
+        );
     }
 
     #[test]
@@ -1281,7 +1405,11 @@ mod tests {
         );
 
         let result = mgr.resolve_default_agent(Some("build"));
-        assert_eq!(result, Some("general"), "Should skip disabled and fall back");
+        assert_eq!(
+            result,
+            Some("general"),
+            "Should skip disabled and fall back"
+        );
     }
 
     #[test]
@@ -1311,7 +1439,11 @@ mod tests {
         );
 
         let result = mgr.resolve_default_agent(Some("helper"));
-        assert_eq!(result, Some("primary"), "Should skip subagent-only and fall back");
+        assert_eq!(
+            result,
+            Some("primary"),
+            "Should skip subagent-only and fall back"
+        );
     }
 
     #[test]
@@ -1323,7 +1455,11 @@ mod tests {
         );
 
         let result = mgr.resolve_default_agent(None);
-        assert_eq!(result, Some("build"), "Should return first primary-capable agent");
+        assert_eq!(
+            result,
+            Some("build"),
+            "Should return first primary-capable agent"
+        );
     }
 
     #[test]

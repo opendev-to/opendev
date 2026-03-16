@@ -148,17 +148,26 @@ impl TopicDetector {
             return None;
         }
 
-        match call_llm(&self.client, &self.provider, &self.model, &self.api_key, &recent).await {
-            Ok(result) if result.is_new_topic => {
-                result.title.map(|t| {
+        match call_llm(
+            &self.client,
+            &self.provider,
+            &self.model,
+            &self.api_key,
+            &recent,
+        )
+        .await
+        {
+            Ok(result) if result.is_new_topic => result
+                .title
+                .map(|t| {
                     let trimmed = t.trim().to_string();
                     if trimmed.len() > MAX_TITLE_LEN {
                         trimmed[..MAX_TITLE_LEN].to_string()
                     } else {
                         trimmed
                     }
-                }).filter(|t| !t.is_empty())
-            }
+                })
+                .filter(|t| !t.is_empty()),
             Ok(_) => None,
             Err(e) => {
                 debug!("Topic detection failed: {e}");

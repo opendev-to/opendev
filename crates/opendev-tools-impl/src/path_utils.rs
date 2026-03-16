@@ -273,7 +273,9 @@ pub fn is_sensitive_file(path: &Path) -> Option<&'static str> {
     }
 
     // Token/secret files
-    if name.contains("secret") && (name.ends_with(".json") || name.ends_with(".yaml") || name.ends_with(".yml")) {
+    if name.contains("secret")
+        && (name.ends_with(".json") || name.ends_with(".yaml") || name.ends_with(".yml"))
+    {
         return Some("secrets file");
     }
 

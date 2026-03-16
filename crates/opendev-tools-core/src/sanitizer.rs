@@ -354,10 +354,7 @@ pub fn cleanup_overflow_dir(dir: &Path) {
             continue;
         }
         // Extract timestamp from filename: tool_<timestamp>_<name>.txt
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         if let Some(ts_str) = stem.strip_prefix("tool_")
             && let Some(ts_end) = ts_str.find('_')
             && let Ok(ts) = ts_str[..ts_end].parse::<u64>()

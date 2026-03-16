@@ -1083,7 +1083,11 @@ mod tests {
         let ctx = ToolContext::new("/tmp/test");
         // "Echo" should match "echo" case-insensitively
         let result = reg.execute("Echo", args, &ctx).await;
-        assert!(result.success, "Case-insensitive match should work: {:?}", result.error);
+        assert!(
+            result.success,
+            "Case-insensitive match should work: {:?}",
+            result.error
+        );
         assert_eq!(result.output.as_deref(), Some("Echo: hello"));
     }
 
@@ -1111,7 +1115,10 @@ mod tests {
         let result = reg.execute("ech", HashMap::new(), &ctx).await;
         assert!(!result.success);
         let err = result.error.unwrap();
-        assert!(err.contains("Unknown tool: ech"), "Error should mention unknown tool");
+        assert!(
+            err.contains("Unknown tool: ech"),
+            "Error should mention unknown tool"
+        );
         assert!(err.contains("echo"), "Error should suggest 'echo': {}", err);
     }
 

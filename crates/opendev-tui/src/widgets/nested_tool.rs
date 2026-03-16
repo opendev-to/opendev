@@ -64,6 +64,8 @@ pub struct SubagentDisplayState {
     pub tick: usize,
     /// Optional shallow subagent warning.
     pub shallow_warning: Option<String>,
+    /// When the subagent finished (for cleanup timing).
+    pub finished_at: Option<Instant>,
 }
 
 impl SubagentDisplayState {
@@ -83,6 +85,7 @@ impl SubagentDisplayState {
             token_count: 0,
             tick: 0,
             shallow_warning: None,
+            finished_at: None,
         }
     }
 
@@ -122,7 +125,8 @@ impl SubagentDisplayState {
             });
             // Cap completed tools to prevent unbounded growth in long-running subagents
             if self.completed_tools.len() > 100 {
-                self.completed_tools.drain(..self.completed_tools.len() - 100);
+                self.completed_tools
+                    .drain(..self.completed_tools.len() - 100);
             }
         }
     }
@@ -136,6 +140,7 @@ impl SubagentDisplayState {
         shallow_warning: Option<String>,
     ) {
         self.finished = true;
+        self.finished_at = Some(Instant::now());
         self.success = success;
         self.result_summary = result_summary;
         self.tool_call_count = tool_call_count;
@@ -219,7 +224,10 @@ pub struct NestedToolWidget<'a> {
 
 impl<'a> NestedToolWidget<'a> {
     pub fn new(subagents: &'a [SubagentDisplayState]) -> Self {
-        Self { subagents, working_dir: None }
+        Self {
+            subagents,
+            working_dir: None,
+        }
     }
 
     pub fn working_dir(mut self, wd: &'a str) -> Self {
@@ -343,7 +351,11 @@ impl Widget for NestedToolWidget<'_> {
                 let spinner_idx = tool_state.tick % SPINNER_CHARS.len();
                 let spinner_ch = SPINNER_CHARS[spinner_idx];
                 let tool_elapsed = tool_state.started_at.elapsed().as_secs();
-                let (verb, arg) = format_tool_call_parts_with_wd(&tool_state.tool_name, &tool_state.args, self.working_dir);
+                let (verb, arg) = format_tool_call_parts_with_wd(
+                    &tool_state.tool_name,
+                    &tool_state.args,
+                    self.working_dir,
+                );
 
                 lines.push(Line::from(vec![
                     Span::styled(
@@ -377,7 +389,11 @@ impl Widget for NestedToolWidget<'_> {
                 } else {
                     ("\u{23fa}", style_tokens::ERROR)
                 };
-                let (verb, arg) = format_tool_call_parts_with_wd(&completed.tool_name, &completed.args, self.working_dir);
+                let (verb, arg) = format_tool_call_parts_with_wd(
+                    &completed.tool_name,
+                    &completed.args,
+                    self.working_dir,
+                );
 
                 lines.push(Line::from(vec![
                     Span::styled(
@@ -428,7 +444,8 @@ mod tests {
 
     #[test]
     fn test_subagent_display_state_new() {
-        let state = SubagentDisplayState::new("id-1".into(), "Code-Explorer".into(), "Find TODOs".into());
+        let state =
+            SubagentDisplayState::new("id-1".into(), "Code-Explorer".into(), "Find TODOs".into());
         assert_eq!(state.name, "Code-Explorer");
         assert!(!state.finished);
         assert_eq!(state.tool_call_count, 0);
@@ -486,7 +503,8 @@ mod tests {
 
     #[test]
     fn test_widget_with_active_subagent() {
-        let mut state = SubagentDisplayState::new("id-1".into(), "Code-Explorer".into(), "Find TODOs".into());
+        let mut state =
+            SubagentDisplayState::new("id-1".into(), "Code-Explorer".into(), "Find TODOs".into());
         state.add_tool_call("read_file".into(), "tc-1".into(), HashMap::new());
         let subagents = vec![state];
         let _widget = NestedToolWidget::new(&subagents);
@@ -548,7 +566,8 @@ mod tests {
 
     #[test]
     fn test_widget_with_finished_subagent() {
-        let mut state = SubagentDisplayState::new("id-2".into(), "Planner".into(), "Create plan".into());
+        let mut state =
+            SubagentDisplayState::new("id-2".into(), "Planner".into(), "Create plan".into());
         state.add_tool_call("read_file".into(), "tc-1".into(), HashMap::new());
         state.complete_tool_call("tc-1", true);
         state.add_tool_call("write_file".into(), "tc-2".into(), HashMap::new());

@@ -14,7 +14,7 @@ use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::llm_calls::LlmCaller;
-use crate::react_loop::{ReactLoop, ReactLoopConfig, PARALLELIZABLE_TOOLS};
+use crate::react_loop::{PARALLELIZABLE_TOOLS, ReactLoop, ReactLoopConfig};
 use crate::traits::{AgentError, AgentEventCallback, AgentResult, TaskMonitor};
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_runtime::ToolApprovalSender;
@@ -169,7 +169,11 @@ impl SimpleReactRunner {
 
     /// Extract tool name and parsed args from a tool call JSON object.
     fn extract_tool_info(tc: &Value) -> (String, String, HashMap<String, Value>) {
-        let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let id = tc
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let function = tc.get("function").cloned().unwrap_or_default();
         let name = function
             .get("name")
@@ -180,8 +184,7 @@ impl SimpleReactRunner {
             .get("arguments")
             .and_then(|a| a.as_str())
             .unwrap_or("{}");
-        let args: HashMap<String, Value> =
-            serde_json::from_str(args_str).unwrap_or_default();
+        let args: HashMap<String, Value> = serde_json::from_str(args_str).unwrap_or_default();
         (id, name, args)
     }
 
@@ -206,10 +209,7 @@ impl SimpleReactRunner {
             };
             for tc in tool_calls {
                 let function = tc.get("function").cloned().unwrap_or_default();
-                let name = function
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("");
+                let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 let args_str = function
                     .get("arguments")
                     .and_then(|a| a.as_str())
@@ -255,25 +255,49 @@ impl SimpleReactRunner {
         obs.push_str(&format!("**Actions taken** ({total} tool calls):\n"));
 
         if !files_read.is_empty() {
-            obs.push_str(&format!("- Files read ({}): {}\n", files_read.len(), files_read.join(", ")));
+            obs.push_str(&format!(
+                "- Files read ({}): {}\n",
+                files_read.len(),
+                files_read.join(", ")
+            ));
         }
         if !searches.is_empty() {
-            obs.push_str(&format!("- Searches ({}): {}\n", searches.len(),
-                searches.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ")));
+            obs.push_str(&format!(
+                "- Searches ({}): {}\n",
+                searches.len(),
+                searches
+                    .iter()
+                    .map(|s| format!("`{s}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
         if !dirs_listed.is_empty() {
-            obs.push_str(&format!("- Directories listed ({}): {}\n", dirs_listed.len(), dirs_listed.join(", ")));
+            obs.push_str(&format!(
+                "- Directories listed ({}): {}\n",
+                dirs_listed.len(),
+                dirs_listed.join(", ")
+            ));
         }
         if !commands_run.is_empty() {
-            obs.push_str(&format!("- Commands run ({}): {}\n", commands_run.len(),
-                commands_run.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", ")));
+            obs.push_str(&format!(
+                "- Commands run ({}): {}\n",
+                commands_run.len(),
+                commands_run
+                    .iter()
+                    .map(|c| format!("`{c}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
 
         if total < 10 {
-            obs.push_str("\nYou have made very few tool calls. For a thorough exploration, \
+            obs.push_str(
+                "\nYou have made very few tool calls. For a thorough exploration, \
                           you should investigate more files, directories, and patterns. \
                           Continue exploring — read key entry points, trace imports, \
-                          search for important types and interfaces.\n");
+                          search for important types and interfaces.\n",
+            );
         } else {
             obs.push_str("\nBased on the original task and your exploration so far, decide:\n");
             obs.push_str("- If important areas remain unexplored, continue investigating.\n");
@@ -290,7 +314,11 @@ impl SimpleReactRunner {
     /// the tool execution and event display see clean relative paths.
     fn normalize_path_args(args: &mut HashMap<String, Value>, working_dir: &Path) {
         for key in &["file_path", "path"] {
-            if let Some(val) = args.get(*key).and_then(|v| v.as_str()).map(|s| s.to_string()) {
+            if let Some(val) = args
+                .get(*key)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+            {
                 let resolved = Self::resolve_path(&val, working_dir);
                 if resolved != val {
                     args.insert(key.to_string(), Value::String(resolved));
@@ -317,7 +345,9 @@ impl SimpleReactRunner {
                         let inner_str = inner.to_string_lossy();
                         if !inner_str.is_empty() {
                             let joined = working_dir.join(&*inner_str);
-                            if joined.exists() || joined.parent().map(|p| p.is_dir()).unwrap_or(false) {
+                            if joined.exists()
+                                || joined.parent().map(|p| p.is_dir()).unwrap_or(false)
+                            {
                                 return inner_str.to_string();
                             }
                         }
@@ -332,7 +362,10 @@ impl SimpleReactRunner {
 
         // Relative path: check if first component matches working dir basename
         if let Some(basename) = working_dir.file_name().and_then(|n| n.to_str()) {
-            if let Some(rest) = path_str.strip_prefix(basename).and_then(|r| r.strip_prefix('/')) {
+            if let Some(rest) = path_str
+                .strip_prefix(basename)
+                .and_then(|r| r.strip_prefix('/'))
+            {
                 if !rest.is_empty() {
                     let joined = working_dir.join(rest);
                     if joined.exists() || joined.parent().map(|p| p.is_dir()).unwrap_or(false) {
@@ -385,7 +418,10 @@ impl SubagentRunner for SimpleReactRunner {
                 }
             }
 
-            debug!(iteration, total_tool_calls, "SimpleReactRunner: calling LLM");
+            debug!(
+                iteration,
+                total_tool_calls, "SimpleReactRunner: calling LLM"
+            );
 
             // Build payload and call LLM
             let payload = ctx.caller.build_action_payload(messages, ctx.tool_schemas);
@@ -439,22 +475,18 @@ impl SubagentRunner for SimpleReactRunner {
 
             // If no tool calls → model wants to stop
             if tool_calls.is_empty() {
-                let content = Self::parse_content(&body)
-                    .unwrap_or_else(|| "Done.".to_string());
+                let content = Self::parse_content(&body).unwrap_or_else(|| "Done.".to_string());
 
                 // Observation-based continuation: show the model what it has
                 // explored and let it decide whether to continue.
                 // - First observation is always given
                 // - Second observation only if total_tool_calls < 10 (thin exploration)
                 // - After 2 observations, accept the model's decision
-                let should_observe = observation_count == 0
-                    || (observation_count == 1 && total_tool_calls < 10);
+                let should_observe =
+                    observation_count == 0 || (observation_count == 1 && total_tool_calls < 10);
                 if should_observe {
                     observation_count += 1;
-                    let observation = Self::build_exploration_observation(
-                        messages,
-                        &original_task,
-                    );
+                    let observation = Self::build_exploration_observation(messages, &original_task);
                     debug!(
                         iteration,
                         total_tool_calls,
@@ -466,6 +498,18 @@ impl SubagentRunner for SimpleReactRunner {
                         "content": observation,
                     }));
                     continue;
+                }
+
+                // If model made 0 tool calls even after observations, report failure
+                if total_tool_calls == 0 {
+                    return Ok(AgentResult {
+                        content: "Exploration failed: no tool calls were made. The subagent could not find any files to explore in the working directory.".to_string(),
+                        success: false,
+                        interrupted: false,
+                        completion_status: None,
+                        messages: messages.clone(),
+                        partial_result: None,
+                    });
                 }
 
                 let elapsed = start_time.elapsed();
@@ -511,7 +555,8 @@ impl SubagentRunner for SimpleReactRunner {
                     let futures: Vec<_> = parallel_infos
                         .iter()
                         .map(|(_, name, args)| {
-                            ctx.tool_registry.execute(name, args.clone(), ctx.tool_context)
+                            ctx.tool_registry
+                                .execute(name, args.clone(), ctx.tool_context)
                         })
                         .collect();
 
@@ -544,8 +589,8 @@ impl SubagentRunner for SimpleReactRunner {
                     }
 
                     // Tool approval gate for run_command (mirrors ReactLoop behavior)
-                    let needs_approval = name == "run_command"
-                        && !auto_approved_patterns.contains(&name);
+                    let needs_approval =
+                        name == "run_command" && !auto_approved_patterns.contains(&name);
                     if needs_approval {
                         if let Some(approval_tx) = ctx.tool_approval_tx {
                             let command = args
@@ -557,11 +602,7 @@ impl SubagentRunner for SimpleReactRunner {
                             let req = opendev_runtime::ToolApprovalRequest {
                                 tool_name: name.clone(),
                                 command: command.clone(),
-                                working_dir: ctx
-                                    .tool_context
-                                    .working_dir
-                                    .display()
-                                    .to_string(),
+                                working_dir: ctx.tool_context.working_dir.display().to_string(),
                                 response_tx: resp_tx,
                             };
                             if approval_tx.send(req).is_ok() {
@@ -582,7 +623,8 @@ impl SubagentRunner for SimpleReactRunner {
                                         }));
                                         if let Some(cb) = ctx.event_callback {
                                             cb.on_tool_result(
-                                                &id, &name,
+                                                &id,
+                                                &name,
                                                 "Command denied by user",
                                                 false,
                                             );
@@ -592,8 +634,7 @@ impl SubagentRunner for SimpleReactRunner {
                                     }
                                     Ok(d) => {
                                         if d.choice == "yes_remember" {
-                                            auto_approved_patterns
-                                                .insert(name.clone());
+                                            auto_approved_patterns.insert(name.clone());
                                             debug!(
                                                 tool = %name,
                                                 "Auto-approving tool for remainder of session"
@@ -614,7 +655,10 @@ impl SubagentRunner for SimpleReactRunner {
                         }
                     }
 
-                    let result = ctx.tool_registry.execute(&name, args, ctx.tool_context).await;
+                    let result = ctx
+                        .tool_registry
+                        .execute(&name, args, ctx.tool_context)
+                        .await;
 
                     // Emit tool finished
                     if let Some(cb) = ctx.event_callback {
@@ -780,10 +824,8 @@ mod tests {
             serde_json::json!({"role": "tool", "tool_call_id": "4", "content": "matches"}),
         ];
 
-        let obs = SimpleReactRunner::build_exploration_observation(
-            &messages,
-            "Explore the codebase",
-        );
+        let obs =
+            SimpleReactRunner::build_exploration_observation(&messages, "Explore the codebase");
         assert!(obs.contains("**Original task**: Explore the codebase"));
         assert!(obs.contains("4 tool calls"));
         assert!(obs.contains("Files read (2)"));
@@ -799,15 +841,13 @@ mod tests {
 
     #[test]
     fn test_build_exploration_observation_deduplicates_files() {
-        let messages = vec![
-            serde_json::json!({
-                "role": "assistant",
-                "tool_calls": [
-                    {"id": "1", "function": {"name": "read_file", "arguments": "{\"file_path\": \"src/main.rs\"}"}},
-                    {"id": "2", "function": {"name": "read_file", "arguments": "{\"file_path\": \"src/main.rs\"}"}}
-                ]
-            }),
-        ];
+        let messages = vec![serde_json::json!({
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "1", "function": {"name": "read_file", "arguments": "{\"file_path\": \"src/main.rs\"}"}},
+                {"id": "2", "function": {"name": "read_file", "arguments": "{\"file_path\": \"src/main.rs\"}"}}
+            ]
+        })];
         let obs = SimpleReactRunner::build_exploration_observation(&messages, "test");
         assert!(obs.contains("Files read (1)"));
     }

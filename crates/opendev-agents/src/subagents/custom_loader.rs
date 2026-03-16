@@ -597,7 +597,8 @@ mod tests {
 
     #[test]
     fn test_parse_permission_with_patterns() {
-        let yaml = "permission:\n  bash:\n    \"*\": ask\n    \"git *\": allow\n    \"rm -rf *\": deny";
+        let yaml =
+            "permission:\n  bash:\n    \"*\": ask\n    \"git *\": allow\n    \"rm -rf *\": deny";
         let meta = parse_simple_yaml(yaml);
         assert_eq!(meta.permission.len(), 1);
         if let PermissionRule::Patterns(ref p) = meta.permission["bash"] {
@@ -619,7 +620,10 @@ mod tests {
             meta.permission["edit"],
             PermissionRule::Action(PermissionAction::Deny)
         ));
-        assert!(matches!(meta.permission["bash"], PermissionRule::Patterns(_)));
+        assert!(matches!(
+            meta.permission["bash"],
+            PermissionRule::Patterns(_)
+        ));
     }
 
     #[test]

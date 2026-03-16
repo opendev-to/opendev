@@ -442,8 +442,12 @@ mod tests {
     fn test_mcp_tool_result_success() {
         let result = McpToolResult {
             content: vec![
-                McpContent::Text { text: "line 1".to_string() },
-                McpContent::Text { text: "line 2".to_string() },
+                McpContent::Text {
+                    text: "line 1".to_string(),
+                },
+                McpContent::Text {
+                    text: "line 2".to_string(),
+                },
             ],
             is_error: false,
         };

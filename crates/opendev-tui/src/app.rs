@@ -18,8 +18,8 @@ use crate::event::{AppEvent, EventHandler};
 use crate::history::CommandHistory;
 use crate::managers::BackgroundTaskManager;
 use crate::widgets::{
-    ConversationWidget, InputWidget, StatusBarWidget, TodoDisplayItem,
-    TodoDisplayStatus, TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
+    ConversationWidget, InputWidget, StatusBarWidget, TodoDisplayItem, TodoDisplayStatus,
+    TodoPanelWidget, WelcomePanelState, WelcomePanelWidget,
 };
 use crossterm::{
     event::{
@@ -149,6 +149,11 @@ pub struct AppState {
     pub background_panel_open: bool,
     /// Active subagent executions for nested display.
     pub active_subagents: Vec<crate::widgets::nested_tool::SubagentDisplayState>,
+    /// Buffered subagent results waiting for all parallel subagents to finish.
+    /// Each entry: (task_short, tool_count, token_count, elapsed, success).
+    pub pending_subagent_results: Vec<(String, usize, u64, std::time::Duration, bool)>,
+    /// Number of parallel spawn_subagent tools in the current batch.
+    pub parallel_subagent_count: usize,
     /// Shared todo manager for syncing panel state with tool results.
     pub todo_manager: Option<Arc<Mutex<opendev_runtime::TodoManager>>>,
     /// Todo items from the current plan (for the todo progress panel).
@@ -423,6 +428,8 @@ impl Default for AppState {
             background_task_count: 0,
             background_panel_open: false,
             active_subagents: Vec::new(),
+            pending_subagent_results: Vec::new(),
+            parallel_subagent_count: 0,
             todo_manager: None,
             todo_items: Vec::new(),
             todo_expanded: true,
@@ -992,7 +999,8 @@ impl App {
                 } else {
                     (COMPLETED_CHAR, style_tokens::ERROR)
                 };
-                let (n_verb, n_arg) = format_tool_call_parts_with_wd(&nested.name, &nested.arguments, working_dir);
+                let (n_verb, n_arg) =
+                    format_tool_call_parts_with_wd(&nested.name, &nested.arguments, working_dir);
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("{}\u{2514}\u{2500} ", Indent::CONT),
@@ -1045,13 +1053,13 @@ impl App {
             .direction(layout::Direction::Vertical)
             .constraints(
                 [
-                    layout::Constraint::Min(5),                  // conversation
-                    layout::Constraint::Length(todo_height),     // todo panel
+                    layout::Constraint::Min(5),              // conversation
+                    layout::Constraint::Length(todo_height), // todo panel
                     layout::Constraint::Length({
                         let input_lines = self.state.input_buffer.matches('\n').count() + 1;
                         (input_lines as u16 + 1).min(8) // +1 for separator, cap at 8
                     }), // input
-                    layout::Constraint::Length(2),               // status bar
+                    layout::Constraint::Length(2),           // status bar
                 ]
                 .as_ref(),
             )
@@ -1692,6 +1700,17 @@ impl App {
                 tool_name,
                 args,
             } => {
+                // Track parallel spawn_subagent count
+                if tool_name == "spawn_subagent" {
+                    let current_spawn_count = self
+                        .state
+                        .active_tools
+                        .iter()
+                        .filter(|t| t.name == "spawn_subagent" && !t.is_finished())
+                        .count();
+                    // +1 for the one we're about to add
+                    self.state.parallel_subagent_count = current_spawn_count + 1;
+                }
                 self.state.active_tools.push(ToolExecution {
                     id: tool_id,
                     name: tool_name,
@@ -1741,9 +1760,7 @@ impl App {
                         .get("question")
                         .and_then(|v| v.as_str())
                         .unwrap_or("question");
-                    let answer = output
-                        .strip_prefix("User answered: ")
-                        .unwrap_or(&output);
+                    let answer = output.strip_prefix("User answered: ").unwrap_or(&output);
                     (vec![format!("· {question} → {answer}")], false)
                 } else if is_todo_tool {
                     let summary = crate::formatters::todo_formatter::summarize_todo_result(
@@ -1766,51 +1783,168 @@ impl App {
                 };
 
                 // For spawn_subagent, extract stats from tracked subagent state
-                let subagent_stats = if tool_name == "spawn_subagent" {
+                // Match by task text from args to support parallel subagents
+                if tool_name == "spawn_subagent" {
+                    let task_text = arguments
+                        .get("task")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let task_short = if task_text.len() > 60 {
+                        format!("{}...", &task_text[..60])
+                    } else {
+                        task_text.clone()
+                    };
+
+                    // Find matching subagent by task text
                     let subagent_idx = self
                         .state
                         .active_subagents
                         .iter()
-                        .position(|_| true);
-                    if let Some(idx) = subagent_idx {
+                        .position(|s| s.task == task_text);
+                    let stats = if let Some(idx) = subagent_idx {
                         let subagent = self.state.active_subagents.remove(idx);
-                        Some((
+                        (
                             subagent.tool_call_count,
                             subagent.token_count,
                             subagent.started_at.elapsed(),
-                        ))
+                            subagent.success,
+                        )
                     } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // For spawn_subagent, show "Done (N tool uses · Xk tokens · Ym Zs)" summary
-                let (final_lines, final_collapsed) = if tool_name == "spawn_subagent" {
-                    let summary = if let Some((tool_count, token_count, elapsed)) = subagent_stats {
-                        let elapsed_secs = elapsed.as_secs();
-                        let elapsed_str = if elapsed_secs >= 60 {
-                            format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
-                        } else {
-                            format!("{elapsed_secs}s")
-                        };
-                        let token_str = if token_count > 0 {
-                            let k = token_count as f64 / 1000.0;
-                            format!(" \u{00b7} {k:.1}k tokens")
-                        } else {
-                            String::new()
-                        };
-                        format!("Done ({tool_count} tool uses{token_str} \u{00b7} {elapsed_str})")
-                    } else {
-                        "Done".to_string()
+                        (0, 0, std::time::Duration::ZERO, success)
                     };
-                    (vec![summary], false)
-                } else {
-                    (display_lines, collapsed)
-                };
 
-                if !final_lines.is_empty() {
+                    let is_parallel = self.state.parallel_subagent_count > 1;
+
+                    if is_parallel {
+                        // Buffer this result; emit grouped message when all are done
+                        self.state
+                            .pending_subagent_results
+                            .push((task_short, stats.0, stats.1, stats.2, stats.3));
+
+                        // Check if all parallel subagents have reported
+                        let remaining_spawn_tools = self
+                            .state
+                            .active_tools
+                            .iter()
+                            .filter(|t| t.name == "spawn_subagent" && !t.is_finished())
+                            .count();
+
+                        if remaining_spawn_tools <= 1 {
+                            // This is the last one — emit grouped message
+                            let results = std::mem::take(&mut self.state.pending_subagent_results);
+                            let count = results.len();
+                            let agent_name = arguments
+                                .get("agent_type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Explore");
+
+                            // Build nested_calls for each subagent result
+                            let nested: Vec<DisplayToolCall> = results
+                                .iter()
+                                .map(|(task, tool_count, token_count, elapsed, sa_success)| {
+                                    let elapsed_secs = elapsed.as_secs();
+                                    let elapsed_str = if elapsed_secs >= 60 {
+                                        format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
+                                    } else {
+                                        format!("{elapsed_secs}s")
+                                    };
+                                    let token_str = if *token_count > 0 {
+                                        let k = *token_count as f64 / 1000.0;
+                                        format!(" \u{00b7} {k:.1}k tokens")
+                                    } else {
+                                        String::new()
+                                    };
+                                    DisplayToolCall {
+                                        name: "spawn_subagent_child".into(),
+                                        arguments: {
+                                            let mut m = std::collections::HashMap::new();
+                                            m.insert(
+                                                "task".into(),
+                                                serde_json::Value::String(task.clone()),
+                                            );
+                                            m.insert(
+                                                "stats".into(),
+                                                serde_json::Value::String(format!(
+                                                    "{tool_count} tool uses{token_str} \u{00b7} {elapsed_str}"
+                                                )),
+                                            );
+                                            m
+                                        },
+                                        summary: Some("Done".into()),
+                                        success: *sa_success,
+                                        collapsed: false,
+                                        result_lines: vec!["Done".into()],
+                                        nested_calls: vec![],
+                                    }
+                                })
+                                .collect();
+
+                            self.state.messages.push(DisplayMessage {
+                                role: DisplayRole::Assistant,
+                                content: String::new(),
+                                tool_call: Some(DisplayToolCall {
+                                    name: "spawn_subagent_group".into(),
+                                    arguments: {
+                                        let mut m = std::collections::HashMap::new();
+                                        m.insert("count".into(), serde_json::json!(count));
+                                        m.insert(
+                                            "agent_type".into(),
+                                            serde_json::Value::String(agent_name.to_string()),
+                                        );
+                                        m
+                                    },
+                                    summary: None,
+                                    success: true,
+                                    collapsed: false,
+                                    result_lines: vec![],
+                                    nested_calls: nested,
+                                }),
+                                collapsed: false,
+                            });
+                            self.state.parallel_subagent_count = 0;
+                        }
+                    } else {
+                        // Single subagent: show inline summary as before
+                        let summary = {
+                            let elapsed_secs = stats.2.as_secs();
+                            let elapsed_str = if elapsed_secs >= 60 {
+                                format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
+                            } else {
+                                format!("{elapsed_secs}s")
+                            };
+                            let token_str = if stats.1 > 0 {
+                                let k = stats.1 as f64 / 1000.0;
+                                format!(" \u{00b7} {k:.1}k tokens")
+                            } else {
+                                String::new()
+                            };
+                            if stats.0 > 0 || stats.1 > 0 {
+                                format!(
+                                    "Done ({} tool uses{} \u{00b7} {})",
+                                    stats.0, token_str, elapsed_str
+                                )
+                            } else {
+                                "Done".to_string()
+                            }
+                        };
+                        self.state.messages.push(DisplayMessage {
+                            role: DisplayRole::Assistant,
+                            content: String::new(),
+                            tool_call: Some(DisplayToolCall {
+                                name: tool_name.clone(),
+                                arguments,
+                                summary: None,
+                                success,
+                                collapsed: false,
+                                result_lines: vec![summary],
+                                nested_calls: Vec::new(),
+                            }),
+                            collapsed: false,
+                        });
+                        self.state.parallel_subagent_count = 0;
+                    }
+                } else if !display_lines.is_empty() {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Assistant,
                         content: String::new(),
@@ -1819,8 +1953,8 @@ impl App {
                             arguments,
                             summary: None,
                             success,
-                            collapsed: final_collapsed,
-                            result_lines: final_lines,
+                            collapsed,
+                            result_lines: display_lines,
                             nested_calls: Vec::new(),
                         }),
                         collapsed: false,
@@ -2171,7 +2305,10 @@ impl App {
     /// Handle a key press event.
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
         // Only process key-press and repeat events (Kitty protocol also sends Release)
-        if !matches!(key.kind, crossterm::event::KeyEventKind::Press | crossterm::event::KeyEventKind::Repeat) {
+        if !matches!(
+            key.kind,
+            crossterm::event::KeyEventKind::Press | crossterm::event::KeyEventKind::Repeat
+        ) {
             return;
         }
 
@@ -2801,13 +2938,9 @@ impl App {
                         "Not enough messages to compact (need at least 5).".to_string(),
                     );
                 } else if self.state.compaction_active {
-                    self.push_system_message(
-                        "Compaction already in progress.".to_string(),
-                    );
+                    self.push_system_message("Compaction already in progress.".to_string());
                 } else if self.state.agent_active {
-                    self.push_system_message(
-                        "Cannot compact while agent is running.".to_string(),
-                    );
+                    self.push_system_message("Cannot compact while agent is running.".to_string());
                 } else {
                     // Send special sentinel to trigger compaction in the backend
                     if let Some(ref tx) = self.user_message_tx {
@@ -2893,9 +3026,10 @@ impl App {
             }
         }
         // Remove subagents that finished more than 3 seconds ago
+        // Use finished_at (not started_at) so long-running subagents aren't cleaned up immediately
         self.state
             .active_subagents
-            .retain(|s| !s.finished || s.elapsed_secs() < 3);
+            .retain(|s| !s.finished || s.finished_at.is_some_and(|t| t.elapsed().as_secs() < 3));
 
         // Update task progress elapsed time from wall clock
         if let Some(ref mut progress) = self.state.task_progress {

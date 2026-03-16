@@ -513,7 +513,8 @@ fn extract_modified_files(output: &str, cwd: &Path) -> Vec<std::path::PathBuf> {
     for line in output.lines() {
         let trimmed = line.trim();
         // Structured patch output: "A path", "M path", "R old -> new"
-        if let Some(path) = trimmed.strip_prefix("A ")
+        if let Some(path) = trimmed
+            .strip_prefix("A ")
             .or_else(|| trimmed.strip_prefix("M "))
         {
             files.push(cwd.join(path.trim()));

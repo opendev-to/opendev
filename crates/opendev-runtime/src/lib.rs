@@ -65,9 +65,7 @@ pub use gitignore::GitIgnoreParser;
 pub use lazy_init::{
     LazyEmbeddings, LazyLsp, LazyMcp, LazySubsystem, SyncLazy, create_lazy_subsystems,
 };
-pub use permissions::{
-    is_sensitive_file, PermissionAction, PermissionRule, PermissionRuleSet,
-};
+pub use permissions::{PermissionAction, PermissionRule, PermissionRuleSet, is_sensitive_file};
 pub use plan_approval::{
     PlanApprovalReceiver, PlanApprovalRequest, PlanApprovalSender, PlanDecision,
     plan_approval_channel,

@@ -301,8 +301,7 @@ impl SubAgentSpec {
                     && match rule {
                         PermissionRule::Action(PermissionAction::Deny) => true,
                         PermissionRule::Patterns(p) => {
-                            p.len() == 1
-                                && p.get("*") == Some(&PermissionAction::Deny)
+                            p.len() == 1 && p.get("*") == Some(&PermissionAction::Deny)
                         }
                         _ => false,
                     }
@@ -666,8 +665,7 @@ mod tests {
 
     #[test]
     fn test_agent_mode_serde() {
-        let spec = SubAgentSpec::new("test", "desc", "prompt")
-            .with_mode(AgentMode::Primary);
+        let spec = SubAgentSpec::new("test", "desc", "prompt").with_mode(AgentMode::Primary);
 
         let json = serde_json::to_string(&spec).unwrap();
         assert!(json.contains("\"primary\""));
@@ -770,7 +768,10 @@ mod tests {
     #[test]
     fn test_permission_rule_single_action() {
         let rule: PermissionRule = serde_json::from_str("\"deny\"").unwrap();
-        assert!(matches!(rule, PermissionRule::Action(PermissionAction::Deny)));
+        assert!(matches!(
+            rule,
+            PermissionRule::Action(PermissionAction::Deny)
+        ));
     }
 
     #[test]
@@ -790,10 +791,12 @@ mod tests {
     #[test]
     fn test_evaluate_permission_blanket_action() {
         let mut perms = HashMap::new();
-        perms.insert("bash".to_string(), PermissionRule::Action(PermissionAction::Deny));
+        perms.insert(
+            "bash".to_string(),
+            PermissionRule::Action(PermissionAction::Deny),
+        );
 
-        let spec = SubAgentSpec::new("test", "desc", "prompt")
-            .with_permission(perms);
+        let spec = SubAgentSpec::new("test", "desc", "prompt").with_permission(perms);
 
         assert_eq!(
             spec.evaluate_permission("bash", "anything"),
@@ -808,10 +811,12 @@ mod tests {
     #[test]
     fn test_evaluate_permission_wildcard_tool() {
         let mut perms = HashMap::new();
-        perms.insert("*".to_string(), PermissionRule::Action(PermissionAction::Ask));
+        perms.insert(
+            "*".to_string(),
+            PermissionRule::Action(PermissionAction::Ask),
+        );
 
-        let spec = SubAgentSpec::new("test", "desc", "prompt")
-            .with_permission(perms);
+        let spec = SubAgentSpec::new("test", "desc", "prompt").with_permission(perms);
 
         assert_eq!(
             spec.evaluate_permission("bash", "anything"),
@@ -833,8 +838,7 @@ mod tests {
         let mut perms = HashMap::new();
         perms.insert("bash".to_string(), PermissionRule::Patterns(patterns));
 
-        let spec = SubAgentSpec::new("test", "desc", "prompt")
-            .with_permission(perms);
+        let spec = SubAgentSpec::new("test", "desc", "prompt").with_permission(perms);
 
         assert_eq!(
             spec.evaluate_permission("bash", "git status"),
@@ -859,11 +863,16 @@ mod tests {
     #[test]
     fn test_disabled_tools_blanket_deny() {
         let mut perms = HashMap::new();
-        perms.insert("edit".to_string(), PermissionRule::Action(PermissionAction::Deny));
-        perms.insert("bash".to_string(), PermissionRule::Action(PermissionAction::Allow));
+        perms.insert(
+            "edit".to_string(),
+            PermissionRule::Action(PermissionAction::Deny),
+        );
+        perms.insert(
+            "bash".to_string(),
+            PermissionRule::Action(PermissionAction::Allow),
+        );
 
-        let spec = SubAgentSpec::new("test", "desc", "prompt")
-            .with_permission(perms);
+        let spec = SubAgentSpec::new("test", "desc", "prompt").with_permission(perms);
 
         let disabled = spec.disabled_tools(&["edit", "bash", "read_file"]);
         assert_eq!(disabled, vec!["edit"]);
@@ -879,11 +888,13 @@ mod tests {
         let mut perms = HashMap::new();
         perms.insert("bash".to_string(), PermissionRule::Patterns(patterns));
 
-        let spec = SubAgentSpec::new("test", "desc", "prompt")
-            .with_permission(perms);
+        let spec = SubAgentSpec::new("test", "desc", "prompt").with_permission(perms);
 
         let disabled = spec.disabled_tools(&["bash"]);
-        assert!(disabled.is_empty(), "Pattern-specific deny should not disable tool");
+        assert!(
+            disabled.is_empty(),
+            "Pattern-specific deny should not disable tool"
+        );
     }
 
     #[test]
@@ -911,10 +922,12 @@ mod tests {
 
         let mut perms = HashMap::new();
         perms.insert("bash".to_string(), PermissionRule::Patterns(patterns));
-        perms.insert("edit".to_string(), PermissionRule::Action(PermissionAction::Deny));
+        perms.insert(
+            "edit".to_string(),
+            PermissionRule::Action(PermissionAction::Deny),
+        );
 
-        let spec = SubAgentSpec::new("test", "desc", "prompt")
-            .with_permission(perms);
+        let spec = SubAgentSpec::new("test", "desc", "prompt").with_permission(perms);
 
         let json = serde_json::to_string(&spec).unwrap();
         let restored: SubAgentSpec = serde_json::from_str(&json).unwrap();

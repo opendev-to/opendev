@@ -156,10 +156,7 @@ pub enum AppEvent {
     /// Manual compaction started (shows compaction spinner).
     CompactionStarted,
     /// Manual compaction finished (hides compaction spinner, shows result).
-    CompactionFinished {
-        success: bool,
-        message: String,
-    },
+    CompactionFinished { success: bool, message: String },
 
     // -- Plan events --
     /// Plan approval request arrived from the PresentPlanTool.
@@ -699,10 +696,8 @@ impl RecordedEvent {
                 let tool_name = self.payload.get("tool_name")?.as_str()?.to_string();
                 let tool_id = self.payload.get("tool_id")?.as_str()?.to_string();
                 let args: std::collections::HashMap<String, serde_json::Value> =
-                    serde_json::from_value(
-                        self.payload.get("args").cloned().unwrap_or_default(),
-                    )
-                    .unwrap_or_default();
+                    serde_json::from_value(self.payload.get("args").cloned().unwrap_or_default())
+                        .unwrap_or_default();
                 Some(AppEvent::SubagentToolCall {
                     subagent_id,
                     subagent_name,

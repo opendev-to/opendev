@@ -152,7 +152,8 @@ impl BaseTool for FileListTool {
                             let matched = custom_ignores.iter().any(|pat| {
                                 // Support directory patterns (ending with /) and glob patterns.
                                 if let Some(dir) = pat.strip_suffix('/') {
-                                    rel_str.starts_with(dir) || rel_str.contains(&format!("/{dir}/"))
+                                    rel_str.starts_with(dir)
+                                        || rel_str.contains(&format!("/{dir}/"))
                                 } else if let Ok(glob) = glob::Pattern::new(pat) {
                                     glob.matches(&rel_str)
                                 } else {

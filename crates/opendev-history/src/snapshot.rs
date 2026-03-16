@@ -530,7 +530,11 @@ mod tests {
         let hash1 = mgr.track().unwrap();
 
         // Modify file — add 2 lines, remove 1
-        std::fs::write(tmp.path().join("test.txt"), "line1\nline2_modified\nline3\nnew_line4\nnew_line5\n").unwrap();
+        std::fs::write(
+            tmp.path().join("test.txt"),
+            "line1\nline2_modified\nline3\nnew_line4\nnew_line5\n",
+        )
+        .unwrap();
         let hash2 = mgr.track().unwrap();
 
         let stats = mgr.diff_numstat(&hash1, &hash2);
@@ -556,7 +560,11 @@ mod tests {
         let mut mgr = SnapshotManager::new(&project_dir);
         let hash1 = mgr.track().unwrap();
 
-        std::fs::write(tmp.path().join("hello.rs"), "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+        std::fs::write(
+            tmp.path().join("hello.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .unwrap();
         std::fs::write(tmp.path().join("new_file.txt"), "new content\n").unwrap();
         let hash2 = mgr.track().unwrap();
 
@@ -568,7 +576,10 @@ mod tests {
         assert!(hello_diff.before.contains("fn main()"));
         assert!(hello_diff.after.contains("println!"));
 
-        let new_diff = diffs.iter().find(|d| d.file_path == "new_file.txt").unwrap();
+        let new_diff = diffs
+            .iter()
+            .find(|d| d.file_path == "new_file.txt")
+            .unwrap();
         assert_eq!(new_diff.status, DiffStatus::Added);
         assert!(new_diff.before.is_empty());
         assert!(new_diff.after.contains("new content"));

@@ -202,6 +202,22 @@ static TOOL_REGISTRY: &[ToolDisplayEntry] = &[
         result_format: ResultFormat::Generic,
     },
     ToolDisplayEntry {
+        names: &["spawn_subagent_group"],
+        category: ToolCategory::Agent,
+        verb: "Explore",
+        label: "agents finished",
+        primary_arg_keys: &["count"],
+        result_format: ResultFormat::Generic,
+    },
+    ToolDisplayEntry {
+        names: &["spawn_subagent_child"],
+        category: ToolCategory::Agent,
+        verb: "Explore",
+        label: "subagent",
+        primary_arg_keys: &["task"],
+        result_format: ResultFormat::Generic,
+    },
+    ToolDisplayEntry {
         names: &["get_subagent_output"],
         category: ToolCategory::Agent,
         verb: "Get Output",
@@ -518,14 +534,16 @@ pub fn format_tool_call_parts_with_wd(
                 }
             })
             .unwrap_or_else(|| "Agent".to_string());
-        let task = extract_arg_from_keys(&["task"], args)
-            .unwrap_or_else(|| "working...".to_string());
+        let task =
+            extract_arg_from_keys(&["task"], args).unwrap_or_else(|| "working...".to_string());
         return (verb, task);
     }
 
     // Special case: search tools show "pattern" in path
     if matches!(tool_name, "search" | "Grep") {
-        let pattern = args.get("pattern").or_else(|| args.get("query"))
+        let pattern = args
+            .get("pattern")
+            .or_else(|| args.get("query"))
             .and_then(|v| v.as_str())
             .unwrap_or("...");
         let pattern_display = if pattern.len() > 40 {

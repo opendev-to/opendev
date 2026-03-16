@@ -363,13 +363,21 @@ impl BaseTool for SpawnSubagentTool {
                 "task": {
                     "type": "string",
                     "description": "Detailed task description for the subagent. \
-                                    Be specific about what the subagent should do, \
-                                    which files to look at, and what output is expected."
+                                    Be specific: which directories to explore, which patterns to search, \
+                                    what questions to answer. When spawning multiple agents in parallel, \
+                                    each task MUST be distinct — split by directory or question."
                 },
                 "task_id": {
                     "type": "string",
                     "description": "Resume a previous subagent session by its task_id. \
                                     If provided, the subagent continues from where it left off."
+                },
+                "working_dir": {
+                    "type": "string",
+                    "description": "Working directory for the subagent. Use this when the task \
+                                    targets a different directory than the current project \
+                                    (e.g., exploring another codebase at a specific path). \
+                                    The subagent's tools will resolve relative paths from this directory."
                 }
             },
             "required": ["agent_type", "task"]
@@ -408,9 +416,23 @@ impl BaseTool for SpawnSubagentTool {
             "spawn_subagent called"
         );
 
-        // Use working_dir from context if available, otherwise fall back to configured one
+        // Use explicit working_dir arg if provided, then context working_dir, then configured one
+        let explicit_wd = args
+            .get("working_dir")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let working_dir = ctx.working_dir.to_string_lossy().to_string();
-        let wd = if working_dir.is_empty() || working_dir == "." {
+        let wd = if let Some(ref ewd) = explicit_wd {
+            // Validate the explicit working dir exists
+            let p = std::path::Path::new(ewd);
+            if !p.is_dir() {
+                return ToolResult::fail(format!(
+                    "working_dir '{}' does not exist or is not a directory",
+                    ewd
+                ));
+            }
+            ewd
+        } else if working_dir.is_empty() || working_dir == "." {
             &self.working_dir
         } else {
             &working_dir
@@ -427,7 +449,10 @@ impl BaseTool for SpawnSubagentTool {
         // Create progress callback
         let progress: Arc<dyn opendev_agents::SubagentProgressCallback> =
             if let Some(ref tx) = self.event_tx {
-                Arc::new(ChannelProgressCallback::new(tx.clone(), subagent_id.clone()))
+                Arc::new(ChannelProgressCallback::new(
+                    tx.clone(),
+                    subagent_id.clone(),
+                ))
             } else {
                 Arc::new(opendev_agents::NoopProgressCallback)
             };
@@ -734,7 +759,12 @@ mod tests {
 
         use opendev_agents::SubagentProgressCallback;
         cb.on_started("test-agent", "do a thing");
-        cb.on_tool_call("test-agent", "read_file", "tc-1", &std::collections::HashMap::new());
+        cb.on_tool_call(
+            "test-agent",
+            "read_file",
+            "tc-1",
+            &std::collections::HashMap::new(),
+        );
         cb.on_tool_complete("test-agent", "read_file", "tc-1", true);
         // on_finished is intentionally a no-op (SpawnSubagentTool sends the real Finished event)
         cb.on_finished("test-agent", true, "Done");
@@ -832,6 +862,11 @@ mod tests {
 
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("cannot spawn other subagents"));
+        assert!(
+            result
+                .error
+                .unwrap()
+                .contains("cannot spawn other subagents")
+        );
     }
 }

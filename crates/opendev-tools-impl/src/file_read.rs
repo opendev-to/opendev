@@ -353,26 +353,18 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// Known binary file extensions (fast path to avoid reading content).
 const BINARY_EXTENSIONS: &[&str] = &[
     // Archives & compressed
-    "zip", "gz", "tar", "bz2", "xz", "7z", "rar", "zst", "lz4",
-    // Images
+    "zip", "gz", "tar", "bz2", "xz", "7z", "rar", "zst", "lz4", // Images
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tiff", "tif", "avif", "heic",
     // Audio/Video
     "mp3", "mp4", "wav", "ogg", "flac", "avi", "mkv", "mov", "webm",
     // Executables & libraries
-    "exe", "dll", "so", "dylib", "o", "a", "lib", "class",
-    // Compiled/bytecode
-    "pyc", "pyo", "wasm", "beam",
-    // Databases
-    "db", "sqlite", "sqlite3",
-    // Documents (binary)
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-    // Fonts
-    "ttf", "otf", "woff", "woff2", "eot",
-    // Other binary
-    "bin", "dat", "pak", "jar", "war", "egg",
-    // Serialized data
-    "pb", "protobuf", "flatbuf", "msgpack",
-    // Lock files (often large, not useful)
+    "exe", "dll", "so", "dylib", "o", "a", "lib", "class", // Compiled/bytecode
+    "pyc", "pyo", "wasm", "beam", // Databases
+    "db", "sqlite", "sqlite3", // Documents (binary)
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", // Fonts
+    "ttf", "otf", "woff", "woff2", "eot", // Other binary
+    "bin", "dat", "pak", "jar", "war", "egg", // Serialized data
+    "pb", "protobuf", "flatbuf", "msgpack", // Lock files (often large, not useful)
     "lock",
 ];
 
@@ -482,7 +474,10 @@ mod tests {
         let dir_path = dir.path().canonicalize().unwrap();
         let tool = FileReadTool;
         let ctx = ToolContext::new(&dir_path);
-        let args = make_args(&[("file_path", serde_json::json!(dir_path.join("nonexistent.txt").to_str().unwrap()))]);
+        let args = make_args(&[(
+            "file_path",
+            serde_json::json!(dir_path.join("nonexistent.txt").to_str().unwrap()),
+        )]);
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not found"));
@@ -652,8 +647,14 @@ mod tests {
         assert!(!result.success);
         let err = result.error.unwrap();
         assert!(err.contains("not found"));
-        assert!(err.contains("Did you mean"), "Should suggest similar files, got: {err}");
-        assert!(err.contains("file.rs"), "Should suggest file.rs for typo flie.rs, got: {err}");
+        assert!(
+            err.contains("Did you mean"),
+            "Should suggest similar files, got: {err}"
+        );
+        assert!(
+            err.contains("file.rs"),
+            "Should suggest file.rs for typo flie.rs, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -701,10 +702,16 @@ mod tests {
         assert!(result.success);
         let output = result.output.unwrap();
         // Should hint next offset
-        assert!(output.contains("offset=6"), "Should hint offset=6, got: {output}");
+        assert!(
+            output.contains("offset=6"),
+            "Should hint offset=6, got: {output}"
+        );
         assert!(output.contains("15 more lines below"));
         // Metadata should have next_offset
-        assert_eq!(result.metadata.get("next_offset"), Some(&serde_json::json!(6)));
+        assert_eq!(
+            result.metadata.get("next_offset"),
+            Some(&serde_json::json!(6))
+        );
     }
 
     #[tokio::test]
@@ -753,7 +760,10 @@ mod tests {
         assert!(output.len() <= FileReadTool::MAX_OUTPUT_BYTES + 200); // some margin for truncation message
         if content.len() > FileReadTool::MAX_OUTPUT_BYTES {
             assert!(output.contains("truncated"));
-            assert_eq!(result.metadata.get("truncated"), Some(&serde_json::json!(true)));
+            assert_eq!(
+                result.metadata.get("truncated"),
+                Some(&serde_json::json!(true))
+            );
         }
     }
 
@@ -840,9 +850,9 @@ mod tests {
 
     #[test]
     fn test_levenshtein_single_edit() {
-        assert_eq!(levenshtein("cat", "car"), 1);  // substitution
-        assert_eq!(levenshtein("cat", "cats"), 1);  // insertion
-        assert_eq!(levenshtein("cats", "cat"), 1);  // deletion
+        assert_eq!(levenshtein("cat", "car"), 1); // substitution
+        assert_eq!(levenshtein("cat", "cats"), 1); // insertion
+        assert_eq!(levenshtein("cats", "cat"), 1); // deletion
     }
 
     #[test]

@@ -241,10 +241,7 @@ struct CompiledPatterns {
 impl CompiledPatterns {
     fn new(patterns: &[&str]) -> Self {
         Self {
-            regexes: patterns
-                .iter()
-                .filter_map(|p| Regex::new(p).ok())
-                .collect(),
+            regexes: patterns.iter().filter_map(|p| Regex::new(p).ok()).collect(),
         }
     }
 
@@ -890,7 +887,10 @@ impl BaseTool for BashTool {
                 return ToolResult::fail(msg);
             }
             if !path.exists() {
-                return ToolResult::fail(format!("workdir path does not exist: {}", path.display()));
+                return ToolResult::fail(format!(
+                    "workdir path does not exist: {}",
+                    path.display()
+                ));
             }
             path
         } else {
@@ -1449,7 +1449,10 @@ mod tests {
         let ctx = ToolContext::new(&canonical);
         let args = make_args(&[
             ("command", serde_json::json!("echo hello")),
-            ("workdir", serde_json::json!(canonical.join("nonexistent").to_str().unwrap())),
+            (
+                "workdir",
+                serde_json::json!(canonical.join("nonexistent").to_str().unwrap()),
+            ),
         ]);
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);

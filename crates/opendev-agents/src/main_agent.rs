@@ -206,7 +206,10 @@ impl MainAgent {
     /// `"mcp__*"` matches all MCP tools. Exact names also work: `"read_file"`.
     ///
     /// Public variant for use by subagent runners.
-    pub fn build_schemas_pub(registry: &ToolRegistry, allowed_tools: Option<&[String]>) -> Vec<Value> {
+    pub fn build_schemas_pub(
+        registry: &ToolRegistry,
+        allowed_tools: Option<&[String]>,
+    ) -> Vec<Value> {
         Self::build_schemas(registry, allowed_tools)
     }
 

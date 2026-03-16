@@ -115,7 +115,11 @@ impl HttpClient {
                     if let Some(status) = hr.status
                         && self.retry_config.is_retryable_status(status)
                     {
-                        let delay = self.get_retry_delay(hr.retry_after.as_deref(), hr.retry_after_ms.as_deref(), attempt);
+                        let delay = self.get_retry_delay(
+                            hr.retry_after.as_deref(),
+                            hr.retry_after_ms.as_deref(),
+                            attempt,
+                        );
                         last_result = Some(hr);
                         if attempt < self.retry_config.max_retries {
                             warn!(
@@ -145,7 +149,11 @@ impl HttpClient {
                     let retry_after_ms = hr.retry_after_ms.clone();
                     last_result = Some(hr);
                     if attempt < self.retry_config.max_retries {
-                        let delay = self.get_retry_delay(retry_after.as_deref(), retry_after_ms.as_deref(), attempt);
+                        let delay = self.get_retry_delay(
+                            retry_after.as_deref(),
+                            retry_after_ms.as_deref(),
+                            attempt,
+                        );
                         warn!(
                             error = last_result.as_ref().and_then(|r| r.error.as_deref()),
                             attempt = attempt + 1,
@@ -249,9 +257,8 @@ impl HttpClient {
                         .and_then(|v| v.to_str().ok())
                         .map(String::from);
                     let body = resp.json::<serde_json::Value>().await.ok();
-                    let mut result =
-                        HttpResult::retryable_status(status, body, retry_after)
-                            .with_request_id(request_id);
+                    let mut result = HttpResult::retryable_status(status, body, retry_after)
+                        .with_request_id(request_id);
                     result.retry_after_ms = retry_after_ms;
                     return Ok(result);
                 }
@@ -302,9 +309,7 @@ impl HttpClient {
         retry_after_ms: Option<&str>,
         attempt: u32,
     ) -> Duration {
-        if let Some(parsed) =
-            crate::models::parse_retry_after(retry_after, retry_after_ms)
-        {
+        if let Some(parsed) = crate::models::parse_retry_after(retry_after, retry_after_ms) {
             // Cap server-requested delay at max_delay_ms
             let max = Duration::from_millis(self.retry_config.max_delay_ms);
             return parsed.min(max);

@@ -176,8 +176,7 @@ impl RetryConfig {
     /// if `initial_delay_ms` is 0.
     pub fn delay_for_attempt(&self, attempt: u32) -> std::time::Duration {
         if self.initial_delay_ms > 0 {
-            let delay_ms =
-                self.initial_delay_ms as f64 * self.backoff_factor.powi(attempt as i32);
+            let delay_ms = self.initial_delay_ms as f64 * self.backoff_factor.powi(attempt as i32);
             let capped_ms = delay_ms.min(self.max_delay_ms as f64) as u64;
             return std::time::Duration::from_millis(capped_ms);
         }
@@ -547,7 +546,8 @@ mod tests {
 
     #[test]
     fn test_extract_openai_error() {
-        let body = serde_json::json!({"error": {"message": "Invalid API key", "type": "auth_error"}});
+        let body =
+            serde_json::json!({"error": {"message": "Invalid API key", "type": "auth_error"}});
         assert_eq!(
             extract_error_message(&body),
             Some("Invalid API key".to_string())

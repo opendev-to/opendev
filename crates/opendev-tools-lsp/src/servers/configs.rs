@@ -179,15 +179,15 @@ pub fn default_server_configs() -> Vec<ServerConfig> {
             "clojure-lsp",
             vec![],
             "clojure",
-            vec!["clj".to_string(), "cljs".to_string(), "cljc".to_string(), "edn".to_string()],
+            vec![
+                "clj".to_string(),
+                "cljs".to_string(),
+                "cljc".to_string(),
+                "edn".to_string(),
+            ],
         ),
         // Nix
-        ServerConfig::new(
-            "nixd",
-            vec![],
-            "nix",
-            vec!["nix".to_string()],
-        ),
+        ServerConfig::new("nixd", vec![], "nix", vec!["nix".to_string()]),
         // LaTeX
         ServerConfig::new(
             "texlab",
@@ -235,12 +235,7 @@ pub fn default_server_configs() -> Vec<ServerConfig> {
             vec![], // No default extensions — activated by deno.json presence
         ),
         // Typst
-        ServerConfig::new(
-            "tinymist",
-            vec![],
-            "typst",
-            vec!["typ".to_string()],
-        ),
+        ServerConfig::new("tinymist", vec![], "typst", vec!["typ".to_string()]),
     ]
 }
 

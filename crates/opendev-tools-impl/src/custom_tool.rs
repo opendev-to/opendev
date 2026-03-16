@@ -348,7 +348,11 @@ mod tests {
         std::fs::write(dir2.join("dup.tool.json"), manifest).unwrap();
 
         let tools = discover_custom_tools(tmp.path());
-        assert_eq!(tools.len(), 1, "Duplicate tool names should be deduplicated");
+        assert_eq!(
+            tools.len(),
+            1,
+            "Duplicate tool names should be deduplicated"
+        );
     }
 
     #[test]
@@ -377,10 +381,7 @@ mod tests {
             timeout_secs: 30,
         };
         let tool = CustomTool::new(manifest, PathBuf::from("/project/.opendev/tools"));
-        assert_eq!(
-            tool.resolve_command(),
-            PathBuf::from("/usr/bin/my-tool")
-        );
+        assert_eq!(tool.resolve_command(), PathBuf::from("/usr/bin/my-tool"));
     }
 
     #[tokio::test]
@@ -410,8 +411,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
-                .unwrap();
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let manifest = CustomToolManifest {
@@ -437,8 +437,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
-                .unwrap();
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
         let manifest = CustomToolManifest {

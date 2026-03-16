@@ -27,7 +27,8 @@ pub use formatters::style_tokens::{
 };
 pub use formatters::{
     ToolCategory, categorize_tool, format_error, format_info, format_tool_call_display,
-    format_tool_call_parts, format_tool_call_parts_with_wd, format_warning, strip_system_reminders, tool_color, truncate_output,
+    format_tool_call_parts, format_tool_call_parts_with_wd, format_warning, strip_system_reminders,
+    tool_color, truncate_output,
 };
 pub use widgets::{
     NestedToolWidget, SpinnerState, SubagentDisplayState, TaskProgress, ThinkingBlock,

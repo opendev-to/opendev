@@ -76,7 +76,11 @@ fn parse_frontmatter(content: &str) -> (HashMap<String, String>, String) {
             }
             if let Some((key, value)) = line.split_once(':') {
                 let key = key.trim().to_string();
-                let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+                let value = value
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 map.insert(key, value);
             }
         }
@@ -96,11 +100,7 @@ fn expand_shell_commands(content: &str) -> String {
     let re = Regex::new(r"!`([^`]+)`").expect("valid regex");
     re.replace_all(content, |caps: &regex::Captures| {
         let cmd = &caps[1];
-        match std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .output()
-        {
+        match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
             Ok(output) if output.status.success() => {
                 String::from_utf8_lossy(&output.stdout).trim().to_string()
             }
@@ -238,17 +238,13 @@ impl CustomCommandLoader {
                                         .lines()
                                         .next()
                                         .filter(|line| line.starts_with('#'))
-                                        .map(|line| {
-                                            line.trim_start_matches('#').trim().to_string()
-                                        })
+                                        .map(|line| line.trim_start_matches('#').trim().to_string())
                                 })
                                 .unwrap_or_default();
 
                             let model = frontmatter.get("model").cloned();
                             let agent = frontmatter.get("agent").cloned();
-                            let subtask = frontmatter
-                                .get("subtask")
-                                .is_some_and(|v| v == "true");
+                            let subtask = frontmatter.get("subtask").is_some_and(|v| v == "true");
 
                             let file_name =
                                 path.file_name().and_then(|n| n.to_str()).unwrap_or(&stem);
@@ -604,7 +600,11 @@ mod tests {
         let claude_dir = tmp.path().join(".claude").join("commands");
         fs::create_dir_all(&opendev_dir).unwrap();
         fs::create_dir_all(&claude_dir).unwrap();
-        fs::write(opendev_dir.join("review.md"), "# OpenDev review\nFrom opendev").unwrap();
+        fs::write(
+            opendev_dir.join("review.md"),
+            "# OpenDev review\nFrom opendev",
+        )
+        .unwrap();
         fs::write(claude_dir.join("review.md"), "# Claude review\nFrom claude").unwrap();
 
         let mut loader = CustomCommandLoader::new(tmp.path());

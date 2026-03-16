@@ -623,11 +623,7 @@ fn pull_url_skills(base_url: &str) -> Result<Vec<PathBuf>, String> {
                 .map(|entries| {
                     entries
                         .filter_map(|e| e.ok())
-                        .any(|e| {
-                            e.path()
-                                .extension()
-                                .is_some_and(|ext| ext == "md")
-                        })
+                        .any(|e| e.path().extension().is_some_and(|ext| ext == "md"))
                 })
                 .unwrap_or(false)
         {
@@ -1205,7 +1201,11 @@ mod tests {
 
         // Create 15 companion files — should be capped at MAX_COMPANION_FILES (10).
         for i in 0..15 {
-            fs::write(sub_dir.join(format!("file_{i}.txt")), format!("content {i}")).unwrap();
+            fs::write(
+                sub_dir.join(format!("file_{i}.txt")),
+                format!("content {i}"),
+            )
+            .unwrap();
         }
 
         let mut loader = SkillLoader::new(vec![skill_dir]);
@@ -1265,8 +1265,7 @@ mod tests {
 
     #[test]
     fn test_parse_frontmatter_with_model() {
-        let content =
-            "---\nname: fast-review\ndescription: Quick review\nmodel: gpt-4o-mini\n---\n\n# Review\n";
+        let content = "---\nname: fast-review\ndescription: Quick review\nmodel: gpt-4o-mini\n---\n\n# Review\n";
         let meta = parse_frontmatter_str(content).unwrap();
         assert_eq!(meta.name, "fast-review");
         assert_eq!(meta.model.as_deref(), Some("gpt-4o-mini"));
@@ -1467,9 +1466,7 @@ mod tests {
     fn test_pull_url_skills_invalid_url() {
         let result = pull_url_skills("https://192.0.2.1/nonexistent");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("curl failed"));
+        assert!(result.unwrap_err().contains("curl failed"));
     }
 
     #[test]
@@ -1504,7 +1501,8 @@ mod tests {
         std::fs::write(
             local_dir.join("test-skill.md"),
             "---\nname: test-skill\ndescription: Local version\n---\n\nLocal content.",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Create a "URL-cached" skill with the same name
         let url_dir = tmp.path().join("url-skills");
@@ -1512,7 +1510,8 @@ mod tests {
         std::fs::write(
             url_dir.join("test-skill.md"),
             "---\nname: test-skill\ndescription: URL version\n---\n\nURL content.",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Local dir has higher priority (listed first), URL dir is lower
         let mut loader = SkillLoader::new(vec![local_dir]);
