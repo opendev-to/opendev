@@ -40,7 +40,10 @@ impl RecordedEvent {
             AppEvent::Tick => ("Tick".to_string(), serde_json::Value::Null),
             AppEvent::AgentStarted => ("AgentStarted".to_string(), serde_json::Value::Null),
             AppEvent::AgentChunk(s) => ("AgentChunk".to_string(), serde_json::json!({"chunk": s})),
-            AppEvent::ReasoningContent(s) => ("ReasoningContent".to_string(), serde_json::json!({"content": s})),
+            AppEvent::ReasoningContent(s) => (
+                "ReasoningContent".to_string(),
+                serde_json::json!({"content": s}),
+            ),
             AppEvent::AgentMessage(msg) => (
                 "AgentMessage".to_string(),
                 serde_json::to_value(msg).unwrap_or(serde_json::Value::Null),

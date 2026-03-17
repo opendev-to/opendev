@@ -1,10 +1,12 @@
-//! Railway/clack-style rendering primitives for the setup wizard.
+//! Setup wizard UI primitives.
 //!
-//! Mirrors `opendev/setup/wizard_ui.py`.
+//! Clean terminal UI with section headers and minimal chrome.
 
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
-use crossterm::terminal;
+use crossterm::terminal::{self, Clear, ClearType};
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // ── Colors ─────────────────────────────────────────────────────────────────
 
@@ -13,219 +15,129 @@ const ACCENT: Color = Color::Rgb {
     g: 160,
     b: 255,
 };
+const DIM_COLOR: Color = Color::Rgb {
+    r: 100,
+    g: 110,
+    b: 120,
+};
 const SUCCESS_COLOR: Color = Color::Rgb {
     r: 106,
     g: 209,
     b: 143,
-}; // #6ad18f
+};
 const ERROR_COLOR: Color = Color::Rgb {
     r: 255,
     g: 92,
     b: 87,
-}; // #ff5c57
-const WARNING_COLOR: Color = Color::Rgb {
-    r: 255,
-    g: 179,
-    b: 71,
-}; // #ffb347
-const DIM: Color = Color::Rgb {
-    r: 122,
-    g: 134,
-    b: 145,
-}; // #7a8691
-
-// ── Rail characters ────────────────────────────────────────────────────────
-
-const RAIL_START: char = '┌';
-const RAIL_BAR: char = '│';
-const RAIL_END: char = '└';
-const RAIL_STEP: char = '◇';
-const RAIL_TEE: char = '├';
-const RAIL_DASH: char = '─';
-const RAIL_BOX_TR: char = '╮';
-const RAIL_BOX_BR: char = '╯';
+};
+const TITLE_COLOR: Color = Color::Rgb {
+    r: 0,
+    g: 200,
+    b: 200,
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-/// Print the rail bar character in accent color.
-fn print_accent_char(w: &mut impl Write, ch: char) -> io::Result<()> {
-    crossterm::execute!(w, SetForegroundColor(ACCENT), Print(ch), ResetColor)
-}
-
-/// Print a string in accent color.
-fn print_accent(w: &mut impl Write, s: &str) -> io::Result<()> {
-    crossterm::execute!(w, SetForegroundColor(ACCENT), Print(s), ResetColor)
-}
-
-fn dashes(n: usize) -> String {
-    RAIL_DASH.to_string().repeat(n)
-}
 
 fn term_width() -> usize {
     terminal::size().map(|(w, _)| w as usize).unwrap_or(80)
 }
 
+fn thin_line(w: &mut impl Write) {
+    let width = term_width().min(56);
+    let line: String = "─".repeat(width);
+    let _ = crossterm::execute!(
+        w,
+        Print("  "),
+        SetForegroundColor(DIM_COLOR),
+        Print(&line),
+        ResetColor
+    );
+    let _ = writeln!(w);
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
-/// Render the opening block of the wizard.
-pub fn rail_intro(title: &str, lines: &[&str]) {
+/// Opening banner.
+pub fn rail_intro() {
     let mut w = io::stdout();
     let _ = writeln!(w);
-    // ┌  Title
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_START);
+    thin_line(&mut w);
+    let _ = writeln!(w);
     let _ = crossterm::execute!(
         w,
         Print("  "),
+        SetForegroundColor(TITLE_COLOR),
         SetAttribute(Attribute::Bold),
-        Print(title),
-        SetAttribute(Attribute::Reset)
-    );
-    let _ = writeln!(w);
-    // │
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = writeln!(w);
-    // │  line
-    for line in lines {
-        let _ = write!(w, "  ");
-        let _ = print_accent_char(&mut w, RAIL_BAR);
-        let _ = writeln!(w, "  {line}");
-    }
-    // │
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = writeln!(w);
-}
-
-/// Render the closing block of the wizard.
-pub fn rail_outro(message: &str) {
-    let mut w = io::stdout();
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_END);
-    let _ = crossterm::execute!(
-        w,
-        Print("  "),
-        SetAttribute(Attribute::Bold),
-        Print(message),
-        SetAttribute(Attribute::Reset)
-    );
-    let _ = writeln!(w);
-    let _ = writeln!(w);
-}
-
-/// Render a step heading with a diamond marker.
-pub fn rail_step(title: &str, step_label: Option<&str>) {
-    let mut w = io::stdout();
-    let _ = writeln!(w);
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_STEP);
-    let _ = crossterm::execute!(
-        w,
-        Print("  "),
-        SetAttribute(Attribute::Bold),
-        Print(title),
-        SetAttribute(Attribute::Reset)
-    );
-    if let Some(label) = step_label {
-        let _ = crossterm::execute!(
-            w,
-            SetForegroundColor(DIM),
-            Print(format!(" {}{} Step {}", RAIL_DASH, RAIL_DASH, label)),
-            ResetColor
-        );
-    }
-    let _ = writeln!(w);
-}
-
-/// Render an info box attached to the rail.
-pub fn rail_info_box(title: &str, lines: &[String], step_label: Option<&str>) {
-    let mut w = io::stdout();
-
-    let label = match step_label {
-        Some(l) => format!(" {}{} Step {}", RAIL_DASH, RAIL_DASH, l),
-        None => String::new(),
-    };
-    let header_text = format!("{title}{label}");
-
-    let max_line_len = lines.iter().map(|l| l.len()).max().unwrap_or(0);
-    let total_w = max_line_len
-        .max(header_text.len() + 8)
-        .max(52)
-        .min(term_width().saturating_sub(4));
-
-    // Top: ◇  Title ──────╮
-    let top_dashes_count = total_w.saturating_sub(header_text.len() + 7).max(1);
-    let _ = writeln!(w);
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_STEP);
-    let _ = crossterm::execute!(
-        w,
-        Print("  "),
-        SetAttribute(Attribute::Bold),
-        Print(&header_text),
+        Print("OpenDev"),
         SetAttribute(Attribute::Reset),
-        Print(" ")
-    );
-    let _ = print_accent(
-        &mut w,
-        &format!("{}{}", dashes(top_dashes_count), RAIL_BOX_TR),
-    );
-    let _ = writeln!(w);
-
-    // Empty line
-    let inner_spaces = " ".repeat(total_w.saturating_sub(5));
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = write!(w, "{inner_spaces} ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = writeln!(w);
-
-    // Content lines
-    for line in lines {
-        let pad = " ".repeat(total_w.saturating_sub(line.len() + 7).max(1));
-        let _ = write!(w, "  ");
-        let _ = print_accent_char(&mut w, RAIL_BAR);
-        let _ = write!(w, "  {line}{pad} ");
-        let _ = print_accent_char(&mut w, RAIL_BAR);
-        let _ = writeln!(w);
-    }
-
-    // Empty line
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = write!(w, "{inner_spaces} ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = writeln!(w);
-
-    // Bottom: ├──────────╯
-    let bottom_dashes_count = total_w.saturating_sub(4);
-    let _ = write!(w, "  ");
-    let _ = print_accent(
-        &mut w,
-        &format!("{}{}{}", RAIL_TEE, dashes(bottom_dashes_count), RAIL_BOX_BR),
+        ResetColor,
+        SetForegroundColor(DIM_COLOR),
+        Print("  First-time setup"),
+        ResetColor
     );
     let _ = writeln!(w);
-
-    // │
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
     let _ = writeln!(w);
 }
 
-/// Render the selected answer below a step.
+/// Section header — visual break between wizard phases.
+pub fn rail_section(title: &str) {
+    let mut w = io::stdout();
+    thin_line(&mut w);
+    let _ = crossterm::execute!(
+        w,
+        Print("  "),
+        SetForegroundColor(ACCENT),
+        SetAttribute(Attribute::Bold),
+        Print(title),
+        SetAttribute(Attribute::Reset),
+        ResetColor
+    );
+    let _ = writeln!(w);
+    let _ = writeln!(w);
+}
+
+/// Label for a field/step — name + description on one line.
+pub fn rail_label(name: &str, description: &str) {
+    let mut w = io::stdout();
+    let _ = crossterm::execute!(
+        w,
+        Print("  "),
+        SetAttribute(Attribute::Bold),
+        Print(name),
+        SetAttribute(Attribute::Reset),
+        SetForegroundColor(DIM_COLOR),
+        Print(format!("  {description}")),
+        ResetColor
+    );
+    let _ = writeln!(w);
+}
+
+/// Closing banner.
+pub fn rail_outro() {
+    let mut w = io::stdout();
+    let _ = writeln!(w);
+    thin_line(&mut w);
+    let _ = writeln!(w);
+}
+
+/// Show a selected answer.
 pub fn rail_answer(value: &str) {
     let mut w = io::stdout();
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = writeln!(w, "  {value}");
+    let _ = crossterm::execute!(
+        w,
+        Print("  "),
+        SetForegroundColor(ACCENT),
+        Print("→ "),
+        ResetColor,
+        Print(value)
+    );
+    let _ = writeln!(w);
+    let _ = writeln!(w);
 }
 
-/// Render a success message on the rail.
+/// Success message.
 pub fn rail_success(message: &str) {
     let mut w = io::stdout();
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
     let _ = crossterm::execute!(
         w,
         Print("  "),
@@ -236,65 +148,48 @@ pub fn rail_success(message: &str) {
     let _ = writeln!(w);
 }
 
-/// Render an error message on the rail.
+/// Error message.
 pub fn rail_error(message: &str) {
     let mut w = io::stdout();
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
     let _ = crossterm::execute!(
         w,
         Print("  "),
         SetForegroundColor(ERROR_COLOR),
-        Print(format!("✖ {message}")),
+        Print(format!("✗ {message}")),
         ResetColor
     );
     let _ = writeln!(w);
 }
 
-/// Render a warning message on the rail.
-pub fn rail_warning(message: &str) {
+/// Dimmed/muted text.
+pub fn rail_dim(message: &str) {
     let mut w = io::stdout();
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
     let _ = crossterm::execute!(
         w,
         Print("  "),
-        SetForegroundColor(WARNING_COLOR),
-        Print(format!("⚠ {message}")),
+        SetForegroundColor(DIM_COLOR),
+        Print(message),
         ResetColor
     );
     let _ = writeln!(w);
 }
 
-/// Render a blank rail line.
-pub fn rail_separator() {
-    let mut w = io::stdout();
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = writeln!(w);
-}
-
-/// Y/n prompt on the rail. Returns bool.
+/// Y/n confirm prompt. Returns bool.
 pub fn rail_confirm(prompt_text: &str, default: bool) -> io::Result<bool> {
     let mut w = io::stdout();
-    let hint = if default { "(Y/n)" } else { "(y/N)" };
+    let hint = if default { "Y/n" } else { "y/N" };
 
-    let _ = writeln!(w);
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_STEP);
     let _ = crossterm::execute!(
         w,
         Print("  "),
-        SetAttribute(Attribute::Bold),
+        SetForegroundColor(ACCENT),
+        Print("? "),
+        ResetColor,
         Print(prompt_text),
-        SetAttribute(Attribute::Reset),
-        Print(format!(" {hint}"))
+        SetForegroundColor(DIM_COLOR),
+        Print(format!(" ({hint}) ")),
+        ResetColor
     );
-    let _ = writeln!(w);
-
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_BAR);
-    let _ = write!(w, "  > ");
     w.flush()?;
 
     let mut buf = String::new();
@@ -307,33 +202,24 @@ pub fn rail_confirm(prompt_text: &str, default: bool) -> io::Result<bool> {
     Ok(answer.starts_with('y'))
 }
 
-/// Text input on the rail. Password mode reads char-by-char with `*` echo.
+/// Text input prompt. Password mode reads char-by-char with `*` echo.
 pub fn rail_prompt(prompt_text: &str, password: bool) -> io::Result<String> {
     let mut w = io::stdout();
 
-    let _ = writeln!(w);
-    let _ = write!(w, "  ");
-    let _ = print_accent_char(&mut w, RAIL_STEP);
     let _ = crossterm::execute!(
         w,
         Print("  "),
-        SetAttribute(Attribute::Bold),
+        SetForegroundColor(ACCENT),
+        Print("? "),
+        ResetColor,
         Print(prompt_text),
-        SetAttribute(Attribute::Reset)
+        Print(" ")
     );
-    let _ = writeln!(w);
+    w.flush()?;
 
     if password {
-        let _ = write!(w, "  ");
-        let _ = print_accent_char(&mut w, RAIL_BAR);
-        let _ = write!(w, "  > ");
-        w.flush()?;
         read_password()
     } else {
-        let _ = write!(w, "  ");
-        let _ = print_accent_char(&mut w, RAIL_BAR);
-        let _ = write!(w, "  > ");
-        w.flush()?;
         let mut buf = String::new();
         io::stdin().read_line(&mut buf)?;
         Ok(buf.trim().to_string())
@@ -383,15 +269,119 @@ fn read_password() -> io::Result<String> {
     }
 }
 
-/// Render a summary table in info-box style.
-pub fn rail_summary_box(title: &str, rows: &[(&str, &str)], extra_lines: Option<&[String]>) {
-    let mut content_lines: Vec<String> = Vec::new();
+/// Start a spinner with a message. Returns a handle to stop it.
+pub fn rail_spinner_start(message: &str) -> SpinnerHandle {
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+    let msg = message.to_string();
+
+    let handle = std::thread::spawn(move || {
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let mut i = 0;
+        let mut stdout = io::stdout();
+
+        while running_clone.load(Ordering::Relaxed) {
+            let frame = frames[i % frames.len()];
+            let _ = crossterm::execute!(
+                stdout,
+                Print("\r"),
+                Clear(ClearType::CurrentLine),
+                Print("  "),
+                SetForegroundColor(ACCENT),
+                Print(frame),
+                ResetColor,
+                Print(format!(" {msg}"))
+            );
+            let _ = stdout.flush();
+            i += 1;
+            std::thread::sleep(std::time::Duration::from_millis(80));
+        }
+
+        let _ = crossterm::execute!(stdout, Print("\r"), Clear(ClearType::CurrentLine));
+        let _ = stdout.flush();
+    });
+
+    SpinnerHandle {
+        running,
+        thread: Some(handle),
+    }
+}
+
+/// Handle returned by `rail_spinner_start` to stop the spinner.
+pub struct SpinnerHandle {
+    running: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SpinnerHandle {
+    /// Stop the spinner and clear its line.
+    pub fn stop(mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+impl Drop for SpinnerHandle {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// Summary box before saving.
+pub fn rail_summary_box(rows: &[(&str, &str)], key_lines: &[String]) {
+    let mut w = io::stdout();
+    let _ = writeln!(w);
+    thin_line(&mut w);
+    let _ = crossterm::execute!(
+        w,
+        Print("  "),
+        SetAttribute(Attribute::Bold),
+        Print("Configuration"),
+        SetAttribute(Attribute::Reset)
+    );
+    let _ = writeln!(w);
+    let _ = writeln!(w);
+
     for (label, value) in rows {
-        content_lines.push(format!("{:<12}{}", label, value));
+        let _ = crossterm::execute!(
+            w,
+            Print("    "),
+            SetForegroundColor(DIM_COLOR),
+            Print(format!("{:<10}", label)),
+            ResetColor,
+            Print(*value)
+        );
+        let _ = writeln!(w);
     }
-    if let Some(extras) = extra_lines {
-        content_lines.push(String::new());
-        content_lines.extend(extras.iter().cloned());
+
+    if !key_lines.is_empty() {
+        let _ = writeln!(w);
+        let _ = crossterm::execute!(
+            w,
+            Print("    "),
+            SetForegroundColor(DIM_COLOR),
+            Print("API Keys"),
+            ResetColor
+        );
+        let _ = writeln!(w);
+        for line in key_lines {
+            let _ = crossterm::execute!(
+                w,
+                Print("    "),
+                SetForegroundColor(DIM_COLOR),
+                Print(line),
+                ResetColor
+            );
+            let _ = writeln!(w);
+        }
     }
-    rail_info_box(title, &content_lines, None);
+
+    let _ = writeln!(w);
+    thin_line(&mut w);
+    let _ = writeln!(w);
 }

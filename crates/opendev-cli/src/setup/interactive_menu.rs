@@ -1,6 +1,4 @@
 //! Interactive menu component with arrow-key navigation for the setup wizard.
-//!
-//! Mirrors `opendev/setup/interactive_menu.py`.
 
 use crossterm::cursor::{Hide, MoveUp, Show};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -19,17 +17,16 @@ const ACCENT: Color = Color::Rgb {
     g: 160,
     b: 255,
 };
-const BLUE_BG_ACTIVE: Color = Color::Rgb {
+const SELECTED_BG: Color = Color::Rgb {
     r: 31,
     g: 45,
     b: 58,
 };
-const MENU_HINT: Color = Color::Rgb {
-    r: 122,
-    g: 134,
-    b: 145,
+const DIM: Color = Color::Rgb {
+    r: 100,
+    g: 110,
+    b: 120,
 };
-const RAIL_BAR: char = '│';
 
 // ── RawModeGuard ───────────────────────────────────────────────────────────
 
@@ -200,13 +197,10 @@ impl InteractiveMenu {
     fn show_numbered_fallback(&self) -> Result<Option<String>, SetupError> {
         let mut stdout = io::stdout();
         for (i, (id, name, desc)) in self.all_items.iter().enumerate() {
-            self.write_rail_bar(&mut stdout)?;
-            let _ = writeln!(stdout, "  {}. {} — {} ({})", i + 1, name, desc, id);
+            let _ = writeln!(stdout, "    {}. {} — {} ({})", i + 1, name, desc, id);
         }
-        self.write_rail_bar(&mut stdout)?;
         let _ = writeln!(stdout);
-        self.write_rail_bar(&mut stdout)?;
-        let _ = write!(stdout, "  Enter number: ");
+        let _ = write!(stdout, "    Enter number: ");
         stdout.flush()?;
 
         let mut buf = String::new();
@@ -247,34 +241,29 @@ impl InteractiveMenu {
 
         // Search header
         if self.search_mode {
-            self.write_rail_bar(w)?;
             let _ = crossterm::execute!(
                 w,
                 Print("  "),
                 SetForegroundColor(Color::Yellow),
-                SetAttribute(Attribute::Bold),
-                Print("Search: "),
-                SetAttribute(Attribute::Reset),
-                SetForegroundColor(Color::Yellow),
+                Print("/ "),
                 Print(&self.search_query),
                 Print("_"),
                 ResetColor
             );
-            let _ = writeln!(w);
+            let _ = write!(w, "\r\n");
             line_count += 1;
         }
 
         let total = self.filtered_items.len();
         if total == 0 {
-            self.write_rail_bar(w)?;
             let _ = crossterm::execute!(
                 w,
-                Print("  "),
-                SetForegroundColor(MENU_HINT),
-                Print("No matches found"),
+                Print("    "),
+                SetForegroundColor(DIM),
+                Print("No matches"),
                 ResetColor
             );
-            let _ = writeln!(w);
+            let _ = write!(w, "\r\n");
             line_count += 1;
         } else {
             let half_window = self.window_size / 2;
@@ -287,15 +276,14 @@ impl InteractiveMenu {
 
             // "... (N more above)"
             if start > 0 {
-                self.write_rail_bar(w)?;
                 let _ = crossterm::execute!(
                     w,
-                    Print("  "),
-                    SetForegroundColor(MENU_HINT),
-                    Print(format!("... ({start} more above)")),
+                    Print("    "),
+                    SetForegroundColor(DIM),
+                    Print(format!("  {start} more above")),
                     ResetColor
                 );
-                let _ = writeln!(w);
+                let _ = write!(w, "\r\n");
                 line_count += 1;
             }
 
@@ -304,36 +292,32 @@ impl InteractiveMenu {
                 let (_id, name, description) = &self.filtered_items[i];
                 let is_selected = i == self.selected_index;
 
-                let mut desc_display = description.clone();
-                if desc_display.len() > 42 {
-                    desc_display.truncate(39);
-                    desc_display.push_str("...");
-                }
-
-                self.write_rail_bar(w)?;
+                let desc_display = if description.chars().count() > 42 {
+                    let truncated: String = description.chars().take(39).collect();
+                    format!("{truncated}...")
+                } else {
+                    description.clone()
+                };
 
                 if is_selected {
-                    // Calculate padding to fill row so background doesn't bleed
-                    let name_field = format!("{:<24}", name);
-                    let content_len = 2 + 2 + name_field.len() + desc_display.len(); // "❯ " + name + desc
-                    let rail_prefix = 5; // "  │  " = 5 chars
-                    let remaining = self.term_width.saturating_sub(content_len + rail_prefix);
-                    let pad = " ".repeat(remaining);
+                    let name_field = format!("{:<22}", name);
+                    let content = format!("  > {name_field} {desc_display}");
+                    let pad_len = self.term_width.saturating_sub(content.len());
+                    let pad = " ".repeat(pad_len);
 
                     let _ = crossterm::execute!(
                         w,
+                        SetBackgroundColor(SELECTED_BG),
                         Print("  "),
-                        SetForegroundColor(Color::Cyan),
+                        SetForegroundColor(ACCENT),
                         SetAttribute(Attribute::Bold),
-                        Print("❯ "),
-                        SetAttribute(Attribute::Reset),
-                        SetBackgroundColor(BLUE_BG_ACTIVE),
+                        Print("> "),
                         SetForegroundColor(Color::White),
-                        SetAttribute(Attribute::Bold),
                         Print(&name_field),
                         SetAttribute(Attribute::Reset),
-                        SetBackgroundColor(BLUE_BG_ACTIVE),
-                        SetForegroundColor(MENU_HINT),
+                        SetBackgroundColor(SELECTED_BG),
+                        SetForegroundColor(DIM),
+                        Print(" "),
                         Print(&desc_display),
                         Print(&pad),
                         ResetColor
@@ -343,80 +327,55 @@ impl InteractiveMenu {
                         w,
                         Print("    "),
                         SetForegroundColor(Color::White),
-                        Print(format!("{:<24}", name)),
+                        Print(format!("{:<22}", name)),
                         ResetColor,
-                        SetForegroundColor(MENU_HINT),
+                        SetForegroundColor(DIM),
+                        Print(" "),
                         Print(&desc_display),
                         ResetColor
                     );
                 }
-                let _ = writeln!(w);
+                let _ = write!(w, "\r\n");
                 line_count += 1;
             }
 
             // "... (N more below)"
             if end < total {
-                self.write_rail_bar(w)?;
                 let _ = crossterm::execute!(
                     w,
-                    Print("  "),
-                    SetForegroundColor(MENU_HINT),
-                    Print(format!("... ({} more below)", total - end)),
+                    Print("    "),
+                    SetForegroundColor(DIM),
+                    Print(format!("  {} more below", total - end)),
                     ResetColor
                 );
-                let _ = writeln!(w);
+                let _ = write!(w, "\r\n");
                 line_count += 1;
             }
         }
 
         // Footer
-        let is_large = self.all_items.len() > self.window_size;
-        if is_large || self.search_mode {
-            self.write_rail_bar(w)?;
-            let _ = writeln!(w);
-            line_count += 1;
+        let _ = write!(w, "\r\n");
+        line_count += 1;
 
-            self.write_rail_bar(w)?;
-            let _ = crossterm::execute!(w, Print("  "), SetForegroundColor(MENU_HINT));
-            if self.search_mode {
-                let _ = crossterm::execute!(
-                    w,
-                    Print(format!(
-                        "{} result{} (filtered from {})",
-                        total,
-                        if total != 1 { "s" } else { "" },
-                        self.all_items.len()
-                    ))
-                );
-            } else {
-                let _ = crossterm::execute!(
-                    w,
-                    Print(format!(
-                        "{} item{} · ↑/↓ · / search",
-                        total,
-                        if total != 1 { "s" } else { "" }
-                    ))
-                );
-            }
-            let _ = crossterm::execute!(w, ResetColor);
-            let _ = writeln!(w);
-            line_count += 1;
+        let _ = crossterm::execute!(w, Print("  "), SetForegroundColor(DIM));
+        if self.search_mode {
+            let _ = crossterm::execute!(
+                w,
+                Print(format!(
+                    "{}/{} matched",
+                    total,
+                    self.all_items.len()
+                ))
+            );
+        } else {
+            let _ = crossterm::execute!(w, Print("↑↓ navigate · enter select · / search"));
         }
+        let _ = crossterm::execute!(w, ResetColor);
+        let _ = write!(w, "\r\n");
+        line_count += 1;
 
         w.flush()?;
         Ok(line_count)
-    }
-
-    /// Write the accent-colored rail bar prefix.
-    fn write_rail_bar(&self, w: &mut impl Write) -> io::Result<()> {
-        let _ = crossterm::execute!(
-            w,
-            Print("  "),
-            SetForegroundColor(ACCENT),
-            Print(RAIL_BAR),
-            ResetColor
-        );
-        Ok(())
     }
 
     /// Clear previously rendered lines.

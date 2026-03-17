@@ -245,10 +245,8 @@ impl AnthropicAdapter {
                                 msg.get("reasoning_content").and_then(|r| r.as_str())
                                 && !reasoning.is_empty()
                             {
-                                let text = msg
-                                    .get("content")
-                                    .and_then(|c| c.as_str())
-                                    .unwrap_or("");
+                                let text =
+                                    msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
                                 let mut content_blocks = vec![json!({
                                     "type": "thinking",
                                     "thinking": reasoning
@@ -596,8 +594,11 @@ mod tests {
         let headers = adapter.extra_headers();
         assert!(headers.iter().any(|(k, _)| k == "anthropic-version"));
         // Still has beta header for thinking
-        assert!(headers.iter().any(|(k, v)| k == "anthropic-beta"
-            && v.contains("interleaved-thinking-2025-05-14")));
+        assert!(
+            headers.iter().any(
+                |(k, v)| k == "anthropic-beta" && v.contains("interleaved-thinking-2025-05-14")
+            )
+        );
     }
 
     #[test]
@@ -710,7 +711,10 @@ mod tests {
             "usage": {"input_tokens": 10, "output_tokens": 50}
         });
         let result = AnthropicAdapter::response_to_chat_completions(response);
-        assert_eq!(result["choices"][0]["message"]["content"], "The answer is 42.");
+        assert_eq!(
+            result["choices"][0]["message"]["content"],
+            "The answer is 42."
+        );
         assert_eq!(
             result["choices"][0]["message"]["reasoning_content"],
             "Let me think about this...\n\nStep 2 of thinking"
@@ -727,7 +731,11 @@ mod tests {
             "usage": {"input_tokens": 5, "output_tokens": 3}
         });
         let result = AnthropicAdapter::response_to_chat_completions(response);
-        assert!(result["choices"][0]["message"].get("reasoning_content").is_none());
+        assert!(
+            result["choices"][0]["message"]
+                .get("reasoning_content")
+                .is_none()
+        );
     }
 
     #[test]
@@ -795,7 +803,10 @@ mod tests {
         let assistant_content = messages[0]["content"].as_array().unwrap();
         // First block should be thinking
         assert_eq!(assistant_content[0]["type"], "thinking");
-        assert_eq!(assistant_content[0]["thinking"], "I should read the file first.");
+        assert_eq!(
+            assistant_content[0]["thinking"],
+            "I should read the file first."
+        );
         // Then text, then tool_use
         assert_eq!(assistant_content[1]["type"], "text");
         assert_eq!(assistant_content[2]["type"], "tool_use");

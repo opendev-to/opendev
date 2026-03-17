@@ -132,7 +132,12 @@ impl ProviderSetup {
 // ── Validation helpers ──────────────────────────────────────────────────────
 
 async fn validate_openai_key(base_url: &str, api_key: &str) -> Result<(), ValidationError> {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let effective_base = if base_url.is_empty() {
+        "https://api.openai.com/v1"
+    } else {
+        base_url
+    };
+    let url = format!("{}/models", effective_base.trim_end_matches('/'));
 
     let client = reqwest::Client::new();
     let resp = client
@@ -153,7 +158,12 @@ async fn validate_openai_key(base_url: &str, api_key: &str) -> Result<(), Valida
 }
 
 async fn validate_anthropic_key(base_url: &str, api_key: &str) -> Result<(), ValidationError> {
-    let url = format!("{}/messages", base_url.trim_end_matches('/'));
+    let effective_base = if base_url.is_empty() {
+        "https://api.anthropic.com/v1"
+    } else {
+        base_url
+    };
+    let url = format!("{}/messages", effective_base.trim_end_matches('/'));
 
     let client = reqwest::Client::new();
     let resp = client
