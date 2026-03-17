@@ -1,89 +1,27 @@
 //! Configuration models.
 
-use regex::Regex;
+mod agent;
+mod formatter;
+mod permissions;
+
+pub use agent::{AgentConfigInline, ModelVariant};
+pub use formatter::{FormatterConfig, FormatterOverride, FormatterOverrides};
+pub use permissions::{PermissionConfig, ToolPermission};
+
+use permissions::default_true;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Permission settings for a specific tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolPermission {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub always_allow: bool,
-    #[serde(default)]
-    pub deny_patterns: Vec<String>,
+// ── Shared default functions used by sub-modules via `super::` ──
+
+pub(crate) fn default_temperature() -> f64 {
+    0.6
+}
+pub(crate) fn default_max_tokens() -> u32 {
+    16384
 }
 
-fn default_true() -> bool {
-    true
-}
-
-impl Default for ToolPermission {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            always_allow: false,
-            deny_patterns: Vec::new(),
-        }
-    }
-}
-
-impl ToolPermission {
-    /// Check if a target (file path, command, etc.) is allowed.
-    pub fn is_allowed(&self, target: &str) -> bool {
-        if !self.enabled {
-            return false;
-        }
-        if self.always_allow {
-            return true;
-        }
-        !self.deny_patterns.iter().any(|pattern| {
-            Regex::new(pattern)
-                .map(|re| re.is_match(target))
-                .unwrap_or(false)
-        })
-    }
-}
-
-/// Global permission configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionConfig {
-    #[serde(default)]
-    pub file_write: ToolPermission,
-    #[serde(default)]
-    pub file_read: ToolPermission,
-    #[serde(default = "default_bash_permission")]
-    pub bash: ToolPermission,
-    #[serde(default)]
-    pub git: ToolPermission,
-    #[serde(default)]
-    pub web_fetch: ToolPermission,
-}
-
-fn default_bash_permission() -> ToolPermission {
-    ToolPermission {
-        enabled: true,
-        always_allow: false,
-        deny_patterns: vec![
-            "rm -rf /".to_string(),
-            "sudo rm -rf /*".to_string(),
-            "chmod -R 777 /*".to_string(),
-        ],
-    }
-}
-
-impl Default for PermissionConfig {
-    fn default() -> Self {
-        Self {
-            file_write: ToolPermission::default(),
-            file_read: ToolPermission::default(),
-            bash: default_bash_permission(),
-            git: ToolPermission::default(),
-            web_fetch: ToolPermission::default(),
-        }
-    }
-}
+// ── AutoModeConfig ──
 
 /// Auto mode configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +54,8 @@ impl Default for AutoModeConfig {
     }
 }
 
+// ── OperationConfig ──
+
 /// Operation-specific settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationConfig {
@@ -143,6 +83,8 @@ impl Default for OperationConfig {
         }
     }
 }
+
+// ── PlaybookConfig ──
 
 /// Scoring weights for ACE playbook bullet selection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,68 +178,7 @@ impl Default for PlaybookConfig {
     }
 }
 
-/// A named model configuration variant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelVariant {
-    pub name: String,
-    pub model: String,
-    pub provider: String,
-    #[serde(default = "default_temperature")]
-    pub temperature: f64,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: u32,
-    #[serde(default)]
-    pub description: String,
-}
-
-fn default_temperature() -> f64 {
-    0.6
-}
-fn default_max_tokens() -> u32 {
-    16384
-}
-
-/// Inline agent configuration from opendev.json.
-///
-/// Allows defining new agents or overriding builtin agents directly
-/// in the config file. All fields are optional — only specified fields
-/// are applied as overrides.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AgentConfigInline {
-    /// Model override (e.g. "gpt-4o", "claude-opus-4-5").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    /// System prompt override or addition.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt: Option<String>,
-    /// Description of when to use this agent.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Temperature override.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f64>,
-    /// Top-p override.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f64>,
-    /// Max iterations (steps) for the react loop.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_steps: Option<usize>,
-    /// Agent mode: "primary", "subagent", or "all".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    /// Display color (hex string like "#FF6600").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
-    /// Hide from autocomplete listings.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hidden: Option<bool>,
-    /// Disable/remove this agent entirely.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub disable: Option<bool>,
-    /// Per-tool permission rules (tool pattern → "allow"/"deny"/"ask").
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub permission: HashMap<String, String>,
-}
+// ── AppConfig ──
 
 /// Application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,11 +274,11 @@ pub struct AppConfig {
     #[serde(default = "default_plan_mode_explore_variant")]
     pub plan_mode_explore_variant: String,
 
-    // Custom instructions — file paths, glob patterns, or `~/` paths
+    // Custom instructions -- file paths, glob patterns, or `~/` paths
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instructions: Vec<String>,
 
-    // Additional skill directories — file paths or `~/` paths
+    // Additional skill directories -- file paths or `~/` paths
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skill_paths: Vec<String>,
 
@@ -426,74 +307,6 @@ pub struct AppConfig {
     // Config version for migration support
     #[serde(default = "default_config_version")]
     pub config_version: u32,
-}
-
-/// Formatter configuration.
-///
-/// Controls auto-formatting of files after edit/write operations.
-/// Can disable all formatting, disable specific built-in formatters,
-/// or add custom formatters.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum FormatterConfig {
-    /// Set to `false` to disable all formatters.
-    Disabled(bool),
-    /// Custom configuration with overrides.
-    Custom(FormatterOverrides),
-}
-
-impl Default for FormatterConfig {
-    fn default() -> Self {
-        FormatterConfig::Custom(FormatterOverrides::default())
-    }
-}
-
-impl FormatterConfig {
-    /// Check if this is the default (no overrides).
-    pub fn is_default(&self) -> bool {
-        matches!(self, FormatterConfig::Custom(o) if o.overrides.is_empty())
-    }
-
-    /// Check if formatting is globally disabled.
-    pub fn is_disabled(&self) -> bool {
-        matches!(self, FormatterConfig::Disabled(false))
-    }
-
-    /// Get custom formatter overrides (empty if disabled).
-    pub fn overrides(&self) -> &HashMap<String, FormatterOverride> {
-        match self {
-            FormatterConfig::Custom(o) => &o.overrides,
-            FormatterConfig::Disabled(_) => {
-                static EMPTY: std::sync::LazyLock<HashMap<String, FormatterOverride>> =
-                    std::sync::LazyLock::new(HashMap::new);
-                &EMPTY
-            }
-        }
-    }
-}
-
-/// Map of formatter name to override settings.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct FormatterOverrides {
-    #[serde(flatten)]
-    pub overrides: HashMap<String, FormatterOverride>,
-}
-
-/// Override settings for a single formatter.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FormatterOverride {
-    /// Disable this formatter.
-    #[serde(default)]
-    pub disabled: bool,
-    /// Custom command (overrides built-in). Use `$FILE` as placeholder.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub command: Vec<String>,
-    /// File extensions this formatter handles.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub extensions: Vec<String>,
-    /// Environment variables to set when running the formatter.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub environment: HashMap<String, String>,
 }
 
 fn default_config_version() -> u32 {
@@ -625,30 +438,6 @@ mod tests {
         let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.model_provider, config.model_provider);
         assert_eq!(deserialized.model, config.model);
-    }
-
-    #[test]
-    fn test_tool_permission_is_allowed() {
-        let perm = ToolPermission {
-            enabled: true,
-            always_allow: false,
-            deny_patterns: vec!["rm -rf /".to_string()],
-        };
-        assert!(perm.is_allowed("ls -la"));
-        assert!(!perm.is_allowed("rm -rf /"));
-
-        let disabled = ToolPermission {
-            enabled: false,
-            ..Default::default()
-        };
-        assert!(!disabled.is_allowed("anything"));
-
-        let allow_all = ToolPermission {
-            enabled: true,
-            always_allow: true,
-            deny_patterns: vec![".*".to_string()],
-        };
-        assert!(allow_all.is_allowed("anything"));
     }
 
     #[test]
