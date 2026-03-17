@@ -200,49 +200,32 @@ impl<'a> ConversationWidget<'a> {
                     Self::render_simple_role(&content, &rs, &mut lines);
                 }
                 DisplayRole::Thinking => {
-                    if msg.collapsed {
-                        let first = content.lines().next().unwrap_or("");
-                        let count = content.lines().count();
-                        lines.push(Line::from(vec![
-                            Span::styled(
-                                format!("{} ", style_tokens::THINKING_ICON),
-                                Style::default().fg(style_tokens::THINKING_BG),
-                            ),
-                            Span::styled(
-                                format!("+ {first}... ({count} lines, Ctrl+O to expand)"),
-                                Style::default()
-                                    .fg(style_tokens::THINKING_BG)
-                                    .add_modifier(Modifier::ITALIC),
-                            ),
-                        ]));
-                    } else {
-                        for (i, content_line) in content.lines().enumerate() {
-                            if i == 0 {
-                                // First line: ⟡ icon at same indent as ⏺ / > / !
-                                lines.push(Line::from(vec![
-                                    Span::styled(
-                                        format!("{} ", style_tokens::THINKING_ICON),
-                                        Style::default().fg(style_tokens::THINKING_BG),
-                                    ),
-                                    Span::styled(
-                                        content_line.to_string(),
-                                        Style::default()
-                                            .fg(style_tokens::THINKING_BG)
-                                            .add_modifier(Modifier::ITALIC),
-                                    ),
-                                ]));
-                            } else {
-                                // Continuation: 2-char indent matching other roles
-                                lines.push(Line::from(vec![
-                                    Span::raw(Indent::CONT),
-                                    Span::styled(
-                                        content_line.to_string(),
-                                        Style::default()
-                                            .fg(style_tokens::THINKING_BG)
-                                            .add_modifier(Modifier::ITALIC),
-                                    ),
-                                ]));
-                            }
+                    for (i, content_line) in content.lines().enumerate() {
+                        if i == 0 {
+                            // First line: ⟡ icon at same indent as ⏺ / > / !
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    format!("{} ", style_tokens::THINKING_ICON),
+                                    Style::default().fg(style_tokens::THINKING_BG),
+                                ),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default()
+                                        .fg(style_tokens::THINKING_BG)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            ]));
+                        } else {
+                            // Continuation: 2-char indent matching other roles
+                            lines.push(Line::from(vec![
+                                Span::raw(Indent::CONT),
+                                Span::styled(
+                                    content_line.to_string(),
+                                    Style::default()
+                                        .fg(style_tokens::THINKING_BG)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            ]));
                         }
                     }
                 }
@@ -267,156 +250,67 @@ impl<'a> ConversationWidget<'a> {
         lines
     }
 
-    /// Build lines for a tool call (grouped subagent or regular tool).
+    /// Build lines for a tool call result.
     fn build_tool_call_lines(&self, tc: &DisplayToolCall, lines: &mut Vec<Line<'a>>) {
-        if tc.name == "spawn_subagent_group" {
-            self.build_grouped_subagent_lines(tc, lines);
-        } else {
-            let tool_line = format_tool_call(tc, Some(self.working_dir));
-            lines.push(tool_line);
+        let tool_line = format_tool_call(tc, Some(self.working_dir));
+        lines.push(tool_line);
 
-            // Collapsible result lines (diff tools are never collapsed)
-            let effective_collapsed = tc.collapsed && !check_diff_tool(&tc.name);
-            if !effective_collapsed && !tc.result_lines.is_empty() {
-                let use_diff = check_diff_tool(&tc.name);
-                if use_diff {
-                    let (summary, entries) = parse_diff(&tc.result_lines);
-                    // Summary line with ⎿ prefix
-                    if !summary.is_empty() {
-                        lines.push(Line::from(vec![
-                            Span::styled(
-                                format!("  {}  ", CONTINUATION_CHAR),
-                                Style::default().fg(style_tokens::GREY),
-                            ),
-                            Span::styled(summary, Style::default().fg(style_tokens::SUBTLE)),
-                        ]));
-                    }
-                    render_diff(entries.as_slice(), lines);
-                } else {
-                    for (i, result_line) in tc.result_lines.iter().enumerate() {
-                        let prefix_char: Cow<'static, str> = if i == 0 {
-                            format!("  {}  ", CONTINUATION_CHAR).into()
-                        } else {
-                            Cow::Borrowed(Indent::RESULT_CONT)
-                        };
-                        lines.push(Line::from(vec![
-                            Span::styled(prefix_char, Style::default().fg(style_tokens::SUBTLE)),
-                            Span::styled(
-                                result_line.clone(),
-                                Style::default().fg(style_tokens::SUBTLE),
-                            ),
-                        ]));
-                    }
+        // Collapsible result lines (diff tools are never collapsed)
+        let effective_collapsed = tc.collapsed && !check_diff_tool(&tc.name);
+        if !effective_collapsed && !tc.result_lines.is_empty() {
+            let use_diff = check_diff_tool(&tc.name);
+            if use_diff {
+                let (summary, entries) = parse_diff(&tc.result_lines);
+                // Summary line with ⎿ prefix
+                if !summary.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("  {}  ", CONTINUATION_CHAR),
+                            Style::default().fg(style_tokens::GREY),
+                        ),
+                        Span::styled(summary, Style::default().fg(style_tokens::SUBTLE)),
+                    ]));
                 }
-            } else if effective_collapsed && !tc.result_lines.is_empty() {
-                // Show collapsed indicator — read tools get a short summary
-                let count = tc.result_lines.len();
-                let is_read = categorize_tool(&tc.name)
-                    == crate::formatters::tool_registry::ToolCategory::FileRead;
-                let label = if is_read {
-                    format!("  {}  ({count} lines)", CONTINUATION_CHAR)
-                } else {
-                    format!(
-                        "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
-                        CONTINUATION_CHAR,
-                    )
-                };
-                lines.push(Line::from(Span::styled(
-                    label,
-                    Style::default().fg(style_tokens::SUBTLE),
-                )));
+                render_diff(entries.as_slice(), lines);
+            } else {
+                for (i, result_line) in tc.result_lines.iter().enumerate() {
+                    let prefix_char: Cow<'static, str> = if i == 0 {
+                        format!("  {}  ", CONTINUATION_CHAR).into()
+                    } else {
+                        Cow::Borrowed(Indent::RESULT_CONT)
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix_char, Style::default().fg(style_tokens::SUBTLE)),
+                        Span::styled(
+                            result_line.clone(),
+                            Style::default().fg(style_tokens::SUBTLE),
+                        ),
+                    ]));
+                }
             }
-
-            // Nested tool calls (from subagent execution)
-            for nested in &tc.nested_calls {
-                let nested_line = format_nested_tool_call(nested, 1, Some(self.working_dir));
-                lines.push(nested_line);
-            }
+        } else if effective_collapsed && !tc.result_lines.is_empty() {
+            // Show collapsed indicator — read tools get a short summary
+            let count = tc.result_lines.len();
+            let is_read = categorize_tool(&tc.name)
+                == crate::formatters::tool_registry::ToolCategory::FileRead;
+            let label = if is_read {
+                format!("  {}  ({count} lines)", CONTINUATION_CHAR)
+            } else {
+                format!(
+                    "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
+                    CONTINUATION_CHAR,
+                )
+            };
+            lines.push(Line::from(Span::styled(
+                label,
+                Style::default().fg(style_tokens::SUBTLE),
+            )));
         }
-    }
 
-    /// Build lines for a grouped parallel subagent display.
-    fn build_grouped_subagent_lines(&self, tc: &DisplayToolCall, lines: &mut Vec<Line<'a>>) {
-        let count = tc
-            .arguments
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let agent_type = tc
-            .arguments
-            .get("agent_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Explore");
-
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{COMPLETED_CHAR} "),
-                Style::default().fg(style_tokens::GREEN_BRIGHT),
-            ),
-            Span::styled(
-                format!("{count} {agent_type} agents finished"),
-                Style::default()
-                    .fg(style_tokens::PRIMARY)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-
-        let total = tc.nested_calls.len();
-        for (i, child) in tc.nested_calls.iter().enumerate() {
-            let is_last = i == total - 1;
-            let task = child
-                .arguments
-                .get("task")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let stats = child
-                .arguments
-                .get("stats")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-
-            let (branch, cont_prefix) = if is_last {
-                ("\u{2514}\u{2500} ", "   ") // └─ , "   "
-            } else {
-                ("\u{251c}\u{2500} ", "\u{2502}  ") // ├─ , │
-            };
-
-            // Task + stats line
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("   {branch}"),
-                    Style::default().fg(style_tokens::GREY),
-                ),
-                Span::styled(
-                    task.to_string(),
-                    Style::default()
-                        .fg(style_tokens::PRIMARY)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!(" \u{00b7} {stats}"),
-                    Style::default().fg(style_tokens::SUBTLE),
-                ),
-            ]));
-
-            // Done line under it
-            let (icon, color) = if child.success {
-                (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
-            } else {
-                ('\u{2717}', style_tokens::ERROR)
-            };
-            let done_text = child.summary.as_deref().unwrap_or("Done");
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("   {cont_prefix}{CONTINUATION_CHAR}  "),
-                    Style::default().fg(style_tokens::GREY),
-                ),
-                Span::styled(format!("{icon} "), Style::default().fg(color)),
-                Span::styled(
-                    done_text.to_string(),
-                    Style::default().fg(style_tokens::SUBTLE),
-                ),
-            ]));
+        // Nested tool calls (from subagent execution)
+        for nested in &tc.nested_calls {
+            let nested_line = format_nested_tool_call(nested, 1, Some(self.working_dir));
+            lines.push(nested_line);
         }
     }
 }
@@ -506,15 +400,25 @@ impl Widget for ConversationWidget<'_> {
         }
 
         // Render spinner lines below the scroll area.
-        // Short conversation: position right after messages.
-        // Long conversation: position at bottom of scroll area.
+        // We scan the buffer to find the actual last rendered content row,
+        // because word wrapping can cause the Paragraph to use more rows
+        // than our div_ceil estimate (total_lines). Placing the spinner
+        // based on the estimate can overlap the trailing blank line gap.
         if spinner_height > 0 {
-            let spinner_y = if total_lines < viewport_height {
-                // Short: right after the last message line
-                content_area.y + total_lines as u16
-            } else {
-                // Long: fixed at bottom of scroll area
-                content_area.y + content_area.height
+            let last_content_row = (content_area.y
+                ..content_area.y.saturating_add(content_area.height))
+                .rev()
+                .find(|&y| {
+                    (content_area.x..content_area.x.saturating_add(content_area.width)).any(|x| {
+                        buf.cell(ratatui::layout::Position::new(x, y))
+                            .is_some_and(|c| c.symbol() != " ")
+                    })
+                });
+
+            // Place spinner 2 rows after last content (1 blank line gap).
+            let spinner_y = match last_content_row {
+                Some(y) => y + 2,
+                None => content_area.y,
             };
 
             for (i, line) in spinner_lines.iter().enumerate() {
@@ -1070,41 +974,10 @@ mod tests {
     }
 
     #[test]
-    fn test_collapsed_thinking_block() {
+    fn test_thinking_always_shows_full() {
         let msgs = vec![DisplayMessage {
             role: DisplayRole::Thinking,
             content: "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6".into(),
-            tool_call: None,
-            collapsed: true,
-        }];
-        let widget = ConversationWidget::new(&msgs, 0);
-        let lines = widget.build_lines();
-        let text: String = lines
-            .iter()
-            .flat_map(|l| l.spans.iter())
-            .map(|s| s.content.to_string())
-            .collect();
-        // Should show collapsed summary with Ctrl+O hint
-        assert!(
-            text.contains("Ctrl+O to expand"),
-            "Collapsed thinking should show Ctrl+O hint, got: {text}"
-        );
-        assert!(
-            text.contains("6 lines"),
-            "Collapsed thinking should show line count, got: {text}"
-        );
-        // Should NOT show all lines
-        assert!(
-            !text.contains("Line 6"),
-            "Collapsed thinking should not show all content"
-        );
-    }
-
-    #[test]
-    fn test_expanded_thinking_block() {
-        let msgs = vec![DisplayMessage {
-            role: DisplayRole::Thinking,
-            content: "Line 1\nLine 2\nLine 3".into(),
             tool_call: None,
             collapsed: false,
         }];
@@ -1115,20 +988,10 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
             .collect();
-        // Should show all lines
-        assert!(
-            text.contains("Line 1"),
-            "Expanded thinking should show first line"
-        );
-        assert!(
-            text.contains("Line 3"),
-            "Expanded thinking should show last line"
-        );
-        // Should NOT show collapse hint
-        assert!(
-            !text.contains("Ctrl+O"),
-            "Expanded thinking should not show Ctrl+O hint"
-        );
+        // Thinking traces always show full content
+        assert!(text.contains("Line 1"), "Should show first line");
+        assert!(text.contains("Line 6"), "Should show last line");
+        assert!(!text.contains("Ctrl+O"), "Should not show collapse hint");
     }
 
     #[test]

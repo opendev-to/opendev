@@ -137,50 +137,45 @@ impl App {
 
             // Thinking events
             AppEvent::ThinkingTrace(content) => {
-                let auto_collapse = content.lines().count() > 5;
                 // Replace previous thinking message if present (completion nudge
                 // can trigger thinking phase again in the same agent turn).
                 if let Some(last) = self.state.messages.last_mut()
                     && last.role == DisplayRole::Thinking
                 {
-                    last.collapsed = auto_collapse;
                     last.content = content;
                 } else {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Thinking,
                         content,
                         tool_call: None,
-                        collapsed: auto_collapse,
+                        collapsed: false,
                     });
                 }
                 self.state.dirty = true;
                 self.state.message_generation += 1;
             }
             AppEvent::CritiqueTrace(content) => {
-                let auto_collapse = content.lines().count() > 5;
                 self.state.messages.push(DisplayMessage {
                     role: DisplayRole::Thinking,
                     content,
                     tool_call: None,
-                    collapsed: auto_collapse,
+                    collapsed: false,
                 });
                 self.state.dirty = true;
                 self.state.message_generation += 1;
             }
             AppEvent::RefinedThinkingTrace(content) => {
-                let auto_collapse = content.lines().count() > 5;
                 // Replace previous thinking/critique if the refinement supersedes them
                 if let Some(last) = self.state.messages.last_mut()
                     && last.role == DisplayRole::Thinking
                 {
-                    last.collapsed = auto_collapse;
                     last.content = content;
                 } else {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Thinking,
                         content,
                         tool_call: None,
-                        collapsed: auto_collapse,
+                        collapsed: false,
                     });
                 }
                 self.state.dirty = true;
@@ -193,17 +188,6 @@ impl App {
                 tool_name,
                 args,
             } => {
-                // Track parallel spawn_subagent count
-                if tool_name == "spawn_subagent" {
-                    let current_spawn_count = self
-                        .state
-                        .active_tools
-                        .iter()
-                        .filter(|t| t.name == "spawn_subagent" && !t.is_finished())
-                        .count();
-                    // +1 for the one we're about to add
-                    self.state.parallel_subagent_count = current_spawn_count + 1;
-                }
                 self.state.active_tools.push(ToolExecution {
                     id: tool_id,
                     name: tool_name,
@@ -276,18 +260,13 @@ impl App {
                 };
 
                 // For spawn_subagent, extract stats from tracked subagent state
-                // Match by task text from args to support parallel subagents
+                // Each subagent is treated independently — no grouping
                 if tool_name == "spawn_subagent" {
                     let task_text = arguments
                         .get("task")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let task_short = if task_text.len() > 60 {
-                        format!("{}...", &task_text[..60])
-                    } else {
-                        task_text.clone()
-                    };
 
                     // Find matching subagent by task text
                     let subagent_idx = self
@@ -307,136 +286,42 @@ impl App {
                         (0, 0, std::time::Duration::ZERO, success)
                     };
 
-                    let is_parallel = self.state.parallel_subagent_count > 1;
-
-                    if is_parallel {
-                        // Buffer this result; emit grouped message when all are done
-                        self.state
-                            .pending_subagent_results
-                            .push((task_short, stats.0, stats.1, stats.2, stats.3));
-
-                        // Check if all parallel subagents have reported
-                        let remaining_spawn_tools = self
-                            .state
-                            .active_tools
-                            .iter()
-                            .filter(|t| t.name == "spawn_subagent" && !t.is_finished())
-                            .count();
-
-                        if remaining_spawn_tools <= 1 {
-                            // This is the last one — emit grouped message
-                            let results = std::mem::take(&mut self.state.pending_subagent_results);
-                            let count = results.len();
-                            let agent_name = arguments
-                                .get("agent_type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Explore");
-
-                            // Build nested_calls for each subagent result
-                            let nested: Vec<DisplayToolCall> = results
-                                .iter()
-                                .map(|(task, tool_count, token_count, elapsed, sa_success)| {
-                                    let elapsed_secs = elapsed.as_secs();
-                                    let elapsed_str = if elapsed_secs >= 60 {
-                                        format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
-                                    } else {
-                                        format!("{elapsed_secs}s")
-                                    };
-                                    let token_str = if *token_count > 0 {
-                                        let k = *token_count as f64 / 1000.0;
-                                        format!(" \u{00b7} {k:.1}k tokens")
-                                    } else {
-                                        String::new()
-                                    };
-                                    DisplayToolCall {
-                                        name: "spawn_subagent_child".into(),
-                                        arguments: {
-                                            let mut m = std::collections::HashMap::new();
-                                            m.insert(
-                                                "task".into(),
-                                                serde_json::Value::String(task.clone()),
-                                            );
-                                            m.insert(
-                                                "stats".into(),
-                                                serde_json::Value::String(format!(
-                                                    "{tool_count} tool uses{token_str} \u{00b7} {elapsed_str}"
-                                                )),
-                                            );
-                                            m
-                                        },
-                                        summary: Some("Done".into()),
-                                        success: *sa_success,
-                                        collapsed: false,
-                                        result_lines: vec!["Done".into()],
-                                        nested_calls: vec![],
-                                    }
-                                })
-                                .collect();
-
-                            self.state.messages.push(DisplayMessage {
-                                role: DisplayRole::Assistant,
-                                content: String::new(),
-                                tool_call: Some(DisplayToolCall {
-                                    name: "spawn_subagent_group".into(),
-                                    arguments: {
-                                        let mut m = std::collections::HashMap::new();
-                                        m.insert("count".into(), serde_json::json!(count));
-                                        m.insert(
-                                            "agent_type".into(),
-                                            serde_json::Value::String(agent_name.to_string()),
-                                        );
-                                        m
-                                    },
-                                    summary: None,
-                                    success: true,
-                                    collapsed: false,
-                                    result_lines: vec![],
-                                    nested_calls: nested,
-                                }),
-                                collapsed: false,
-                            });
-                            self.state.parallel_subagent_count = 0;
-                        }
-                    } else {
-                        // Single subagent: show inline summary as before
-                        let summary = {
-                            let elapsed_secs = stats.2.as_secs();
-                            let elapsed_str = if elapsed_secs >= 60 {
-                                format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
-                            } else {
-                                format!("{elapsed_secs}s")
-                            };
-                            let token_str = if stats.1 > 0 {
-                                let k = stats.1 as f64 / 1000.0;
-                                format!(" \u{00b7} {k:.1}k tokens")
-                            } else {
-                                String::new()
-                            };
-                            if stats.0 > 0 || stats.1 > 0 {
-                                format!(
-                                    "Done ({} tool uses{} \u{00b7} {})",
-                                    stats.0, token_str, elapsed_str
-                                )
-                            } else {
-                                "Done".to_string()
-                            }
+                    let summary = {
+                        let elapsed_secs = stats.2.as_secs();
+                        let elapsed_str = if elapsed_secs >= 60 {
+                            format!("{}m {}s", elapsed_secs / 60, elapsed_secs % 60)
+                        } else {
+                            format!("{elapsed_secs}s")
                         };
-                        self.state.messages.push(DisplayMessage {
-                            role: DisplayRole::Assistant,
-                            content: String::new(),
-                            tool_call: Some(DisplayToolCall {
-                                name: tool_name.clone(),
-                                arguments,
-                                summary: None,
-                                success,
-                                collapsed: false,
-                                result_lines: vec![summary],
-                                nested_calls: Vec::new(),
-                            }),
+                        let token_str = if stats.1 > 0 {
+                            let k = stats.1 as f64 / 1000.0;
+                            format!(" \u{00b7} {k:.1}k tokens")
+                        } else {
+                            String::new()
+                        };
+                        if stats.0 > 0 || stats.1 > 0 {
+                            format!(
+                                "Done ({} tool uses{} \u{00b7} {})",
+                                stats.0, token_str, elapsed_str
+                            )
+                        } else {
+                            "Done".to_string()
+                        }
+                    };
+                    self.state.messages.push(DisplayMessage {
+                        role: DisplayRole::Assistant,
+                        content: String::new(),
+                        tool_call: Some(DisplayToolCall {
+                            name: tool_name.clone(),
+                            arguments,
+                            summary: None,
+                            success,
                             collapsed: false,
-                        });
-                        self.state.parallel_subagent_count = 0;
-                    }
+                            result_lines: vec![summary],
+                            nested_calls: Vec::new(),
+                        }),
+                        collapsed: false,
+                    });
                 } else if !display_lines.is_empty() {
                     self.state.messages.push(DisplayMessage {
                         role: DisplayRole::Assistant,

@@ -270,47 +270,30 @@ impl App {
                 }
             }
             DisplayRole::Thinking => {
-                if msg.collapsed {
-                    let first = content.lines().next().unwrap_or("");
-                    let count = content.lines().count();
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{} ", style_tokens::THINKING_ICON),
-                            Style::default().fg(style_tokens::THINKING_BG),
-                        ),
-                        Span::styled(
-                            format!("+ {first}... ({count} lines, Ctrl+O to expand)"),
-                            Style::default()
-                                .fg(style_tokens::THINKING_BG)
-                                .add_modifier(Modifier::ITALIC),
-                        ),
-                    ]));
-                } else {
-                    for (i, content_line) in content.lines().enumerate() {
-                        if i == 0 {
-                            lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!("{} ", style_tokens::THINKING_ICON),
-                                    Style::default().fg(style_tokens::THINKING_BG),
-                                ),
-                                Span::styled(
-                                    content_line.to_string(),
-                                    Style::default()
-                                        .fg(style_tokens::THINKING_BG)
-                                        .add_modifier(Modifier::ITALIC),
-                                ),
-                            ]));
-                        } else {
-                            lines.push(Line::from(vec![
-                                Span::raw(Indent::CONT),
-                                Span::styled(
-                                    content_line.to_string(),
-                                    Style::default()
-                                        .fg(style_tokens::THINKING_BG)
-                                        .add_modifier(Modifier::ITALIC),
-                                ),
-                            ]));
-                        }
+                for (i, content_line) in content.lines().enumerate() {
+                    if i == 0 {
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("{} ", style_tokens::THINKING_ICON),
+                                Style::default().fg(style_tokens::THINKING_BG),
+                            ),
+                            Span::styled(
+                                content_line.to_string(),
+                                Style::default()
+                                    .fg(style_tokens::THINKING_BG)
+                                    .add_modifier(Modifier::ITALIC),
+                            ),
+                        ]));
+                    } else {
+                        lines.push(Line::from(vec![
+                            Span::raw(Indent::CONT),
+                            Span::styled(
+                                content_line.to_string(),
+                                Style::default()
+                                    .fg(style_tokens::THINKING_BG)
+                                    .add_modifier(Modifier::ITALIC),
+                            ),
+                        ]));
                     }
                 }
             }
