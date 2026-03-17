@@ -48,11 +48,16 @@ impl<'a> ConversationWidget<'a> {
 
                 // For spawn_subagent, use nested display
                 if tool.name == "spawn_subagent" {
-                    // Match by task text: each subagent has a unique task string.
-                    // Don't filter by !finished — we need to show subagents in the gap
-                    // between SubagentFinished and ToolFinished events.
-                    let tool_task = tool.args.get("task").and_then(|v| v.as_str()).unwrap_or("");
-                    let subagent = self.active_subagents.iter().find(|s| s.task == tool_task);
+                    // Match by parent_tool_id (reliable), fall back to task text.
+                    let subagent = self
+                        .active_subagents
+                        .iter()
+                        .find(|s| s.parent_tool_id.as_deref() == Some(&*tool.id))
+                        .or_else(|| {
+                            let tool_task =
+                                tool.args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+                            self.active_subagents.iter().find(|s| s.task == tool_task)
+                        });
                     let (agent_name, task_desc) = if let Some(sa) = subagent {
                         (sa.name.clone(), sa.task.clone())
                     } else {

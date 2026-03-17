@@ -1137,6 +1137,7 @@ mod tests {
             .map(|(i, task)| {
                 let mut sa =
                     SubagentDisplayState::new(format!("sa{i}"), "explore".into(), task.to_string());
+                sa.parent_tool_id = Some(format!("t{i}"));
                 sa.finished = true;
                 sa.success = true;
                 sa.tool_call_count = 3 + i;
@@ -1222,6 +1223,7 @@ mod tests {
             .map(|(i, task)| {
                 let mut sa =
                     SubagentDisplayState::new(format!("sa{i}"), "explore".into(), task.to_string());
+                sa.parent_tool_id = Some(format!("t{i}"));
                 sa.active_tools.insert(
                     format!("nested_t{i}"),
                     NestedToolCallState {

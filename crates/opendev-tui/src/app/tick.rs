@@ -84,11 +84,16 @@ impl App {
             if !s.finished {
                 return true;
             }
-            // Keep if a matching spawn_subagent tool is still active (ToolResult will clean up)
-            let has_active_tool = active_tools.iter().any(|t| {
-                t.name == "spawn_subagent"
-                    && t.args.get("task").and_then(|v| v.as_str()) == Some(&s.task)
-            });
+            // Keep if a matching spawn_subagent tool is still active (ToolResult will clean up).
+            // Match by parent_tool_id (reliable) first, fall back to task text.
+            let has_active_tool = if let Some(ref ptid) = s.parent_tool_id {
+                active_tools.iter().any(|t| t.id == *ptid)
+            } else {
+                active_tools.iter().any(|t| {
+                    t.name == "spawn_subagent"
+                        && t.args.get("task").and_then(|v| v.as_str()) == Some(&s.task)
+                })
+            };
             if has_active_tool {
                 return true;
             }

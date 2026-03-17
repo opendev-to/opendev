@@ -34,6 +34,8 @@ pub struct SubagentDisplayState {
     pub shallow_warning: Option<String>,
     /// When the subagent finished (for cleanup timing).
     pub finished_at: Option<Instant>,
+    /// The parent spawn_subagent tool_id (set when SubagentStarted is linked to ToolStarted).
+    pub parent_tool_id: Option<String>,
 }
 
 impl SubagentDisplayState {
@@ -54,6 +56,7 @@ impl SubagentDisplayState {
             tick: 0,
             shallow_warning: None,
             finished_at: None,
+            parent_tool_id: None,
         }
     }
 
