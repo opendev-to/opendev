@@ -1,14 +1,18 @@
 //! Session management routes.
 
-use std::path::Path;
+mod filesystem;
+mod models;
 
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{Path as AxumPath, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
 use crate::error::WebError;
 use crate::state::AppState;
+
+pub use filesystem::{BrowseDirectoryRequest, ListFilesQuery, VerifyPathRequest};
+pub use models::SessionModelUpdate;
 
 /// Create session request.
 #[derive(Debug, Deserialize)]
@@ -17,52 +21,17 @@ pub struct CreateSessionRequest {
     pub working_directory: Option<String>,
 }
 
-/// Verify path request.
-#[derive(Debug, Deserialize)]
-pub struct VerifyPathRequest {
-    #[serde(default)]
-    pub path: Option<String>,
-}
-
-/// Browse directory request.
-#[derive(Debug, Deserialize)]
-pub struct BrowseDirectoryRequest {
-    #[serde(default)]
-    pub path: String,
-    #[serde(default)]
-    pub show_hidden: bool,
-}
-
-/// Session model update request.
-#[derive(Debug, Deserialize)]
-pub struct SessionModelUpdate {
-    pub model_provider: Option<String>,
-    pub model: Option<String>,
-    pub model_thinking_provider: Option<String>,
-    pub model_thinking: Option<String>,
-    pub model_vlm_provider: Option<String>,
-    pub model_vlm: Option<String>,
-    pub model_critique_provider: Option<String>,
-    pub model_critique: Option<String>,
-    pub model_compact_provider: Option<String>,
-    pub model_compact: Option<String>,
-}
-
-/// Query parameters for file listing.
-#[derive(Debug, Deserialize)]
-pub struct ListFilesQuery {
-    #[serde(default)]
-    pub query: String,
-}
-
 /// Build the sessions router.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route("/api/sessions/bridge-info", get(get_bridge_info))
-        .route("/api/sessions/files", get(list_files))
-        .route("/api/sessions/verify-path", post(verify_path))
-        .route("/api/sessions/browse-directory", post(browse_directory))
+        .route("/api/sessions/files", get(filesystem::list_files))
+        .route("/api/sessions/verify-path", post(filesystem::verify_path))
+        .route(
+            "/api/sessions/browse-directory",
+            post(filesystem::browse_directory),
+        )
         .route(
             "/api/sessions/{id}",
             get(get_session).delete(delete_session),
@@ -71,9 +40,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/sessions/{id}/messages", get(get_session_messages))
         .route(
             "/api/sessions/{id}/model",
-            get(get_session_model)
-                .put(update_session_model)
-                .delete(clear_session_model),
+            get(models::get_session_model)
+                .put(models::update_session_model)
+                .delete(models::clear_session_model),
         )
 }
 
@@ -284,392 +253,6 @@ async fn get_bridge_info(State(_state): State<AppState>) -> Json<serde_json::Val
         "bridge_mode": false,
         "session_id": null,
     }))
-}
-
-/// List files in the current session's working directory.
-async fn list_files(
-    State(state): State<AppState>,
-    Query(params): Query<ListFilesQuery>,
-) -> Result<Json<serde_json::Value>, WebError> {
-    let mgr = state.session_manager().await;
-    let session = mgr.current_session();
-
-    let working_dir = match session.and_then(|s| s.working_directory.as_deref()) {
-        Some(wd) => wd.to_string(),
-        None => {
-            return Ok(Json(serde_json::json!({"files": []})));
-        }
-    };
-
-    let wd_path = Path::new(&working_dir);
-    if !wd_path.exists() || !wd_path.is_dir() {
-        return Ok(Json(serde_json::json!({"files": []})));
-    }
-
-    // Directories to always exclude.
-    let always_exclude: &[&str] = &[
-        ".git",
-        ".hg",
-        ".svn",
-        "node_modules",
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".venv",
-        "venv",
-        ".DS_Store",
-        ".idea",
-        ".vscode",
-        "target",
-        "dist",
-        "build",
-        "out",
-        ".next",
-        ".nuxt",
-        ".cache",
-        ".tox",
-        ".nox",
-        ".gradle",
-        "coverage",
-        "htmlcov",
-    ];
-
-    let query = params.query.to_lowercase();
-    let mut files: Vec<serde_json::Value> = Vec::new();
-    let max_files = 100;
-
-    // Walk directory tree (iterative BFS).
-    let mut stack = vec![wd_path.to_path_buf()];
-    'outer: while let Some(dir) = stack.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            let name = file_name.to_string_lossy();
-
-            let file_type = match entry.file_type() {
-                Ok(ft) => ft,
-                Err(_) => continue,
-            };
-
-            if file_type.is_dir() {
-                if !always_exclude.contains(&name.as_ref()) {
-                    stack.push(entry.path());
-                }
-                continue;
-            }
-
-            if file_type.is_file() {
-                let rel_path = match entry.path().strip_prefix(wd_path) {
-                    Ok(p) => p.to_string_lossy().to_string(),
-                    Err(_) => continue,
-                };
-
-                // Filter by query if provided.
-                if !query.is_empty() && !rel_path.to_lowercase().contains(&query) {
-                    continue;
-                }
-
-                files.push(serde_json::json!({
-                    "path": rel_path,
-                    "name": name,
-                    "is_file": true,
-                }));
-
-                if files.len() >= max_files {
-                    break 'outer;
-                }
-            }
-        }
-    }
-
-    // Sort by path.
-    files.sort_by(|a, b| {
-        let pa = a["path"].as_str().unwrap_or("");
-        let pb = b["path"].as_str().unwrap_or("");
-        pa.cmp(pb)
-    });
-
-    Ok(Json(serde_json::json!({"files": files})))
-}
-
-/// Verify if a directory path exists and is accessible.
-async fn verify_path(
-    State(_state): State<AppState>,
-    Json(payload): Json<VerifyPathRequest>,
-) -> Json<serde_json::Value> {
-    let path_str = payload.path.as_deref().unwrap_or("").trim().to_string();
-
-    if path_str.is_empty() {
-        return Json(serde_json::json!({
-            "exists": false,
-            "is_directory": false,
-            "error": "Path cannot be empty",
-        }));
-    }
-
-    // Expand ~ to home directory.
-    let expanded = if path_str.starts_with('~') {
-        if let Some(home) = dirs_path_home() {
-            path_str.replacen('~', &home, 1)
-        } else {
-            path_str.clone()
-        }
-    } else {
-        path_str.clone()
-    };
-
-    let path = Path::new(&expanded);
-
-    if !path.exists() {
-        return Json(serde_json::json!({
-            "exists": false,
-            "is_directory": false,
-            "error": "Path does not exist",
-        }));
-    }
-
-    if !path.is_dir() {
-        return Json(serde_json::json!({
-            "exists": true,
-            "is_directory": false,
-            "error": "Path is not a directory",
-        }));
-    }
-
-    // Check read access by trying to read_dir.
-    if std::fs::read_dir(path).is_err() {
-        return Json(serde_json::json!({
-            "exists": true,
-            "is_directory": true,
-            "error": "No read access to directory",
-        }));
-    }
-
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-
-    Json(serde_json::json!({
-        "exists": true,
-        "is_directory": true,
-        "path": canonical.to_string_lossy(),
-        "error": null,
-    }))
-}
-
-/// Browse directories at a given path for the workspace picker.
-async fn browse_directory(
-    State(_state): State<AppState>,
-    Json(payload): Json<BrowseDirectoryRequest>,
-) -> Json<serde_json::Value> {
-    let raw = payload.path.trim().to_string();
-
-    let target = if raw.is_empty() {
-        // Default to home directory.
-        match dirs_path_home() {
-            Some(home) => std::path::PathBuf::from(home),
-            None => std::path::PathBuf::from("/"),
-        }
-    } else {
-        let expanded = if raw.starts_with('~') {
-            if let Some(home) = dirs_path_home() {
-                raw.replacen('~', &home, 1)
-            } else {
-                raw.clone()
-            }
-        } else {
-            raw.clone()
-        };
-        std::path::PathBuf::from(expanded)
-    };
-
-    let target = target.canonicalize().unwrap_or_else(|_| target.clone());
-
-    if !target.exists() {
-        return Json(serde_json::json!({
-            "current_path": target.to_string_lossy(),
-            "parent_path": target.parent().map(|p| p.to_string_lossy().to_string()),
-            "directories": [],
-            "error": "Path does not exist",
-        }));
-    }
-
-    if !target.is_dir() {
-        return Json(serde_json::json!({
-            "current_path": target.to_string_lossy(),
-            "parent_path": target.parent().map(|p| p.to_string_lossy().to_string()),
-            "directories": [],
-            "error": "Path is not a directory",
-        }));
-    }
-
-    let parent_path = if target.parent() != Some(&target) {
-        target.parent().map(|p| p.to_string_lossy().to_string())
-    } else {
-        None
-    };
-
-    let entries = match std::fs::read_dir(&target) {
-        Ok(e) => e,
-        Err(_) => {
-            return Json(serde_json::json!({
-                "current_path": target.to_string_lossy(),
-                "parent_path": parent_path,
-                "directories": [],
-                "error": "Permission denied reading directory contents",
-            }));
-        }
-    };
-
-    let mut dirs: Vec<serde_json::Value> = Vec::new();
-    for entry in entries.flatten() {
-        let ft = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(_) => continue,
-        };
-        if !ft.is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') && !payload.show_hidden {
-            continue;
-        }
-        // Check read access.
-        if std::fs::read_dir(entry.path()).is_err() {
-            continue;
-        }
-        dirs.push(serde_json::json!({
-            "name": name,
-            "path": entry.path().to_string_lossy(),
-        }));
-    }
-
-    dirs.sort_by(|a, b| {
-        let na = a["name"].as_str().unwrap_or("").to_lowercase();
-        let nb = b["name"].as_str().unwrap_or("").to_lowercase();
-        na.cmp(&nb)
-    });
-
-    Json(serde_json::json!({
-        "current_path": target.to_string_lossy(),
-        "parent_path": parent_path,
-        "directories": dirs,
-        "error": null,
-    }))
-}
-
-/// Get session model overlay.
-async fn get_session_model(
-    State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
-) -> Result<Json<serde_json::Value>, WebError> {
-    let mgr = state.session_manager().await;
-    let session = mgr
-        .load_session(&id)
-        .map_err(|e| WebError::NotFound(format!("Session {} not found: {}", id, e)))?;
-
-    let overlay = session
-        .metadata
-        .get("session_model")
-        .cloned()
-        .unwrap_or(serde_json::json!({}));
-
-    Ok(Json(overlay))
-}
-
-/// Update session model overlay.
-async fn update_session_model(
-    State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
-    Json(body): Json<SessionModelUpdate>,
-) -> Result<Json<serde_json::Value>, WebError> {
-    let mgr = state.session_manager().await;
-
-    let mut session = mgr
-        .load_session(&id)
-        .map_err(|e| WebError::NotFound(format!("Session {} not found: {}", id, e)))?;
-
-    // Build overlay from non-None fields.
-    let mut overlay = serde_json::Map::new();
-    if let Some(v) = body.model_provider {
-        overlay.insert("model_provider".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model {
-        overlay.insert("model".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model_thinking_provider {
-        overlay.insert("model_thinking_provider".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model_thinking {
-        overlay.insert("model_thinking".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model_vlm_provider {
-        overlay.insert("model_vlm_provider".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model_vlm {
-        overlay.insert("model_vlm".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model_critique_provider {
-        overlay.insert("model_critique_provider".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model_critique {
-        overlay.insert("model_critique".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model_compact_provider {
-        overlay.insert("model_compact_provider".to_string(), serde_json::json!(v));
-    }
-    if let Some(v) = body.model_compact {
-        overlay.insert("model_compact".to_string(), serde_json::json!(v));
-    }
-
-    if overlay.is_empty() {
-        return Err(WebError::BadRequest("No model fields provided".to_string()));
-    }
-
-    // Store overlay in session metadata.
-    session.metadata.insert(
-        "session_model".to_string(),
-        serde_json::Value::Object(overlay),
-    );
-
-    mgr.save_session(&session)
-        .map_err(|e| WebError::Internal(format!("Failed to save session: {}", e)))?;
-
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "message": "Session model updated",
-    })))
-}
-
-/// Clear session model overlay.
-async fn clear_session_model(
-    State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
-) -> Result<Json<serde_json::Value>, WebError> {
-    let mgr = state.session_manager().await;
-
-    let mut session = mgr
-        .load_session(&id)
-        .map_err(|e| WebError::NotFound(format!("Session {} not found: {}", id, e)))?;
-
-    session.metadata.remove("session_model");
-
-    mgr.save_session(&session)
-        .map_err(|e| WebError::Internal(format!("Failed to save session: {}", e)))?;
-
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "message": "Session model cleared",
-    })))
-}
-
-/// Helper: get the home directory path as a String.
-fn dirs_path_home() -> Option<String> {
-    std::env::var("HOME")
-        .ok()
-        .or_else(|| std::env::var("USERPROFILE").ok())
 }
 
 #[cfg(test)]
