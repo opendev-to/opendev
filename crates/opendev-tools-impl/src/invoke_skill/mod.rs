@@ -1,8 +1,10 @@
 //! invoke_skill tool — loads skill content into conversation context on demand.
 //!
-//! Mirrors the Python `_handle_invoke_skill` in `registry.py`.
 //! Supports listing available skills, loading by name (with namespace),
 //! and session-scoped deduplication to avoid re-loading the same skill.
+
+mod arguments;
+mod mcp;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -11,6 +13,8 @@ use opendev_mcp::McpManager;
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
 use opendev_agents::skills::SkillLoader;
+
+use arguments::expand_skill_arguments;
 
 /// Tool that loads skill content into the conversation context.
 ///
@@ -23,7 +27,7 @@ use opendev_agents::skills::SkillLoader;
 pub struct InvokeSkillTool {
     skill_loader: Arc<Mutex<SkillLoader>>,
     /// Tracks which skills have been invoked this session to avoid re-loading.
-    invoked_skills: Mutex<HashSet<String>>,
+    pub(crate) invoked_skills: Mutex<HashSet<String>>,
     /// Optional MCP manager for surfacing MCP prompts.
     mcp_manager: Option<Arc<McpManager>>,
 }
@@ -103,7 +107,6 @@ impl BaseTool for InvokeSkillTool {
             .unwrap_or("")
             .trim();
 
-        // Acquire skill loader lock in a limited scope to avoid holding it across await points.
         enum SkillLookup {
             ListOnly(Vec<String>),
             SubagentRedirect(String),
@@ -120,7 +123,6 @@ impl BaseTool for InvokeSkillTool {
             if skill_name.is_empty() {
                 SkillLookup::ListOnly(loader.get_skill_names())
             } else {
-                // Check if the user is confusing invoke_skill with spawn_subagent.
                 let subagent_types = [
                     "code-explorer",
                     "code_explorer",
@@ -140,14 +142,13 @@ impl BaseTool for InvokeSkillTool {
                     }
                 }
             }
-        }; // loader lock released here
+        };
 
         match lookup {
             SkillLookup::ListOnly(names) => {
                 let mut sorted = names;
                 sorted.sort();
 
-                // Also list MCP prompts if available.
                 let mcp_prompts = if let Some(ref mgr) = self.mcp_manager {
                     mgr.list_prompts().await
                 } else {
@@ -190,7 +191,6 @@ impl BaseTool for InvokeSkillTool {
                 ));
             }
             SkillLookup::NotFound(skill_names) => {
-                // Try MCP prompt fallback: "server:prompt" pattern.
                 if let Some(ref mgr) = self.mcp_manager
                     && let Some(result) = self.try_mcp_prompt(mgr, skill_name, &args).await
                 {
@@ -211,12 +211,10 @@ impl BaseTool for InvokeSkillTool {
                      summarization, use spawn_subagent instead. Available skills: {available}"
                 ));
             }
-            SkillLookup::Found(_) => {} // fall through to below
+            SkillLookup::Found(_) => {}
         }
 
-        // Extract the skill from the Found variant (safe: all other arms return).
         let SkillLookup::Found(skill) = lookup else {
-            // Box<LoadedSkill>
             unreachable!()
         };
 
@@ -274,7 +272,6 @@ impl BaseTool for InvokeSkillTool {
             meta.insert("skill_agent".to_string(), serde_json::json!(agent));
         }
 
-        // Build output wrapped in XML tags for better LLM parsing (matching OpenCode format).
         let token_estimate = skill_content.len() / 4;
         meta.insert("token_estimate".into(), serde_json::json!(token_estimate));
 
@@ -309,165 +306,6 @@ impl BaseTool for InvokeSkillTool {
     }
 }
 
-impl InvokeSkillTool {
-    /// Try to resolve a skill name as an MCP prompt (`server:prompt` pattern).
-    ///
-    /// Returns `Some(ToolResult)` if matched, `None` if not an MCP prompt.
-    async fn try_mcp_prompt(
-        &self,
-        mgr: &McpManager,
-        skill_name: &str,
-        args: &HashMap<String, serde_json::Value>,
-    ) -> Option<ToolResult> {
-        // Parse "server:prompt" pattern.
-        let (server_name, prompt_name) = skill_name.split_once(':')?;
-        if server_name.is_empty() || prompt_name.is_empty() {
-            return None;
-        }
-
-        // Build prompt arguments from the "arguments" field (space-separated key=value pairs).
-        let prompt_args = args
-            .get("arguments")
-            .and_then(|v| v.as_str())
-            .and_then(|s| {
-                let s = s.trim();
-                if s.is_empty() {
-                    return None;
-                }
-                let mut map = HashMap::new();
-                for pair in s.split_whitespace() {
-                    if let Some((k, v)) = pair.split_once('=') {
-                        map.insert(k.to_string(), v.to_string());
-                    }
-                }
-                if map.is_empty() { None } else { Some(map) }
-            });
-
-        match mgr.get_prompt(server_name, prompt_name, prompt_args).await {
-            Ok(result) => {
-                let mut output = format!(
-                    "MCP prompt: {server_name}:{prompt_name}\n\n<mcp_prompt name=\"{prompt_name}\">\n"
-                );
-                for msg in &result.messages {
-                    output.push_str(&format!("[{}]\n", msg.role));
-                    match &msg.content {
-                        opendev_mcp::models::McpPromptContent::Text(text) => {
-                            output.push_str(text);
-                        }
-                        opendev_mcp::models::McpPromptContent::Structured { text } => {
-                            output.push_str(text);
-                        }
-                        opendev_mcp::models::McpPromptContent::Multiple(blocks) => {
-                            for block in blocks {
-                                if let opendev_mcp::models::McpContent::Text { text } = block {
-                                    output.push_str(text);
-                                }
-                            }
-                        }
-                    }
-                    output.push('\n');
-                }
-                output.push_str("</mcp_prompt>");
-
-                // Track in invoked_skills to enable dedup.
-                if let Ok(mut invoked) = self.invoked_skills.lock() {
-                    invoked.insert(skill_name.to_string());
-                }
-
-                let mut meta = HashMap::new();
-                meta.insert("mcp_server".to_string(), serde_json::json!(server_name));
-                meta.insert("mcp_prompt".to_string(), serde_json::json!(prompt_name));
-
-                Some(ToolResult::ok_with_metadata(output, meta))
-            }
-            Err(e) => Some(ToolResult::fail(format!(
-                "MCP prompt '{server_name}:{prompt_name}' failed: {e}"
-            ))),
-        }
-    }
-}
-
-/// Expand `$ARGUMENTS` and positional `$1`, `$2`, etc. in skill content.
-///
-/// Matches OpenCode's command argument expansion:
-/// - `$ARGUMENTS` is replaced with the full argument string.
-/// - `$1`, `$2`, ... are replaced with positional arguments.
-/// - Quoted strings (`"multi word"` or `'multi word'`) count as a single argument.
-/// - If no placeholders exist, arguments are appended at the end.
-fn expand_skill_arguments(content: &str, arguments: &str) -> String {
-    let positional = parse_positional_args(arguments);
-
-    let has_arguments_placeholder = content.contains("$ARGUMENTS");
-    let has_positional = content.contains("$1");
-
-    let mut result = content.to_string();
-
-    // Replace $ARGUMENTS with the full argument string.
-    if has_arguments_placeholder {
-        result = result.replace("$ARGUMENTS", arguments);
-    }
-
-    // Replace positional placeholders $1, $2, ...
-    for (i, arg) in positional.iter().enumerate() {
-        let placeholder = format!("${}", i + 1);
-        result = result.replace(&placeholder, arg);
-    }
-
-    // If no placeholders were found, append arguments at the end.
-    if !has_arguments_placeholder && !has_positional && !arguments.is_empty() {
-        result.push_str("\n\n## Input\n\n");
-        result.push_str(arguments);
-        result.push('\n');
-    }
-
-    result
-}
-
-/// Parse a string into positional arguments, respecting quotes.
-///
-/// `"hello world" foo 'bar baz'` → `["hello world", "foo", "bar baz"]`
-fn parse_positional_args(input: &str) -> Vec<String> {
-    let mut args = Vec::new();
-    let mut chars = input.chars().peekable();
-    let mut current = String::new();
-
-    while let Some(&ch) = chars.peek() {
-        match ch {
-            '"' | '\'' => {
-                let quote = ch;
-                chars.next(); // consume opening quote
-                while let Some(&c) = chars.peek() {
-                    if c == quote {
-                        chars.next(); // consume closing quote
-                        break;
-                    }
-                    current.push(c);
-                    chars.next();
-                }
-                if !current.is_empty() {
-                    args.push(std::mem::take(&mut current));
-                }
-            }
-            c if c.is_whitespace() => {
-                if !current.is_empty() {
-                    args.push(std::mem::take(&mut current));
-                }
-                chars.next();
-            }
-            _ => {
-                current.push(ch);
-                chars.next();
-            }
-        }
-    }
-
-    if !current.is_empty() {
-        args.push(current);
-    }
-
-    args
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,7 +327,6 @@ mod tests {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let result = tool.execute(HashMap::new(), &ctx).await;
         assert!(result.success);
         let output = result.output.unwrap();
@@ -502,10 +339,8 @@ mod tests {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!(""));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         assert!(result.output.unwrap().contains("Available skills:"));
@@ -516,10 +351,8 @@ mod tests {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("commit"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         let output = result.output.unwrap();
@@ -534,13 +367,11 @@ mod tests {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert(
             "skill_name".to_string(),
             serde_json::json!("nonexistent-skill-xyz"),
         );
-
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         let error = result.error.unwrap();
@@ -553,18 +384,13 @@ mod tests {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         for name in &["code-explorer", "code_explorer", "planner", "ask_user"] {
             let mut args = HashMap::new();
             args.insert("skill_name".to_string(), serde_json::json!(name));
-
             let result = tool.execute(args, &ctx).await;
             assert!(!result.success, "Should fail for subagent type '{name}'");
             let error = result.error.unwrap();
-            assert!(
-                error.contains("subagent type, not a skill"),
-                "Should redirect to spawn_subagent for '{name}', got: {error}"
-            );
+            assert!(error.contains("subagent type, not a skill"));
             assert!(error.contains("spawn_subagent"));
         }
     }
@@ -574,16 +400,11 @@ mod tests {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("commit"));
-
-        // First invoke: full content.
         let result1 = tool.execute(args.clone(), &ctx).await;
         assert!(result1.success);
         assert!(result1.output.unwrap().contains("Loaded skill: commit"));
-
-        // Second invoke: dedup reminder.
         let result2 = tool.execute(args, &ctx).await;
         assert!(result2.success);
         let output2 = result2.output.unwrap();
@@ -600,14 +421,11 @@ mod tests {
             skill_dir.join("deploy.md"),
             "---\nname: deploy\ndescription: Deploy instructions\nnamespace: ops\n---\n\n# Deploy\nStep 1: push.\n",
         ).unwrap();
-
         let loader = create_test_loader(Some(&skill_dir));
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("deploy"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         let output = result.output.unwrap();
@@ -622,7 +440,6 @@ mod tests {
         let skill_dir = tmp.path().join("skills");
         let sub_dir = skill_dir.join("testing");
         fs::create_dir_all(&sub_dir).unwrap();
-
         fs::write(
             sub_dir.join("SKILL.md"),
             "---\nname: testing\ndescription: Testing patterns\n---\n\n# Testing\nTest content.\n",
@@ -630,14 +447,11 @@ mod tests {
         .unwrap();
         fs::write(sub_dir.join("helpers.sh"), "#!/bin/bash\necho test").unwrap();
         fs::write(sub_dir.join("config.json"), r#"{"key": "val"}"#).unwrap();
-
         let loader = create_test_loader(Some(&skill_dir));
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("testing"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         let output = result.output.unwrap();
@@ -646,64 +460,6 @@ mod tests {
         assert!(output.contains("helpers.sh"));
         assert!(output.contains("config.json"));
         assert!(output.contains("Base directory for this skill:"));
-    }
-
-    // ---- Argument expansion ----
-
-    #[test]
-    fn test_expand_arguments_placeholder() {
-        let content = "Run this: $ARGUMENTS";
-        let result = expand_skill_arguments(content, "git push origin main");
-        assert_eq!(result, "Run this: git push origin main");
-    }
-
-    #[test]
-    fn test_expand_positional_args() {
-        let content = "Source: $1\nTarget: $2";
-        let result = expand_skill_arguments(content, "src/main.rs tests/test.rs");
-        assert_eq!(result, "Source: src/main.rs\nTarget: tests/test.rs");
-    }
-
-    #[test]
-    fn test_expand_quoted_args() {
-        let content = "File: $1\nMessage: $2";
-        let result = expand_skill_arguments(content, "README.md \"hello world\"");
-        assert_eq!(result, "File: README.md\nMessage: hello world");
-    }
-
-    #[test]
-    fn test_expand_no_placeholders_appends() {
-        let content = "# My Skill\nDo stuff.";
-        let result = expand_skill_arguments(content, "some args here");
-        assert!(result.contains("# My Skill\nDo stuff."));
-        assert!(result.contains("## Input\n\nsome args here"));
-    }
-
-    #[test]
-    fn test_expand_empty_args_no_change() {
-        let content = "Content with $ARGUMENTS placeholder.";
-        // This function is only called when arguments is non-empty,
-        // but let's verify the behavior anyway.
-        let result = expand_skill_arguments(content, "");
-        assert_eq!(result, "Content with  placeholder.");
-    }
-
-    #[test]
-    fn test_parse_positional_args_basic() {
-        let args = parse_positional_args("foo bar baz");
-        assert_eq!(args, vec!["foo", "bar", "baz"]);
-    }
-
-    #[test]
-    fn test_parse_positional_args_quoted() {
-        let args = parse_positional_args(r#"hello "multi word" 'single quoted'"#);
-        assert_eq!(args, vec!["hello", "multi word", "single quoted"]);
-    }
-
-    #[test]
-    fn test_parse_positional_args_empty() {
-        let args = parse_positional_args("");
-        assert!(args.is_empty());
     }
 
     #[tokio::test]
@@ -716,44 +472,21 @@ mod tests {
             "---\nname: greet\ndescription: Greet someone\n---\n\nHello $1, welcome to $2!\n",
         )
         .unwrap();
-
         let loader = create_test_loader(Some(&skill_dir));
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("greet"));
         args.insert("arguments".to_string(), serde_json::json!("Alice OpenDev"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
-        let output = result.output.unwrap();
-        assert!(output.contains("Hello Alice, welcome to OpenDev!"));
+        assert!(
+            result
+                .output
+                .unwrap()
+                .contains("Hello Alice, welcome to OpenDev!")
+        );
     }
-
-    #[test]
-    fn test_expand_both_arguments_and_positional() {
-        let content = "Full: $ARGUMENTS\nFirst: $1\nSecond: $2";
-        let result = expand_skill_arguments(content, "foo bar");
-        assert_eq!(result, "Full: foo bar\nFirst: foo\nSecond: bar");
-    }
-
-    #[test]
-    fn test_parse_positional_args_unclosed_quote() {
-        // Unclosed quote should treat content up to end as a single arg
-        let args = parse_positional_args(r#"hello "unclosed world"#);
-        assert_eq!(args, vec!["hello", "unclosed world"]);
-    }
-
-    #[test]
-    fn test_expand_more_placeholders_than_args() {
-        let content = "A: $1, B: $2, C: $3";
-        let result = expand_skill_arguments(content, "only-one");
-        // $1 replaced, $2 and $3 left as-is since no matching args
-        assert_eq!(result, "A: only-one, B: $2, C: $3");
-    }
-
-    // ---- Model override ----
 
     #[tokio::test]
     async fn test_invoke_skill_with_model_override() {
@@ -763,16 +496,12 @@ mod tests {
         fs::write(
             skill_dir.join("fast-lint.md"),
             "---\nname: fast-lint\ndescription: Fast lint\nmodel: gpt-4o-mini\n---\n\n# Lint\nDo fast linting.\n",
-        )
-        .unwrap();
-
+        ).unwrap();
         let loader = create_test_loader(Some(&skill_dir));
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("fast-lint"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         assert_eq!(result.metadata.get("skill_model").unwrap(), "gpt-4o-mini");
@@ -783,16 +512,12 @@ mod tests {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("commit"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         assert!(result.metadata.get("skill_model").is_none());
     }
-
-    // ---- Agent override ----
 
     #[tokio::test]
     async fn test_invoke_skill_with_agent_override() {
@@ -802,16 +527,12 @@ mod tests {
         fs::write(
             skill_dir.join("deploy.md"),
             "---\nname: deploy\ndescription: Deploy\nagent: devops\n---\n\n# Deploy\nDeploy steps.\n",
-        )
-        .unwrap();
-
+        ).unwrap();
         let loader = create_test_loader(Some(&skill_dir));
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("deploy"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         assert_eq!(result.metadata.get("skill_agent").unwrap(), "devops");
@@ -822,44 +543,27 @@ mod tests {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("commit"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         assert!(result.metadata.get("skill_agent").is_none());
     }
-
-    // ---- XML wrapping ----
 
     #[tokio::test]
     async fn test_skill_output_wrapped_in_xml() {
         let loader = create_test_loader(None);
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("commit"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         let output = result.output.unwrap();
-        assert!(
-            output.contains("<skill_content name=\"commit\">"),
-            "Should wrap in <skill_content> XML tag"
-        );
-        assert!(
-            output.contains("</skill_content>"),
-            "Should have closing </skill_content> tag"
-        );
-        assert!(
-            result.metadata.get("token_estimate").is_some(),
-            "Should include token_estimate in metadata"
-        );
+        assert!(output.contains("<skill_content name=\"commit\">"));
+        assert!(output.contains("</skill_content>"));
+        assert!(result.metadata.get("token_estimate").is_some());
     }
-
-    // ---- Namespaced skill lookup ----
 
     #[tokio::test]
     async fn test_load_namespaced_skill() {
@@ -871,14 +575,11 @@ mod tests {
             "---\nname: rebase\ndescription: Git rebase\nnamespace: git\n---\n\n# Rebase\n",
         )
         .unwrap();
-
         let loader = create_test_loader(Some(&skill_dir));
         let tool = InvokeSkillTool::new(loader);
         let ctx = ToolContext::new("/tmp/test");
-
         let mut args = HashMap::new();
         args.insert("skill_name".to_string(), serde_json::json!("git:rebase"));
-
         let result = tool.execute(args, &ctx).await;
         assert!(result.success);
         assert!(result.output.unwrap().contains("Loaded skill: rebase"));
