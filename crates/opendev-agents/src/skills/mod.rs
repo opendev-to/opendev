@@ -22,15 +22,21 @@
 //! When making commits: ...
 //! ```
 
+mod discovery;
 mod metadata;
+mod parsing;
 
 pub use metadata::{CompanionFile, LoadedSkill, SkillMetadata, SkillSource};
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use regex::Regex;
 use tracing::{debug, warn};
+
+use discovery::{
+    detect_source, discover_companion_files, glob_md_files, is_cache_stale, pull_url_skills,
+};
+use parsing::{parse_frontmatter_file, parse_frontmatter_str, strip_frontmatter};
 
 // ============================================================================
 // Built-in skills, embedded at compile time
@@ -377,488 +383,11 @@ impl SkillLoader {
     }
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Check if a cached skill's file has been modified since it was cached.
-///
-/// Returns `true` if the file's current mtime is newer than the cached mtime,
-/// indicating the cache should be invalidated. Builtin skills (no path) are
-/// never stale.
-fn is_cache_stale(skill: &LoadedSkill) -> bool {
-    let path = match &skill.metadata.path {
-        Some(p) => p,
-        None => return false, // Builtins never stale
-    };
-
-    let cached_mtime = match skill.cached_mtime {
-        Some(t) => t,
-        None => return false, // No mtime recorded — can't check
-    };
-
-    match std::fs::metadata(path) {
-        Ok(meta) => meta
-            .modified()
-            .map(|current| current > cached_mtime)
-            .unwrap_or(false),
-        Err(_) => false, // File gone — keep cache, let load fail if re-invoked
-    }
-}
-
-/// Maximum number of companion files to discover per skill.
-const MAX_COMPANION_FILES: usize = 10;
-
-/// Discover companion files alongside a directory-style skill.
-///
-/// If the skill file is in a subdirectory (e.g. `skills/testing/SKILL.md`),
-/// discovers up to [`MAX_COMPANION_FILES`] sibling files, excluding the skill
-/// file itself and `.git` directories.
-fn discover_companion_files(skill_path: &Path) -> Vec<metadata::CompanionFile> {
-    let skill_dir = match skill_path.parent() {
-        Some(d) => d,
-        None => return vec![],
-    };
-
-    // Only discover companions for directory-style skills (file inside a subdir),
-    // not for flat skills sitting directly in the skills root.
-    let skill_filename = skill_path
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or("");
-
-    // Heuristic: if the file is named SKILL.md or is inside a subdir that isn't
-    // the top-level skills dir, it's a directory-style skill.
-    // We collect siblings regardless — even flat skills could have companions
-    // if they happen to be in a subdirectory.
-    let mut files = Vec::new();
-    collect_companion_files(skill_dir, skill_dir, skill_filename, &mut files);
-    files.truncate(MAX_COMPANION_FILES);
-    files
-}
-
-fn collect_companion_files(
-    base_dir: &Path,
-    dir: &Path,
-    exclude_filename: &str,
-    out: &mut Vec<metadata::CompanionFile>,
-) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        if out.len() >= MAX_COMPANION_FILES {
-            return;
-        }
-
-        let path = entry.path();
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-
-        // Skip .git directories.
-        if name_str == ".git" {
-            continue;
-        }
-
-        if path.is_dir() {
-            collect_companion_files(base_dir, &path, "", out);
-        } else {
-            // Skip the skill file itself.
-            if dir == base_dir && name_str == exclude_filename {
-                continue;
-            }
-
-            let relative = path
-                .strip_prefix(base_dir)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| name_str.to_string());
-
-            out.push(metadata::CompanionFile {
-                path: path.clone(),
-                relative_path: relative,
-            });
-        }
-    }
-}
-
-// ============================================================================
-// URL Skill Discovery
-// ============================================================================
-
-/// Timeout for HTTP fetches in seconds.
-const URL_FETCH_TIMEOUT_SECS: u64 = 10;
-
-/// Maximum size of downloaded skill content in bytes (1 MB).
-const MAX_SKILL_DOWNLOAD_BYTES: usize = 1_000_000;
-
-/// Fetch a URL and return its body as a string.
-///
-/// Uses `curl` via `std::process::Command` to avoid async runtime conflicts
-/// (same approach as remote instructions).
-fn fetch_url(url: &str) -> Result<String, String> {
-    let output = std::process::Command::new("curl")
-        .args([
-            "-sSfL",
-            "--max-time",
-            &URL_FETCH_TIMEOUT_SECS.to_string(),
-            url,
-        ])
-        .output()
-        .map_err(|e| format!("failed to run curl: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("curl failed for {url}: {stderr}"));
-    }
-
-    let body = String::from_utf8_lossy(&output.stdout);
-    if body.len() > MAX_SKILL_DOWNLOAD_BYTES {
-        return Err(format!(
-            "response too large ({} bytes, max {})",
-            body.len(),
-            MAX_SKILL_DOWNLOAD_BYTES
-        ));
-    }
-
-    Ok(body.into_owned())
-}
-
-/// Pull skills from a remote URL.
-///
-/// Fetches `index.json` from the URL, downloads listed skill files to a
-/// local cache directory, and returns the list of skill directories.
-///
-/// ## Index Format
-/// ```json
-/// {
-///   "skills": [
-///     { "name": "my-skill", "files": ["SKILL.md", "helper.py"] }
-///   ]
-/// }
-/// ```
-fn pull_url_skills(base_url: &str) -> Result<Vec<PathBuf>, String> {
-    let base = if base_url.ends_with('/') {
-        base_url.to_string()
-    } else {
-        format!("{base_url}/")
-    };
-
-    // Determine cache directory
-    let cache_dir = dirs::cache_dir()
-        .or_else(dirs::home_dir)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("opendev")
-        .join("skills-cache");
-
-    // Fetch index.json
-    let index_url = format!("{base}index.json");
-    let index_body = fetch_url(&index_url)?;
-
-    let index: serde_json::Value =
-        serde_json::from_str(&index_body).map_err(|e| format!("invalid index.json: {e}"))?;
-
-    let skill_entries = index
-        .get("skills")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "index.json missing 'skills' array".to_string())?;
-
-    let mut result_dirs = Vec::new();
-
-    for entry in skill_entries {
-        let name = match entry.get("name").and_then(|v| v.as_str()) {
-            Some(n) => n,
-            None => continue,
-        };
-
-        let files = match entry.get("files").and_then(|v| v.as_array()) {
-            Some(f) => f,
-            None => continue,
-        };
-
-        let skill_dir = cache_dir.join(name);
-
-        // Download each file (skip if already cached)
-        for file_val in files {
-            let file_name = match file_val.as_str() {
-                Some(f) => f,
-                None => continue,
-            };
-
-            let dest = skill_dir.join(file_name);
-            if dest.exists() {
-                continue; // Already cached
-            }
-
-            let file_url = format!("{base}{name}/{file_name}");
-            match fetch_url(&file_url) {
-                Ok(content) => {
-                    if let Some(parent) = dest.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    if let Err(e) = std::fs::write(&dest, &content) {
-                        warn!(
-                            file = %dest.display(),
-                            error = %e,
-                            "Failed to write cached skill file"
-                        );
-                    } else {
-                        debug!(
-                            file = %dest.display(),
-                            url = file_url,
-                            "Downloaded skill file"
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(url = file_url, error = %e, "Failed to download skill file");
-                }
-            }
-        }
-
-        // Only include the directory if it has at least one .md file
-        if skill_dir.exists()
-            && std::fs::read_dir(&skill_dir)
-                .map(|entries| {
-                    entries
-                        .filter_map(|e| e.ok())
-                        .any(|e| e.path().extension().is_some_and(|ext| ext == "md"))
-                })
-                .unwrap_or(false)
-        {
-            result_dirs.push(skill_dir);
-        }
-    }
-
-    debug!(
-        url = base_url,
-        count = result_dirs.len(),
-        "Pulled skills from URL"
-    );
-
-    Ok(result_dirs)
-}
-
-fn detect_source(skill_dir: &Path) -> SkillSource {
-    if let Some(home) = dirs::home_dir() {
-        // Check if the path is under the user home directory's .opendev/skills, .claude/skills,
-        // or .agents/skills.
-        for subdir in &[".opendev", ".claude", ".agents"] {
-            let global_dir = home.join(subdir).join("skills");
-            if skill_dir.starts_with(&global_dir) {
-                return SkillSource::UserGlobal;
-            }
-        }
-    }
-    SkillSource::Project
-}
-
-/// Recursively find all `.md` files in a directory.
-fn glob_md_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut results = Vec::new();
-    collect_md_files(dir, &mut results)?;
-    Ok(results)
-}
-
-fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_md_files(&path, out)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            out.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// Parse frontmatter from a file on disk.
-fn parse_frontmatter_file(path: &Path) -> Option<SkillMetadata> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            debug!(path = %path.display(), error = %e, "failed to read skill file");
-            return None;
-        }
-    };
-    let mut meta = parse_frontmatter_str(&content)?;
-    if meta.name.is_empty() {
-        // Fall back to filename stem.
-        meta.name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-    }
-    Some(meta)
-}
-
-/// Parse YAML frontmatter from a string.
-///
-/// Expects the format:
-/// ```text
-/// ---
-/// name: foo
-/// description: bar
-/// namespace: baz
-/// ---
-/// ```
-fn parse_frontmatter_str(content: &str) -> Option<SkillMetadata> {
-    let re = Regex::new(r"(?s)^---\n(.*?)\n---").ok()?;
-    let caps = re.captures(content)?;
-    let frontmatter = caps.get(1)?.as_str();
-
-    // Simple key-value parsing (handles the common case without a full YAML parser).
-    let data = parse_simple_yaml(frontmatter);
-
-    let name = data.get("name").cloned().unwrap_or_default();
-    let description = data
-        .get("description")
-        .cloned()
-        .unwrap_or_else(|| format!("Skill: {}", if name.is_empty() { "unknown" } else { &name }));
-    let namespace = data
-        .get("namespace")
-        .cloned()
-        .unwrap_or_else(|| "default".to_string());
-
-    let model = data.get("model").cloned().filter(|s| !s.is_empty());
-    let agent = data.get("agent").cloned().filter(|s| !s.is_empty());
-
-    Some(SkillMetadata {
-        name,
-        description,
-        namespace,
-        path: None,
-        source: SkillSource::Builtin,
-        model,
-        agent,
-    })
-}
-
-/// Simple YAML-like key:value parser for frontmatter.
-///
-/// Only handles flat `key: value` pairs. Strips surrounding quotes from values.
-fn parse_simple_yaml(text: &str) -> HashMap<String, String> {
-    let mut result = HashMap::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = trimmed.split_once(':') {
-            let key = key.trim().to_string();
-            let mut value = value.trim().to_string();
-            // Strip surrounding quotes.
-            if (value.starts_with('"') && value.ends_with('"'))
-                || (value.starts_with('\'') && value.ends_with('\''))
-            {
-                value = value[1..value.len() - 1].to_string();
-            }
-            result.insert(key, value);
-        }
-    }
-    result
-}
-
-/// Strip YAML frontmatter from markdown content, returning the body.
-fn strip_frontmatter(content: &str) -> String {
-    let re = match Regex::new(r"(?s)^---\n.*?\n---\n*") {
-        Ok(r) => r,
-        Err(_) => return content.to_string(),
-    };
-    re.replace(content, "").to_string()
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
-
-    // ---- Frontmatter parsing ----
-
-    #[test]
-    fn test_parse_frontmatter_basic() {
-        let content = "---\nname: commit\ndescription: Git commit skill\n---\n\n# Commit\n";
-        let meta = parse_frontmatter_str(content).unwrap();
-        assert_eq!(meta.name, "commit");
-        assert_eq!(meta.description, "Git commit skill");
-        assert_eq!(meta.namespace, "default");
-    }
-
-    #[test]
-    fn test_parse_frontmatter_with_namespace() {
-        let content = "---\nname: rebase\ndescription: Rebase skill\nnamespace: git\n---\n\nBody\n";
-        let meta = parse_frontmatter_str(content).unwrap();
-        assert_eq!(meta.name, "rebase");
-        assert_eq!(meta.namespace, "git");
-    }
-
-    #[test]
-    fn test_parse_frontmatter_quoted_values() {
-        let content = "---\nname: \"my-skill\"\ndescription: 'Use when testing'\n---\n\nBody\n";
-        let meta = parse_frontmatter_str(content).unwrap();
-        assert_eq!(meta.name, "my-skill");
-        assert_eq!(meta.description, "Use when testing");
-    }
-
-    #[test]
-    fn test_parse_frontmatter_missing_returns_none() {
-        let content = "# No frontmatter here\nJust a plain markdown file.\n";
-        assert!(parse_frontmatter_str(content).is_none());
-    }
-
-    #[test]
-    fn test_parse_frontmatter_empty_name_fallback() {
-        let content = "---\ndescription: Some skill\n---\n\nBody\n";
-        let meta = parse_frontmatter_str(content).unwrap();
-        assert!(meta.name.is_empty()); // caller (parse_frontmatter_file) fills in
-        assert_eq!(meta.description, "Some skill");
-    }
-
-    // ---- Strip frontmatter ----
-
-    #[test]
-    fn test_strip_frontmatter() {
-        let content = "---\nname: foo\n---\n\n# Title\nBody text.";
-        let body = strip_frontmatter(content);
-        assert!(body.starts_with("# Title"));
-        assert!(!body.contains("---"));
-    }
-
-    #[test]
-    fn test_strip_frontmatter_no_frontmatter() {
-        let content = "# Just markdown\nNo frontmatter.";
-        let body = strip_frontmatter(content);
-        assert_eq!(body, content);
-    }
-
-    // ---- Simple YAML parser ----
-
-    #[test]
-    fn test_parse_simple_yaml() {
-        let text = "name: commit\ndescription: \"Git commit\"\n# comment\nnamespace: git";
-        let data = parse_simple_yaml(text);
-        assert_eq!(data.get("name").unwrap(), "commit");
-        assert_eq!(data.get("description").unwrap(), "Git commit");
-        assert_eq!(data.get("namespace").unwrap(), "git");
-    }
-
-    #[test]
-    fn test_parse_simple_yaml_single_quotes() {
-        let text = "name: 'my-skill'";
-        let data = parse_simple_yaml(text);
-        assert_eq!(data.get("name").unwrap(), "my-skill");
-    }
 
     // ---- Variable expansion ----
 
@@ -1212,7 +741,7 @@ mod tests {
         loader.discover_skills();
 
         let skill = loader.load_skill("big-skill").unwrap();
-        assert_eq!(skill.companion_files.len(), MAX_COMPANION_FILES);
+        assert_eq!(skill.companion_files.len(), 10);
     }
 
     #[test]
@@ -1261,38 +790,34 @@ mod tests {
 
     // ---- Namespaced skill lookup ----
 
+    #[test]
+    fn test_load_namespaced_skill() {
+        let tmp = TempDir::new().unwrap();
+        let skill_dir = tmp.path().join("skills");
+        fs::create_dir_all(&skill_dir).unwrap();
+
+        fs::write(
+            skill_dir.join("rebase.md"),
+            "---\nname: rebase\ndescription: Git rebase\nnamespace: git\n---\n\n# Rebase\n",
+        )
+        .unwrap();
+
+        let mut loader = SkillLoader::new(vec![skill_dir]);
+        loader.discover_skills();
+
+        // Load by full namespaced name.
+        let skill = loader.load_skill("git:rebase").unwrap();
+        assert_eq!(skill.metadata.name, "rebase");
+        assert_eq!(skill.metadata.namespace, "git");
+
+        // Also loadable by bare name.
+        let mut loader2 = SkillLoader::new(vec![tmp.path().join("skills")]);
+        loader2.discover_skills();
+        let skill2 = loader2.load_skill("rebase").unwrap();
+        assert_eq!(skill2.metadata.name, "rebase");
+    }
+
     // ---- Model override ----
-
-    #[test]
-    fn test_parse_frontmatter_with_model() {
-        let content = "---\nname: fast-review\ndescription: Quick review\nmodel: gpt-4o-mini\n---\n\n# Review\n";
-        let meta = parse_frontmatter_str(content).unwrap();
-        assert_eq!(meta.name, "fast-review");
-        assert_eq!(meta.model.as_deref(), Some("gpt-4o-mini"));
-    }
-
-    #[test]
-    fn test_parse_frontmatter_with_agent() {
-        let content =
-            "---\nname: deploy\ndescription: Deploy skill\nagent: devops\n---\n\n# Deploy\n";
-        let meta = parse_frontmatter_str(content).unwrap();
-        assert_eq!(meta.name, "deploy");
-        assert_eq!(meta.agent.as_deref(), Some("devops"));
-    }
-
-    #[test]
-    fn test_parse_frontmatter_no_agent_field() {
-        let content = "---\nname: commit\ndescription: Git commit skill\n---\n\n# Commit\n";
-        let meta = parse_frontmatter_str(content).unwrap();
-        assert!(meta.agent.is_none());
-    }
-
-    #[test]
-    fn test_parse_frontmatter_no_model_field() {
-        let content = "---\nname: commit\ndescription: Git commit skill\n---\n\n# Commit\n";
-        let meta = parse_frontmatter_str(content).unwrap();
-        assert!(meta.model.is_none());
-    }
 
     #[test]
     fn test_load_skill_with_model_override() {
@@ -1312,6 +837,8 @@ mod tests {
         let skill = loader.load_skill("fast-lint").unwrap();
         assert_eq!(skill.metadata.model.as_deref(), Some("gpt-4o-mini"));
     }
+
+    // ---- Directory discovery across .claude, .agents, .opendev ----
 
     #[test]
     fn test_discover_skills_from_claude_skills_dir() {
@@ -1414,33 +941,6 @@ mod tests {
         assert_eq!(shared.description, "From .agents");
     }
 
-    #[test]
-    fn test_load_namespaced_skill() {
-        let tmp = TempDir::new().unwrap();
-        let skill_dir = tmp.path().join("skills");
-        fs::create_dir_all(&skill_dir).unwrap();
-
-        fs::write(
-            skill_dir.join("rebase.md"),
-            "---\nname: rebase\ndescription: Git rebase\nnamespace: git\n---\n\n# Rebase\n",
-        )
-        .unwrap();
-
-        let mut loader = SkillLoader::new(vec![skill_dir]);
-        loader.discover_skills();
-
-        // Load by full namespaced name.
-        let skill = loader.load_skill("git:rebase").unwrap();
-        assert_eq!(skill.metadata.name, "rebase");
-        assert_eq!(skill.metadata.namespace, "git");
-
-        // Also loadable by bare name.
-        let mut loader2 = SkillLoader::new(vec![tmp.path().join("skills")]);
-        loader2.discover_skills();
-        let skill2 = loader2.load_skill("rebase").unwrap();
-        assert_eq!(skill2.metadata.name, "rebase");
-    }
-
     // --- URL skill discovery tests ---
 
     #[test]
@@ -1453,20 +953,6 @@ mod tests {
         ]);
         assert_eq!(loader.skill_urls.len(), 2);
         assert_eq!(loader.skill_urls[0], "https://example.com/skills");
-    }
-
-    #[test]
-    fn test_fetch_url_invalid_command() {
-        // Unreachable URL should return error
-        let result = fetch_url("https://192.0.2.1/nonexistent");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_pull_url_skills_invalid_url() {
-        let result = pull_url_skills("https://192.0.2.1/nonexistent");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("curl failed"));
     }
 
     #[test]
@@ -1527,128 +1013,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_skill_source_url_display() {
-        let source = SkillSource::Url("https://example.com/skills".to_string());
-        assert_eq!(source.to_string(), "url:https://example.com/skills");
-    }
-
     // --- Cache invalidation via mtime ---
-
-    #[test]
-    fn test_is_cache_stale_builtin_never_stale() {
-        let skill = LoadedSkill {
-            metadata: SkillMetadata {
-                name: "commit".to_string(),
-                description: "Builtin commit".to_string(),
-                namespace: "default".to_string(),
-                path: None,
-                source: SkillSource::Builtin,
-                model: None,
-                agent: None,
-            },
-            content: "content".to_string(),
-            companion_files: vec![],
-            cached_mtime: None,
-        };
-        assert!(!is_cache_stale(&skill));
-    }
-
-    #[test]
-    fn test_is_cache_stale_no_mtime_not_stale() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("skill.md");
-        std::fs::write(&file, "---\nname: test\ndescription: t\n---\ncontent").unwrap();
-
-        let skill = LoadedSkill {
-            metadata: SkillMetadata {
-                name: "test".to_string(),
-                description: "t".to_string(),
-                namespace: "default".to_string(),
-                path: Some(file),
-                source: SkillSource::Project,
-                model: None,
-                agent: None,
-            },
-            content: "content".to_string(),
-            companion_files: vec![],
-            cached_mtime: None, // No mtime recorded
-        };
-        assert!(!is_cache_stale(&skill));
-    }
-
-    #[test]
-    fn test_is_cache_stale_unmodified_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("skill.md");
-        std::fs::write(&file, "---\nname: test\ndescription: t\n---\ncontent").unwrap();
-
-        let mtime = std::fs::metadata(&file).unwrap().modified().unwrap();
-
-        let skill = LoadedSkill {
-            metadata: SkillMetadata {
-                name: "test".to_string(),
-                description: "t".to_string(),
-                namespace: "default".to_string(),
-                path: Some(file),
-                source: SkillSource::Project,
-                model: None,
-                agent: None,
-            },
-            content: "content".to_string(),
-            companion_files: vec![],
-            cached_mtime: Some(mtime),
-        };
-        assert!(!is_cache_stale(&skill));
-    }
-
-    #[test]
-    fn test_is_cache_stale_modified_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("skill.md");
-        std::fs::write(&file, "---\nname: test\ndescription: t\n---\noriginal").unwrap();
-
-        // Record an old mtime (1 second in the past).
-        let old_mtime = std::time::SystemTime::now() - std::time::Duration::from_secs(2);
-
-        let skill = LoadedSkill {
-            metadata: SkillMetadata {
-                name: "test".to_string(),
-                description: "t".to_string(),
-                namespace: "default".to_string(),
-                path: Some(file.clone()),
-                source: SkillSource::Project,
-                model: None,
-                agent: None,
-            },
-            content: "original".to_string(),
-            companion_files: vec![],
-            cached_mtime: Some(old_mtime),
-        };
-
-        // File was written "now", cached mtime is 2s in the past → stale.
-        assert!(is_cache_stale(&skill));
-    }
-
-    #[test]
-    fn test_is_cache_stale_deleted_file() {
-        let skill = LoadedSkill {
-            metadata: SkillMetadata {
-                name: "gone".to_string(),
-                description: "t".to_string(),
-                namespace: "default".to_string(),
-                path: Some(PathBuf::from("/nonexistent/skill.md")),
-                source: SkillSource::Project,
-                model: None,
-                agent: None,
-            },
-            content: "content".to_string(),
-            companion_files: vec![],
-            cached_mtime: Some(std::time::SystemTime::now()),
-        };
-        // File doesn't exist → not stale (keep cache).
-        assert!(!is_cache_stale(&skill));
-    }
 
     #[test]
     fn test_load_skill_reloads_after_file_change() {
@@ -1662,7 +1027,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut loader = SkillLoader::new(vec![skills_dir.clone()]);
+        let mut loader = SkillLoader::new(vec![skills_dir]);
 
         // First load.
         let skill1 = loader.load_skill("hot-reload").unwrap();
