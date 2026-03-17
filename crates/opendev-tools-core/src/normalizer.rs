@@ -7,17 +7,20 @@
 //! - Workspace root guard (warn for paths outside workspace)
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::warn;
 
-/// Parameters that contain file/directory paths and should be resolved.
-const PATH_PARAMS: &[&str] = &[
+/// Parameters that contain file paths and should be resolved via `resolve_file_path`.
+const FILE_PATH_PARAMS: &[&str] = &[
     "file_path",
     "notebook_path",
     "output_path",
     "plan_file_path",
     "image_path",
 ];
+
+/// Parameters that contain directory paths and should be resolved via `resolve_dir_path`.
+const DIR_PATH_PARAMS: &[&str] = &["path", "working_dir", "workdir"];
 
 /// Known camelCase -> snake_case mappings from LLM errors.
 fn camel_to_snake(key: &str) -> Option<&'static str> {
@@ -105,13 +108,43 @@ pub fn normalize_params(
             }
         }
 
-        // 3. Path resolution
-        if PATH_PARAMS.contains(&new_key.as_str())
-            && let Some(s) = value.as_str()
+        // 3. Path resolution — use file resolver for file params, dir resolver for dir params
+        if let Some(s) = value.as_str()
             && !s.is_empty()
         {
-            let resolved = resolve_path(s, working_dir);
-            value = serde_json::Value::String(resolved);
+            let is_file = FILE_PATH_PARAMS.contains(&new_key.as_str());
+            let is_dir = DIR_PATH_PARAMS.contains(&new_key.as_str());
+            if (is_file || is_dir)
+                && let Some(wd) = working_dir
+            {
+                let wd_path = Path::new(wd);
+                let resolved = if is_dir {
+                    crate::path::resolve_dir_path(s, wd_path)
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    crate::path::resolve_file_path(s, wd_path)
+                        .to_string_lossy()
+                        .to_string()
+                };
+                if resolved != s {
+                    warn!(
+                        tool = %_tool_name,
+                        param = %new_key,
+                        original = %s,
+                        resolved = %resolved,
+                        working_dir = %wd,
+                        "Path param resolved"
+                    );
+                }
+                value = serde_json::Value::String(resolved);
+            } else if is_file || is_dir {
+                // No working dir: just expand home + normalize
+                let resolved = resolve_path(s, working_dir);
+                if resolved != s {
+                    value = serde_json::Value::String(resolved);
+                }
+            }
         }
 
         normalized.insert(new_key, value);
@@ -122,69 +155,45 @@ pub fn normalize_params(
 
 /// Resolve a path string to an absolute path.
 ///
-/// - Expands `~` to home directory
-/// - Resolves relative paths against `working_dir`
-/// - Normalizes `.` and `..` components
-/// - Warns for paths outside workspace and home directory
+/// Delegates to [`crate::path::resolve_file_path`] for full resolution including
+/// redundant basename detection, `~/` and `$HOME/` expansion, `./` stripping, etc.
+/// Falls back to basic expansion + normalization when no working directory is available.
 fn resolve_path(path_str: &str, working_dir: Option<&str>) -> String {
-    // Expand ~ to home directory
-    let expanded = if let Some(stripped) = path_str.strip_prefix('~') {
-        if let Some(home) = dirs::home_dir() {
-            let rest = stripped.strip_prefix('/').unwrap_or(stripped);
-            home.join(rest).to_string_lossy().to_string()
-        } else {
-            path_str.to_string()
-        }
-    } else {
-        path_str.to_string()
-    };
-
-    let path = Path::new(&expanded);
-
-    // If already absolute, just normalize
-    let resolved = if path.is_absolute() {
-        normalize_path(path)
-    } else if let Some(wd) = working_dir {
-        normalize_path(&Path::new(wd).join(path))
-    } else if let Ok(cwd) = std::env::current_dir() {
-        normalize_path(&cwd.join(path))
-    } else {
-        expanded
-    };
-
-    // Workspace guard: warn for paths outside workspace and home
     if let Some(wd) = working_dir {
-        let resolved_path = Path::new(&resolved);
-        let in_workspace = resolved_path.starts_with(wd);
+        let resolved = crate::path::resolve_file_path(path_str, Path::new(wd));
+        let resolved_str = resolved.to_string_lossy().to_string();
+
+        // Workspace guard: warn for paths outside workspace and home
+        let in_workspace = resolved.starts_with(wd);
         let in_home = dirs::home_dir()
-            .map(|h| resolved_path.starts_with(&h))
+            .map(|h| resolved.starts_with(&h))
             .unwrap_or(false);
         if !in_workspace && !in_home {
             warn!(
-                path = %resolved,
+                path = %resolved_str,
                 workspace = %wd,
                 "Path is outside workspace and user home"
             );
         }
-    }
 
-    resolved
-}
+        resolved_str
+    } else {
+        // No working dir: expand home + normalize, fall back to cwd
+        let expanded = crate::path::expand_home(path_str);
+        let path = Path::new(&expanded);
 
-/// Normalize a path by resolving `.` and `..` components without filesystem access.
-fn normalize_path(path: &Path) -> String {
-    let mut components = Vec::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                components.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => components.push(other),
+        if path.is_absolute() {
+            crate::path::normalize_path(path)
+                .to_string_lossy()
+                .to_string()
+        } else if let Ok(cwd) = std::env::current_dir() {
+            crate::path::normalize_path(&cwd.join(path))
+                .to_string_lossy()
+                .to_string()
+        } else {
+            expanded
         }
     }
-    let result: PathBuf = components.iter().collect();
-    result.to_string_lossy().to_string()
 }
 
 #[cfg(test)]
@@ -299,8 +308,57 @@ mod tests {
 
     #[test]
     fn test_normalize_path() {
-        assert_eq!(normalize_path(Path::new("/a/b/../c")), "/a/c");
-        assert_eq!(normalize_path(Path::new("/a/./b/c")), "/a/b/c");
-        assert_eq!(normalize_path(Path::new("/a/b/c")), "/a/b/c");
+        use std::path::PathBuf;
+        assert_eq!(
+            crate::path::normalize_path(Path::new("/a/b/../c")),
+            PathBuf::from("/a/c")
+        );
+        assert_eq!(
+            crate::path::normalize_path(Path::new("/a/./b/c")),
+            PathBuf::from("/a/b/c")
+        );
+        assert_eq!(
+            crate::path::normalize_path(Path::new("/a/b/c")),
+            PathBuf::from("/a/b/c")
+        );
+    }
+
+    #[test]
+    fn test_normalize_params_redundant_basename() {
+        // Simulates LLM passing "myproject/main.rs" when cwd is /home/user/myproject
+        // The normalizer should delegate to path::resolve_file_path which handles this.
+        let mut args = HashMap::new();
+        args.insert("file_path".into(), serde_json::json!("myproject/main.rs"));
+
+        let result = normalize_params("read_file", args, Some("/home/user/myproject"));
+        assert_eq!(
+            result["file_path"],
+            serde_json::json!("/home/user/myproject/myproject/main.rs")
+        );
+        // Note: without the actual filesystem, resolve_file_path can't detect the
+        // redundancy (it checks .exists()). The normalizer test above confirms delegation;
+        // the path module's own tests cover the filesystem-dependent redundancy detection.
+    }
+
+    #[test]
+    fn test_normalize_params_path_param_resolved() {
+        // The "path" param should now be resolved too
+        let mut args = HashMap::new();
+        args.insert("path".into(), serde_json::json!("src/lib.rs"));
+
+        let result = normalize_params("file_search", args, Some("/workspace"));
+        assert_eq!(result["path"], serde_json::json!("/workspace/src/lib.rs"));
+    }
+
+    #[test]
+    fn test_normalize_params_working_dir_param_resolved() {
+        let mut args = HashMap::new();
+        args.insert("working_dir".into(), serde_json::json!("subdir"));
+
+        let result = normalize_params("spawn_subagent", args, Some("/workspace"));
+        assert_eq!(
+            result["working_dir"],
+            serde_json::json!("/workspace/subdir")
+        );
     }
 }

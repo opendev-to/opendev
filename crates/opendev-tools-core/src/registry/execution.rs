@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::middleware::ToolMiddleware;
 use crate::normalizer;
@@ -117,6 +117,7 @@ impl ToolRegistry {
         // Normalize parameters
         let working_dir = ctx.working_dir.to_string_lossy().to_string();
         let normalized = normalizer::normalize_params(tool_name, args, Some(&working_dir));
+        debug!(tool = %tool_name, params = ?normalized, "Normalized tool params");
 
         // Deduplication: check cache
         let dedup_key = make_dedup_key(tool_name, &normalized);

@@ -248,10 +248,7 @@ impl BaseTool for SpawnSubagentTool {
 
                 // Embed stats as a parseable header so the TUI can extract them
                 // even if bridge events (SubagentToolCall/Finished) haven't arrived yet.
-                let mut output = format!(
-                    "__subagent_stats__:tc={}\n",
-                    run_result.tool_call_count
-                );
+                let mut output = format!("__subagent_stats__:tc={}\n", run_result.tool_call_count);
                 output.push_str(&format!("task_id: {child_session_id} (for resuming)\n\n"));
 
                 // Cap subagent result size to prevent context bloat (50 KB max).

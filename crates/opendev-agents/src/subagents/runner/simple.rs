@@ -1,7 +1,6 @@
 //! SimpleReactRunner — stripped-down loop for Explore subagents.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -11,6 +10,19 @@ use tracing::{debug, info, warn};
 use super::{RunnerContext, SubagentRunner};
 use crate::react_loop::{PARALLELIZABLE_TOOLS, ReactLoop};
 use crate::traits::{AgentError, AgentResult};
+
+/// Normalize path arguments before emitting `on_tool_started` events.
+///
+/// Uses the canonical normalizer from `opendev-tools-core` so subagent event
+/// displays show resolved paths (not raw LLM output like `src` or `./src`).
+fn normalize_tool_args(
+    tool_name: &str,
+    args: HashMap<String, Value>,
+    working_dir: &std::path::Path,
+) -> HashMap<String, Value> {
+    let wd = working_dir.to_string_lossy().to_string();
+    opendev_tools_core::normalizer::normalize_params(tool_name, args, Some(&wd))
+}
 
 /// A clean, minimal react loop for read-only exploration subagents.
 ///
@@ -214,73 +226,6 @@ impl SimpleReactRunner {
 
         obs
     }
-
-    /// Normalize file path arguments against the working directory.
-    ///
-    /// LLMs often pass redundant paths like `project/src/main.rs` when cwd is
-    /// already `/Users/.../project`. This strips the redundant prefix so both
-    /// the tool execution and event display see clean relative paths.
-    fn normalize_path_args(args: &mut HashMap<String, Value>, working_dir: &Path) {
-        for key in &["file_path", "path"] {
-            if let Some(val) = args
-                .get(*key)
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-            {
-                let resolved = Self::resolve_path(&val, working_dir);
-                if resolved != val {
-                    args.insert(key.to_string(), Value::String(resolved));
-                }
-            }
-        }
-    }
-
-    /// Resolve a user-provided path against the working directory.
-    ///
-    /// Handles: `./prefix`, absolute paths, and redundant basename prefix.
-    fn resolve_path(user_path: &str, working_dir: &Path) -> String {
-        // Strip ./ prefix
-        let path_str = user_path.strip_prefix("./").unwrap_or(user_path);
-        let path = Path::new(path_str);
-
-        if path.is_absolute() {
-            // Absolute path: strip working dir prefix, then check for redundant basename
-            if let Ok(rel) = path.strip_prefix(working_dir) {
-                let rel_str = rel.to_string_lossy();
-                // Check for redundant basename: /wd/basename/rest → rest
-                if let Some(basename) = working_dir.file_name().and_then(|n| n.to_str())
-                    && let Ok(inner) = rel.strip_prefix(basename)
-                {
-                    let inner_str = inner.to_string_lossy();
-                    if !inner_str.is_empty() {
-                        let joined = working_dir.join(&*inner_str);
-                        if joined.exists() || joined.parent().map(|p| p.is_dir()).unwrap_or(false) {
-                            return inner_str.to_string();
-                        }
-                    }
-                }
-                if !rel_str.is_empty() {
-                    return rel_str.to_string();
-                }
-            }
-            return path_str.to_string();
-        }
-
-        // Relative path: check if first component matches working dir basename
-        if let Some(basename) = working_dir.file_name().and_then(|n| n.to_str())
-            && let Some(rest) = path_str
-                .strip_prefix(basename)
-                .and_then(|r| r.strip_prefix('/'))
-            && !rest.is_empty()
-        {
-            let joined = working_dir.join(rest);
-            if joined.exists() || joined.parent().map(|p| p.is_dir()).unwrap_or(false) {
-                return rest.to_string();
-            }
-        }
-
-        path_str.to_string()
-    }
 }
 
 #[async_trait]
@@ -444,8 +389,8 @@ impl SubagentRunner for SimpleReactRunner {
                 let mut sequential_tcs: Vec<&Value> = Vec::new();
 
                 for tc in &tool_calls {
-                    let (id, name, mut args) = Self::extract_tool_info(tc);
-                    Self::normalize_path_args(&mut args, &ctx.tool_context.working_dir);
+                    let (id, name, args) = Self::extract_tool_info(tc);
+                    let args = normalize_tool_args(&name, args, &ctx.tool_context.working_dir);
                     if parallelizable.contains(name.as_str()) {
                         total_tool_calls += 1;
                         if let Some(cb) = ctx.event_callback {
@@ -486,8 +431,8 @@ impl SubagentRunner for SimpleReactRunner {
 
                 // Execute sequential tools
                 for tc in sequential_tcs {
-                    let (id, name, mut args) = Self::extract_tool_info(tc);
-                    Self::normalize_path_args(&mut args, &ctx.tool_context.working_dir);
+                    let (id, name, args) = Self::extract_tool_info(tc);
+                    let mut args = normalize_tool_args(&name, args, &ctx.tool_context.working_dir);
                     total_tool_calls += 1;
 
                     // Emit tool started

@@ -13,6 +13,7 @@
 pub mod middleware;
 pub mod normalizer;
 pub mod parallel;
+pub mod path;
 pub mod policy;
 pub mod registry;
 pub mod sanitizer;
