@@ -6,254 +6,26 @@
 //!
 //! Events are broadcast via `tokio::sync::broadcast`.
 
-use std::collections::{HashMap, HashSet};
+mod events;
+mod subscribers;
+mod utils;
+
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::sync::broadcast;
 use tracing::debug;
 
-use crate::session_status::SessionStatus;
+// Re-export public API so that `crate::event_bus::X` paths remain unchanged.
+pub use self::events::{Event, EventTopic, RuntimeEvent, now_ms};
+pub use self::subscribers::{FilteredSubscriber, TopicSubscriber};
+pub use self::utils::{group_events_by_type, group_runtime_events_by_topic};
 
 /// Maximum number of events buffered per channel.
 const DEFAULT_CAPACITY: usize = 256;
 
 // ---------------------------------------------------------------------------
-// Event topic — used for subscriber interest filtering (#94)
-// ---------------------------------------------------------------------------
-
-/// Identifies the category (topic) of a [`RuntimeEvent`].
-///
-/// Subscribers declare which topics they care about; the bus only delivers
-/// matching events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum EventTopic {
-    /// Tool execution lifecycle events.
-    Tool,
-    /// LLM request / response events.
-    Llm,
-    /// Agent lifecycle events (start, stop, error).
-    Agent,
-    /// Session lifecycle events.
-    Session,
-    /// Cost / token usage events.
-    Cost,
-    /// System-level events (config reload, shutdown).
-    System,
-    /// Custom / user-defined events.
-    Custom,
-}
-
-// ---------------------------------------------------------------------------
-// RuntimeEvent — typed event variants (#93)
-// ---------------------------------------------------------------------------
-
-/// A strongly-typed event published on the bus.
-///
-/// Each variant carries only the data relevant to that event kind, replacing
-/// the previous stringly-typed `Event` struct.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RuntimeEvent {
-    // -- Tool events --
-    /// A tool call is about to start.
-    ToolCallStart {
-        tool_name: String,
-        call_id: String,
-        timestamp_ms: u64,
-    },
-    /// A tool call completed.
-    ToolCallEnd {
-        tool_name: String,
-        call_id: String,
-        duration_ms: u64,
-        success: bool,
-        timestamp_ms: u64,
-    },
-
-    // -- LLM events --
-    /// An LLM request was sent.
-    LlmRequestStart {
-        model: String,
-        request_id: String,
-        timestamp_ms: u64,
-    },
-    /// An LLM response was received.
-    LlmResponseEnd {
-        model: String,
-        request_id: String,
-        input_tokens: u64,
-        output_tokens: u64,
-        duration_ms: u64,
-        timestamp_ms: u64,
-    },
-
-    // -- Agent events --
-    /// An agent started working.
-    AgentStart {
-        agent_id: String,
-        task: String,
-        timestamp_ms: u64,
-    },
-    /// An agent finished.
-    AgentEnd {
-        agent_id: String,
-        success: bool,
-        timestamp_ms: u64,
-    },
-    /// An agent encountered an error.
-    AgentError {
-        agent_id: String,
-        error: String,
-        timestamp_ms: u64,
-    },
-
-    // -- Session events --
-    /// Session started.
-    SessionStart {
-        session_id: String,
-        timestamp_ms: u64,
-    },
-    /// Session ended.
-    SessionEnd {
-        session_id: String,
-        timestamp_ms: u64,
-    },
-    /// Session status changed (idle → busy → retry → idle).
-    SessionStatusChanged {
-        session_id: String,
-        status: SessionStatus,
-        timestamp_ms: u64,
-    },
-
-    // -- Cost events --
-    /// Token usage was recorded.
-    TokenUsage {
-        model: String,
-        input_tokens: u64,
-        output_tokens: u64,
-        cost_usd: f64,
-        timestamp_ms: u64,
-    },
-
-    // -- Cost events --
-    /// Session cost budget has been exhausted.
-    ///
-    /// Published when [`CostTracker::is_over_budget`] returns `true` after
-    /// recording token usage. The agent loop should pause and notify the user.
-    BudgetExhausted {
-        budget_usd: f64,
-        total_cost_usd: f64,
-        timestamp_ms: u64,
-    },
-
-    // -- System events --
-    /// Configuration was reloaded.
-    ConfigReloaded { timestamp_ms: u64 },
-    /// Graceful shutdown requested.
-    ShutdownRequested { reason: String, timestamp_ms: u64 },
-
-    // -- Custom --
-    /// Escape hatch for events not covered by the typed variants.
-    Custom {
-        event_type: String,
-        source: String,
-        data: Value,
-        timestamp_ms: u64,
-    },
-}
-
-impl RuntimeEvent {
-    /// Return the [`EventTopic`] for this event.
-    pub fn topic(&self) -> EventTopic {
-        match self {
-            Self::ToolCallStart { .. } | Self::ToolCallEnd { .. } => EventTopic::Tool,
-            Self::LlmRequestStart { .. } | Self::LlmResponseEnd { .. } => EventTopic::Llm,
-            Self::AgentStart { .. } | Self::AgentEnd { .. } | Self::AgentError { .. } => {
-                EventTopic::Agent
-            }
-            Self::SessionStart { .. }
-            | Self::SessionEnd { .. }
-            | Self::SessionStatusChanged { .. } => EventTopic::Session,
-            Self::TokenUsage { .. } | Self::BudgetExhausted { .. } => EventTopic::Cost,
-            Self::ConfigReloaded { .. } | Self::ShutdownRequested { .. } => EventTopic::System,
-            Self::Custom { .. } => EventTopic::Custom,
-        }
-    }
-
-    /// Return the timestamp in milliseconds since epoch.
-    pub fn timestamp_ms(&self) -> u64 {
-        match self {
-            Self::ToolCallStart { timestamp_ms, .. }
-            | Self::ToolCallEnd { timestamp_ms, .. }
-            | Self::LlmRequestStart { timestamp_ms, .. }
-            | Self::LlmResponseEnd { timestamp_ms, .. }
-            | Self::AgentStart { timestamp_ms, .. }
-            | Self::AgentEnd { timestamp_ms, .. }
-            | Self::AgentError { timestamp_ms, .. }
-            | Self::SessionStart { timestamp_ms, .. }
-            | Self::SessionEnd { timestamp_ms, .. }
-            | Self::SessionStatusChanged { timestamp_ms, .. }
-            | Self::TokenUsage { timestamp_ms, .. }
-            | Self::BudgetExhausted { timestamp_ms, .. }
-            | Self::ConfigReloaded { timestamp_ms, .. }
-            | Self::ShutdownRequested { timestamp_ms, .. }
-            | Self::Custom { timestamp_ms, .. } => *timestamp_ms,
-        }
-    }
-}
-
-/// Helper: current time as milliseconds since UNIX epoch.
-pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
-// ---------------------------------------------------------------------------
-// Legacy Event — kept for backward compatibility
-// ---------------------------------------------------------------------------
-
-/// A legacy untyped event (kept for backward compatibility).
-///
-/// New code should prefer [`RuntimeEvent`] variants.
-#[derive(Debug, Clone)]
-pub struct Event {
-    /// Event type identifier (e.g., "tool_call_start", "llm_response").
-    pub event_type: String,
-    /// Component that published the event.
-    pub source: String,
-    /// Event payload.
-    pub data: Value,
-    /// Timestamp (milliseconds since epoch).
-    pub timestamp_ms: u64,
-}
-
-impl Event {
-    /// Create a new event.
-    pub fn new(event_type: impl Into<String>, source: impl Into<String>, data: Value) -> Self {
-        Self {
-            event_type: event_type.into(),
-            source: source.into(),
-            data,
-            timestamp_ms: now_ms(),
-        }
-    }
-
-    /// Convert a legacy `Event` into a [`RuntimeEvent::Custom`].
-    pub fn into_runtime_event(self) -> RuntimeEvent {
-        RuntimeEvent::Custom {
-            event_type: self.event_type,
-            source: self.source,
-            data: self.data,
-            timestamp_ms: self.timestamp_ms,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// EventBus — typed publish / subscribe (#93 + #94)
+// EventBus -- typed publish / subscribe (#93 + #94)
 // ---------------------------------------------------------------------------
 
 /// Typed event bus for broadcasting [`RuntimeEvent`] instances.
@@ -294,7 +66,7 @@ impl EventBus {
     }
 
     /// Convenience: publish a legacy `Event` by converting it to `RuntimeEvent::Custom`.
-    pub fn emit(&self, event_type: &str, source: &str, data: Value) {
+    pub fn emit(&self, event_type: &str, source: &str, data: serde_json::Value) {
         let event = Event::new(event_type, source, data);
         self.publish(event.into_runtime_event());
     }
@@ -309,10 +81,7 @@ impl EventBus {
     /// The returned [`TopicSubscriber`] only yields events whose topic is in
     /// the given set.
     pub fn subscribe_topics(&self, topics: HashSet<EventTopic>) -> TopicSubscriber {
-        TopicSubscriber {
-            receiver: self.inner.sender.subscribe(),
-            topics,
-        }
+        TopicSubscriber::new(self.inner.sender.subscribe(), topics)
     }
 
     /// Number of active subscribers.
@@ -333,132 +102,6 @@ impl std::fmt::Debug for EventBus {
             .field("subscribers", &self.subscriber_count())
             .finish()
     }
-}
-
-// ---------------------------------------------------------------------------
-// TopicSubscriber — topic-based filtering (#94)
-// ---------------------------------------------------------------------------
-
-/// A subscriber that only receives events matching its declared topics.
-pub struct TopicSubscriber {
-    receiver: broadcast::Receiver<RuntimeEvent>,
-    topics: HashSet<EventTopic>,
-}
-
-impl TopicSubscriber {
-    /// Receive the next event matching the subscriber's topics.
-    pub async fn recv(&mut self) -> Option<RuntimeEvent> {
-        loop {
-            match self.receiver.recv().await {
-                Ok(event) => {
-                    if self.topics.contains(&event.topic()) {
-                        return Some(event);
-                    }
-                    // Not interested — skip.
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    debug!("TopicSubscriber lagged, missed {n} events");
-                }
-                Err(broadcast::error::RecvError::Closed) => return None,
-            }
-        }
-    }
-
-    /// Return the set of topics this subscriber is interested in.
-    pub fn topics(&self) -> &HashSet<EventTopic> {
-        &self.topics
-    }
-}
-
-// ---------------------------------------------------------------------------
-// FilteredSubscriber — legacy string-based filtering (backward compat)
-// ---------------------------------------------------------------------------
-
-/// Filtered event subscriber — only receives events matching a filter.
-///
-/// Works with the legacy `event_type` string inside `RuntimeEvent::Custom`.
-pub struct FilteredSubscriber {
-    receiver: broadcast::Receiver<RuntimeEvent>,
-    event_types: Option<Vec<String>>,
-}
-
-impl FilteredSubscriber {
-    /// Create a filtered subscriber.
-    pub fn new(bus: &EventBus, event_types: Option<Vec<String>>) -> Self {
-        Self {
-            receiver: bus.subscribe(),
-            event_types,
-        }
-    }
-
-    /// Receive the next matching event (returns a legacy `Event`).
-    pub async fn recv(&mut self) -> Option<Event> {
-        loop {
-            match self.receiver.recv().await {
-                Ok(runtime_event) => {
-                    // Convert RuntimeEvent to legacy Event for compat.
-                    let legacy = match &runtime_event {
-                        RuntimeEvent::Custom {
-                            event_type,
-                            source,
-                            data,
-                            timestamp_ms,
-                        } => Event {
-                            event_type: event_type.clone(),
-                            source: source.clone(),
-                            data: data.clone(),
-                            timestamp_ms: *timestamp_ms,
-                        },
-                        other => Event {
-                            event_type: format!("{:?}", other.topic()),
-                            source: String::new(),
-                            data: serde_json::to_value(other).unwrap_or(Value::Null),
-                            timestamp_ms: other.timestamp_ms(),
-                        },
-                    };
-
-                    if let Some(ref types) = self.event_types
-                        && !types.iter().any(|t| t == &legacy.event_type)
-                    {
-                        continue;
-                    }
-                    return Some(legacy);
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    debug!("Subscriber lagged, missed {n} events");
-                    continue;
-                }
-                Err(broadcast::error::RecvError::Closed) => return None,
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-/// Collect events into a map grouped by event type (useful for metrics).
-pub fn group_events_by_type(events: &[Event]) -> HashMap<String, Vec<&Event>> {
-    let mut groups: HashMap<String, Vec<&Event>> = HashMap::new();
-    for event in events {
-        groups
-            .entry(event.event_type.clone())
-            .or_default()
-            .push(event);
-    }
-    groups
-}
-
-/// Group [`RuntimeEvent`]s by their [`EventTopic`].
-pub fn group_runtime_events_by_topic(
-    events: &[RuntimeEvent],
-) -> HashMap<EventTopic, Vec<&RuntimeEvent>> {
-    let mut groups: HashMap<EventTopic, Vec<&RuntimeEvent>> = HashMap::new();
-    for event in events {
-        groups.entry(event.topic()).or_default().push(event);
-    }
-    groups
 }
 
 // ---------------------------------------------------------------------------

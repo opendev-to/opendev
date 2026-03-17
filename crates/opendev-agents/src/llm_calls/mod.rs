@@ -3,6 +3,11 @@
 //! Mirrors `opendev/core/agents/main_agent/llm_calls.py`.
 //! Provides `LlmCaller` with methods for normal, thinking, critique, and compact calls.
 
+mod model_detection;
+
+use model_detection::{insert_max_tokens, insert_temperature};
+pub use model_detection::{is_reasoning_model, supports_temperature, uses_max_completion_tokens};
+
 use serde_json::Value;
 use tracing::{debug, warn};
 
@@ -18,53 +23,6 @@ pub struct LlmCallConfig {
     pub temperature: Option<f64>,
     /// Maximum tokens to generate.
     pub max_tokens: Option<u64>,
-}
-
-// ---------------------------------------------------------------------------
-// Reasoning model detection helpers
-// ---------------------------------------------------------------------------
-
-/// Model prefixes that use `max_completion_tokens` instead of `max_tokens`.
-const MAX_COMPLETION_TOKENS_PREFIXES: &[&str] = &["o1", "o3", "o4", "gpt-5"];
-
-/// Model prefixes that do not support the `temperature` parameter.
-const NO_TEMPERATURE_PREFIXES: &[&str] = &["o1", "o3", "o4", "codex"];
-
-/// Check if a model is a reasoning model (o1, o3, o4, codex families).
-pub fn is_reasoning_model(model: &str) -> bool {
-    let lower = model.to_lowercase();
-    NO_TEMPERATURE_PREFIXES
-        .iter()
-        .any(|prefix| lower.starts_with(prefix))
-}
-
-/// Check if a model uses `max_completion_tokens` instead of `max_tokens`.
-pub fn uses_max_completion_tokens(model: &str) -> bool {
-    let lower = model.to_lowercase();
-    MAX_COMPLETION_TOKENS_PREFIXES
-        .iter()
-        .any(|prefix| lower.starts_with(prefix))
-}
-
-/// Check if a model supports the `temperature` parameter.
-pub fn supports_temperature(model: &str) -> bool {
-    !is_reasoning_model(model)
-}
-
-/// Insert the appropriate max tokens parameter for the given model.
-fn insert_max_tokens(payload: &mut Value, model: &str, max_tokens: u64) {
-    if uses_max_completion_tokens(model) {
-        payload["max_completion_tokens"] = serde_json::json!(max_tokens);
-    } else {
-        payload["max_tokens"] = serde_json::json!(max_tokens);
-    }
-}
-
-/// Conditionally insert temperature if the model supports it.
-fn insert_temperature(payload: &mut Value, model: &str, temperature: f64) {
-    if supports_temperature(model) {
-        payload["temperature"] = serde_json::json!(temperature);
-    }
 }
 
 /// Handles different types of LLM calls (normal, thinking, critique, compact).
@@ -107,17 +65,10 @@ impl LlmCaller {
 
     /// Strip internal `_`-prefixed keys and filter out `Internal`-class messages
     /// before API calls.
-    ///
-    /// This is the universal filter applied to all LLM payloads:
-    /// - Removes messages with `_msg_class: "internal"` entirely
-    /// - Strips `_`-prefixed metadata keys from remaining messages
     pub fn clean_messages(messages: &[Value]) -> Vec<Value> {
         messages
             .iter()
-            .filter(|msg| {
-                // Strip internal-only messages from all LLM calls
-                msg.get("_msg_class").and_then(|v| v.as_str()) != Some("internal")
-            })
+            .filter(|msg| msg.get("_msg_class").and_then(|v| v.as_str()) != Some("internal"))
             .map(|msg| {
                 if let Some(obj) = msg.as_object() {
                     if obj.keys().any(|k| k.starts_with('_')) {
@@ -138,14 +89,6 @@ impl LlmCaller {
     }
 
     /// Build an LLM payload for a thinking call (no tools, pure reasoning).
-    ///
-    /// Thinking-specific filtering (applied before universal `clean_messages`):
-    /// - Keeps `Directive` messages (error context the thinking model needs)
-    /// - Strips `Nudge` messages (behavioral guardrails for action model only)
-    /// - Strips `Internal` messages (handled by `clean_messages`)
-    /// - Backward compat: strips legacy `_nudge: true` messages without `_msg_class`
-    ///
-    /// Also optionally swaps the system prompt and appends an analysis prompt.
     pub fn build_thinking_payload(
         &self,
         messages: &[Value],
@@ -154,30 +97,22 @@ impl LlmCaller {
     ) -> Value {
         let cfg = self.thinking_config.as_ref().unwrap_or(&self.config);
 
-        // Filter nudge-class messages BEFORE cleaning (clean_messages strips _-prefixed keys).
-        // Keep: directive, unclassified. Strip: nudge, internal (+ legacy _nudge: true).
         let cleaned: Vec<Value> = messages
             .iter()
             .filter(|msg| {
-                // Strip injected thinking trace pairs
                 if msg.get("_thinking").and_then(|v| v.as_bool()) == Some(true) {
                     return false;
                 }
                 match msg.get("_msg_class").and_then(|v| v.as_str()) {
                     Some("nudge") | Some("internal") => false,
-                    Some(_) | None => {
-                        // Backward compat: also strip legacy _nudge: true
-                        !msg.get("_nudge").and_then(|v| v.as_bool()).unwrap_or(false)
-                    }
+                    Some(_) | None => !msg.get("_nudge").and_then(|v| v.as_bool()).unwrap_or(false),
                 }
             })
             .cloned()
             .collect();
         let mut cleaned = Self::clean_messages(&cleaned);
 
-        // Swap system prompt if provided
         if let Some(sys_prompt) = thinking_system_prompt {
-            // Replace existing system message or insert at front
             let has_system = cleaned
                 .first()
                 .and_then(|m| m.get("role"))
@@ -200,7 +135,6 @@ impl LlmCaller {
             }
         }
 
-        // Append analysis prompt as final user message
         if let Some(analysis) = analysis_prompt {
             cleaned.push(serde_json::json!({
                 "role": "user",
@@ -224,9 +158,6 @@ impl LlmCaller {
     }
 
     /// Build an LLM payload for a thinking refinement call.
-    ///
-    /// Takes the original thinking trace and critique feedback, builds
-    /// messages for the LLM to produce a refined trace.
     pub fn build_refinement_payload(
         &self,
         thinking_system_prompt: &str,
@@ -418,11 +349,9 @@ mod tests {
             serde_json::json!({"role": "user", "content": "hello", "_internal": true}),
             serde_json::json!({"role": "assistant", "content": "world"}),
         ];
-
         let cleaned = LlmCaller::clean_messages(&messages);
         assert!(cleaned[0].get("_internal").is_none());
         assert_eq!(cleaned[0]["role"], "user");
-        // Second message has no _ keys, should be identical
         assert_eq!(cleaned[1]["role"], "assistant");
     }
 
@@ -438,7 +367,6 @@ mod tests {
         let caller = make_caller();
         let messages = vec![serde_json::json!({"role": "user", "content": "think"})];
         let payload = caller.build_thinking_payload(&messages, None, None);
-
         assert_eq!(payload["model"], "gpt-4o");
         assert!(payload.get("tools").is_none());
         assert!(payload["messages"].as_array().unwrap().len() == 1);
@@ -453,12 +381,9 @@ mod tests {
         });
         let messages = vec![serde_json::json!({"role": "user", "content": "think"})];
         let payload = caller.build_thinking_payload(&messages, None, None);
-
         assert_eq!(payload["model"], "o1-preview");
-        // o1 uses max_completion_tokens, not max_tokens
         assert_eq!(payload["max_completion_tokens"], 8192);
         assert!(payload.get("max_tokens").is_none());
-        // temperature should not appear (None)
         assert!(payload.get("temperature").is_none());
     }
 
@@ -472,7 +397,7 @@ mod tests {
         ];
         let payload = caller.build_thinking_payload(&messages, None, None);
         let msgs = payload["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 2); // legacy nudge filtered out
+        assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0]["content"], "hello");
         assert_eq!(msgs[1]["content"], "reply");
     }
@@ -487,9 +412,8 @@ mod tests {
         ];
         let payload = caller.build_thinking_payload(&messages, None, None);
         let msgs = payload["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 3); // directive kept
+        assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[1]["content"], "[SYSTEM] error context");
-        // _msg_class key should be stripped by clean_messages
         assert!(msgs[1].get("_msg_class").is_none());
     }
 
@@ -503,7 +427,7 @@ mod tests {
         ];
         let payload = caller.build_thinking_payload(&messages, None, None);
         let msgs = payload["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 2); // nudge stripped
+        assert_eq!(msgs.len(), 2);
     }
 
     #[test]
@@ -516,7 +440,7 @@ mod tests {
         ];
         let payload = caller.build_thinking_payload(&messages, None, None);
         let msgs = payload["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 2); // internal stripped
+        assert_eq!(msgs.len(), 2);
     }
 
     #[test]
@@ -528,11 +452,10 @@ mod tests {
             serde_json::json!({"role": "user", "content": "[SYSTEM] nudge", "_msg_class": "nudge"}),
         ];
         let cleaned = LlmCaller::clean_messages(&messages);
-        assert_eq!(cleaned.len(), 3); // internal removed, others kept
+        assert_eq!(cleaned.len(), 3);
         assert_eq!(cleaned[0]["content"], "hello");
         assert_eq!(cleaned[1]["content"], "[SYSTEM] error");
         assert_eq!(cleaned[2]["content"], "[SYSTEM] nudge");
-        // _msg_class keys should be stripped
         assert!(cleaned[1].get("_msg_class").is_none());
         assert!(cleaned[2].get("_msg_class").is_none());
     }
@@ -590,9 +513,8 @@ mod tests {
     fn test_build_critique_payload() {
         let caller = make_caller();
         let payload = caller.build_critique_payload("trace here", "You are a critic.");
-
         assert_eq!(payload["model"], "gpt-4o");
-        assert_eq!(payload["max_tokens"], 2048); // Capped at 2048
+        assert_eq!(payload["max_tokens"], 2048);
         let msgs = payload["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0]["role"], "system");
@@ -608,7 +530,6 @@ mod tests {
             "function": {"name": "read_file", "parameters": {}}
         })];
         let payload = caller.build_action_payload(&messages, &tools);
-
         assert_eq!(payload["model"], "gpt-4o");
         assert_eq!(payload["tool_choice"], "auto");
         assert!(payload["tools"].as_array().unwrap().len() == 1);
@@ -619,16 +540,9 @@ mod tests {
     fn test_parse_action_response_success() {
         let caller = make_caller();
         let body = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "Hello world",
-                    "tool_calls": null
-                }
-            }],
+            "choices": [{"message": {"role": "assistant", "content": "Hello world", "tool_calls": null}}],
             "usage": {"total_tokens": 100}
         });
-
         let resp = caller.parse_action_response(&body);
         assert!(resp.success);
         assert_eq!(resp.content.as_deref(), Some("Hello world"));
@@ -639,27 +553,15 @@ mod tests {
     fn test_parse_action_response_with_tool_calls() {
         let caller = make_caller();
         let body = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "tc-1",
-                        "function": {
-                            "name": "read_file",
-                            "arguments": "{\"path\": \"test.rs\"}"
-                        }
-                    }]
-                }
-            }]
+            "choices": [{"message": {"role": "assistant", "content": null,
+                "tool_calls": [{"id": "tc-1", "function": {"name": "read_file", "arguments": "{\"path\": \"test.rs\"}"}}]
+            }}]
         });
-
         let resp = caller.parse_action_response(&body);
         assert!(resp.success);
         assert!(resp.content.is_none());
         assert!(resp.tool_calls.is_some());
-        let tcs = resp.tool_calls.as_ref().unwrap();
-        assert_eq!(tcs.len(), 1);
+        assert_eq!(resp.tool_calls.as_ref().unwrap().len(), 1);
     }
 
     #[test]
@@ -674,15 +576,7 @@ mod tests {
     #[test]
     fn test_parse_thinking_response() {
         let caller = make_caller();
-        let body = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "I think we should..."
-                }
-            }]
-        });
-
+        let body = serde_json::json!({"choices": [{"message": {"role": "assistant", "content": "I think we should..."}}]});
         let resp = caller.parse_thinking_response(&body);
         assert!(resp.success);
         assert_eq!(resp.content.as_deref(), Some("I think we should..."));
@@ -692,15 +586,7 @@ mod tests {
     #[test]
     fn test_parse_critique_response() {
         let caller = make_caller();
-        let body = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "The reasoning has flaws..."
-                }
-            }]
-        });
-
+        let body = serde_json::json!({"choices": [{"message": {"role": "assistant", "content": "The reasoning has flaws..."}}]});
         let resp = caller.parse_critique_response(&body);
         assert!(resp.success);
         assert_eq!(resp.content.as_deref(), Some("The reasoning has flaws..."));
@@ -709,51 +595,10 @@ mod tests {
     #[test]
     fn test_parse_response_cleans_provider_tokens() {
         let caller = make_caller();
-        let body = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "Hello<|im_end|> world"
-                }
-            }]
-        });
-
+        let body = serde_json::json!({"choices": [{"message": {"role": "assistant", "content": "Hello<|im_end|> world"}}]});
         let resp = caller.parse_action_response(&body);
         assert!(resp.success);
         assert_eq!(resp.content.as_deref(), Some("Hello world"));
-    }
-
-    #[test]
-    fn test_is_reasoning_model() {
-        assert!(is_reasoning_model("o1-preview"));
-        assert!(is_reasoning_model("o1-mini"));
-        assert!(is_reasoning_model("o3-mini"));
-        assert!(is_reasoning_model("o4-mini"));
-        assert!(is_reasoning_model("codex-mini"));
-        assert!(!is_reasoning_model("gpt-4o"));
-        assert!(!is_reasoning_model("gpt-5-turbo"));
-        assert!(!is_reasoning_model("claude-3-opus"));
-    }
-
-    #[test]
-    fn test_uses_max_completion_tokens() {
-        assert!(uses_max_completion_tokens("o1-preview"));
-        assert!(uses_max_completion_tokens("o3-mini"));
-        assert!(uses_max_completion_tokens("o4-mini"));
-        assert!(uses_max_completion_tokens("gpt-5-turbo"));
-        assert!(!uses_max_completion_tokens("gpt-4o"));
-        assert!(!uses_max_completion_tokens("claude-3-opus"));
-        assert!(!uses_max_completion_tokens("codex-mini")); // codex uses max_completion_tokens? No — not in prefix list
-    }
-
-    #[test]
-    fn test_supports_temperature() {
-        assert!(supports_temperature("gpt-4o"));
-        assert!(supports_temperature("gpt-5-turbo"));
-        assert!(supports_temperature("claude-3-opus"));
-        assert!(!supports_temperature("o1-preview"));
-        assert!(!supports_temperature("o3-mini"));
-        assert!(!supports_temperature("codex-mini"));
     }
 
     #[test]
@@ -766,11 +611,8 @@ mod tests {
         let messages = vec![serde_json::json!({"role": "user", "content": "test"})];
         let tools = vec![serde_json::json!({"type": "function", "function": {"name": "test"}})];
         let payload = caller.build_action_payload(&messages, &tools);
-
-        // o3 should use max_completion_tokens, not max_tokens
         assert_eq!(payload["max_completion_tokens"], 4096);
         assert!(payload.get("max_tokens").is_none());
-        // o3 should NOT have temperature
         assert!(payload.get("temperature").is_none());
     }
 
@@ -782,10 +624,9 @@ mod tests {
             max_tokens: Some(4096),
         });
         let payload = caller.build_critique_payload("trace", "system");
-
-        assert_eq!(payload["max_completion_tokens"], 2048); // capped
+        assert_eq!(payload["max_completion_tokens"], 2048);
         assert!(payload.get("max_tokens").is_none());
-        assert!(payload.get("temperature").is_none()); // o4 doesn't support temp
+        assert!(payload.get("temperature").is_none());
     }
 
     #[test]
@@ -796,32 +637,17 @@ mod tests {
             max_tokens: Some(8192),
         });
         let payload = caller.build_refinement_payload("sys", "trace", "critique");
-
-        assert_eq!(payload["max_completion_tokens"], 4096); // capped at 4096
+        assert_eq!(payload["max_completion_tokens"], 4096);
         assert!(payload.get("max_tokens").is_none());
-        assert!(payload.get("temperature").is_none()); // o1 doesn't support temp
-    }
-
-    #[test]
-    fn test_case_insensitive_model_detection() {
-        assert!(is_reasoning_model("O1-Preview"));
-        assert!(is_reasoning_model("O3-MINI"));
-        assert!(uses_max_completion_tokens("GPT-5-turbo"));
+        assert!(payload.get("temperature").is_none());
     }
 
     #[test]
     fn test_parse_response_with_reasoning_content() {
         let caller = make_caller();
         let body = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "The answer is 42.",
-                    "reasoning_content": "Let me think step by step..."
-                }
-            }]
+            "choices": [{"message": {"role": "assistant", "content": "The answer is 42.", "reasoning_content": "Let me think step by step..."}}]
         });
-
         let resp = caller.parse_action_response(&body);
         assert!(resp.success);
         assert_eq!(
