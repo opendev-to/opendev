@@ -361,10 +361,10 @@ impl super::base::ProviderAdapter for OpenAiAdapter {
             responses_payload["temperature"] = temp.clone();
         }
 
-        // Reasoning config for o-series models
-        if Self::is_reasoning_model(&payload)
-            && let Some(ref effort) = reasoning_effort
-        {
+        // Reasoning config — always request when effort is configured.
+        // Works for o-series, GPT-5+, and any future reasoning-capable models.
+        // Non-reasoning models will simply not return reasoning output.
+        if let Some(ref effort) = reasoning_effort {
             responses_payload["reasoning"] = json!({
                 "effort": effort,
                 "summary": "auto",
