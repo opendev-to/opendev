@@ -301,14 +301,36 @@ impl App {
                         });
                     let stats = if let Some(idx) = subagent_idx {
                         let subagent = self.state.active_subagents.remove(idx);
-                        (
-                            subagent.tool_call_count,
-                            subagent.token_count,
-                            subagent.started_at.elapsed(),
-                            subagent.success,
-                        )
+                        let mut tc = subagent.tool_call_count;
+                        let tk = subagent.token_count;
+                        let elapsed = subagent.started_at.elapsed();
+
+                        // If bridge events haven't delivered stats yet, parse from
+                        // the output header that SpawnSubagentTool embeds reliably.
+                        if tc == 0
+                            && let Some(line) = output.lines().next()
+                            && let Some(rest) = line.strip_prefix("__subagent_stats__:")
+                        {
+                            for part in rest.split(',') {
+                                if let Some(val) = part.strip_prefix("tc=") {
+                                    tc = val.parse().unwrap_or(0);
+                                }
+                            }
+                        }
+                        (tc, tk, elapsed, subagent.success)
                     } else {
-                        (0, 0, std::time::Duration::ZERO, success)
+                        // No subagent found at all — try parsing from output header
+                        let mut tc = 0usize;
+                        if let Some(line) = output.lines().next()
+                            && let Some(rest) = line.strip_prefix("__subagent_stats__:")
+                        {
+                            for part in rest.split(',') {
+                                if let Some(val) = part.strip_prefix("tc=") {
+                                    tc = val.parse().unwrap_or(0);
+                                }
+                            }
+                        }
+                        (tc, 0, std::time::Duration::ZERO, success)
                     };
 
                     let summary = {
