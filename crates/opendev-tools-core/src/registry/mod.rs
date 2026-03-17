@@ -4,15 +4,15 @@
 //! Supports middleware pipelines, parameter validation, per-tool timeouts,
 //! and same-turn call deduplication.
 
+mod execution;
+mod helpers;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use tracing::{info, warn};
 
 use crate::middleware::ToolMiddleware;
-use crate::normalizer;
 use crate::sanitizer::ToolResultSanitizer;
-use crate::traits::{BaseTool, ToolContext, ToolResult, ToolTimeoutConfig};
-use crate::validation;
+use crate::traits::{BaseTool, ToolResult, ToolTimeoutConfig};
 
 /// Registry that maps tool names to implementations and dispatches execution.
 ///
@@ -25,33 +25,26 @@ use crate::validation;
 /// Uses interior mutability (`RwLock`) so tools can be registered via `&self`,
 /// enabling late registration (e.g. `SpawnSubagentTool` after `Arc<ToolRegistry>` is created).
 pub struct ToolRegistry {
-    tools: RwLock<HashMap<String, Arc<dyn BaseTool>>>,
-    middleware: RwLock<Vec<Arc<dyn ToolMiddleware>>>,
+    pub(super) tools: RwLock<HashMap<String, Arc<dyn BaseTool>>>,
+    pub(super) middleware: RwLock<Vec<Arc<dyn ToolMiddleware>>>,
     /// Per-tool timeout overrides keyed by tool name.
-    tool_timeouts: RwLock<HashMap<String, ToolTimeoutConfig>>,
-    /// Cache for same-turn deduplication. Keyed by hash of (tool_name, args).
-    dedup_cache: Mutex<HashMap<String, ToolResult>>,
-    /// Sanitizer that truncates large tool outputs before they enter LLM context.
-    sanitizer: ToolResultSanitizer,
+    pub(super) tool_timeouts: RwLock<HashMap<String, ToolTimeoutConfig>>,
+    /// Dedup cache for same-turn identical calls.
+    pub(super) dedup_cache: Mutex<HashMap<String, ToolResult>>,
+    /// Sanitizer for truncating oversized tool outputs.
+    pub(super) sanitizer: ToolResultSanitizer,
+    /// Optional directory for overflow file storage.
+    #[allow(dead_code)]
+    overflow_dir: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
-        let middleware = self.middleware.read().expect("ToolRegistry lock poisoned");
-        let tool_timeouts = self
-            .tool_timeouts
-            .read()
-            .expect("ToolRegistry lock poisoned");
+        let tool_count = self.tools.read().map(|t| t.len()).unwrap_or(0);
+        let mw_count = self.middleware.read().map(|m| m.len()).unwrap_or(0);
         f.debug_struct("ToolRegistry")
-            .field("tools", &tools.keys().collect::<Vec<_>>())
-            .field("middleware_count", &middleware.len())
-            .field("tool_timeouts", &*tool_timeouts)
-            .field(
-                "dedup_cache_size",
-                &self.dedup_cache.lock().map(|c| c.len()).unwrap_or(0),
-            )
-            .field("sanitizer", &"ToolResultSanitizer")
+            .field("tool_count", &tool_count)
+            .field("middleware_count", &mw_count)
             .finish()
     }
 }
@@ -63,7 +56,6 @@ impl Default for ToolRegistry {
 }
 
 impl ToolRegistry {
-    /// Create an empty registry.
     pub fn new() -> Self {
         Self {
             tools: RwLock::new(HashMap::new()),
@@ -71,74 +63,62 @@ impl ToolRegistry {
             tool_timeouts: RwLock::new(HashMap::new()),
             dedup_cache: Mutex::new(HashMap::new()),
             sanitizer: ToolResultSanitizer::new(),
+            overflow_dir: None,
         }
     }
 
-    /// Create a registry with overflow storage for truncated tool output.
-    ///
-    /// When a tool's output exceeds its truncation limit, the full output is
-    /// saved to `overflow_dir` for later retrieval. Files are retained for 7 days.
+    /// Create with an overflow directory for storing full tool outputs to disk
+    /// when they exceed inline size limits.
     pub fn with_overflow_dir(overflow_dir: std::path::PathBuf) -> Self {
         Self {
             tools: RwLock::new(HashMap::new()),
             middleware: RwLock::new(Vec::new()),
             tool_timeouts: RwLock::new(HashMap::new()),
             dedup_cache: Mutex::new(HashMap::new()),
-            sanitizer: ToolResultSanitizer::new().with_overflow_dir(overflow_dir),
+            sanitizer: ToolResultSanitizer::new().with_overflow_dir(overflow_dir.clone()),
+            overflow_dir: Some(overflow_dir),
         }
     }
 
-    /// Register a tool. Replaces any existing tool with the same name.
+    /// Register a tool. If a tool with the same name exists, it's replaced.
     pub fn register(&self, tool: Arc<dyn BaseTool>) {
         let name = tool.name().to_string();
-        info!(tool = %name, "Registered tool");
-        self.tools
-            .write()
-            .expect("ToolRegistry lock poisoned")
-            .insert(name, tool);
+        let mut tools = self.tools.write().expect("ToolRegistry lock poisoned");
+        tools.insert(name, tool);
     }
 
-    /// Unregister a tool by name. Returns the tool if it existed.
+    /// Remove a tool by name and return it, if found.
     pub fn unregister(&self, name: &str) -> Option<Arc<dyn BaseTool>> {
-        self.tools
-            .write()
-            .expect("ToolRegistry lock poisoned")
-            .remove(name)
+        let mut tools = self.tools.write().expect("ToolRegistry lock poisoned");
+        tools.remove(name)
     }
 
-    /// Look up a tool by name (returns a cloned Arc).
+    /// Get a tool by exact name.
     pub fn get(&self, name: &str) -> Option<Arc<dyn BaseTool>> {
-        self.tools
-            .read()
-            .expect("ToolRegistry lock poisoned")
-            .get(name)
-            .cloned()
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        tools.get(name).cloned()
     }
 
     /// Check if a tool is registered.
     pub fn contains(&self, name: &str) -> bool {
-        self.tools
-            .read()
-            .expect("ToolRegistry lock poisoned")
-            .contains_key(name)
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        tools.contains_key(name)
     }
 
-    /// Get all registered tool names.
+    /// Get sorted list of all registered tool names.
     pub fn tool_names(&self) -> Vec<String> {
-        self.tools
-            .read()
-            .expect("ToolRegistry lock poisoned")
-            .keys()
-            .cloned()
-            .collect()
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        let mut names: Vec<String> = tools.keys().cloned().collect();
+        names.sort();
+        names
     }
 
-    /// Get the number of registered tools.
+    /// Number of registered tools.
     pub fn len(&self) -> usize {
         self.tools.read().expect("ToolRegistry lock poisoned").len()
     }
 
-    /// Check if the registry is empty.
+    /// Whether no tools are registered.
     pub fn is_empty(&self) -> bool {
         self.tools
             .read()
@@ -146,20 +126,13 @@ impl ToolRegistry {
             .is_empty()
     }
 
-    // --- Middleware ---
-
-    /// Add a middleware to the execution pipeline.
-    ///
-    /// Middleware are called in insertion order for `before_execute` and
-    /// in the same order for `after_execute`.
+    /// Add a middleware to the pipeline.
     pub fn add_middleware(&self, mw: Box<dyn ToolMiddleware>) {
-        self.middleware
-            .write()
-            .expect("ToolRegistry lock poisoned")
-            .push(Arc::from(mw));
+        let mut middleware = self.middleware.write().expect("ToolRegistry lock poisoned");
+        middleware.push(Arc::from(mw));
     }
 
-    /// Get the number of registered middleware.
+    /// Number of registered middleware.
     pub fn middleware_count(&self) -> usize {
         self.middleware
             .read()
@@ -167,25 +140,25 @@ impl ToolRegistry {
             .len()
     }
 
-    // --- Per-tool timeouts ---
-
-    /// Set a timeout configuration for a specific tool.
+    /// Set a per-tool timeout override.
     pub fn set_tool_timeout(&self, tool_name: impl Into<String>, config: ToolTimeoutConfig) {
-        self.tool_timeouts
+        let mut timeouts = self
+            .tool_timeouts
             .write()
-            .expect("ToolRegistry lock poisoned")
-            .insert(tool_name.into(), config);
+            .expect("ToolRegistry lock poisoned");
+        timeouts.insert(tool_name.into(), config);
     }
 
-    /// Set timeout configurations for multiple tools at once.
+    /// Set multiple per-tool timeouts at once (bulk).
     pub fn set_tool_timeouts(&self, timeouts: HashMap<String, ToolTimeoutConfig>) {
-        self.tool_timeouts
+        let mut current = self
+            .tool_timeouts
             .write()
-            .expect("ToolRegistry lock poisoned")
-            .extend(timeouts);
+            .expect("ToolRegistry lock poisoned");
+        current.extend(timeouts);
     }
 
-    /// Get the timeout configuration for a tool (if any).
+    /// Get the timeout config for a specific tool, if set.
     pub fn get_tool_timeout(&self, tool_name: &str) -> Option<ToolTimeoutConfig> {
         self.tool_timeouts
             .read()
@@ -194,23 +167,19 @@ impl ToolRegistry {
             .cloned()
     }
 
-    // --- Deduplication ---
-
-    /// Clear the deduplication cache. Call this between turns.
+    /// Clear the dedup cache (call at each turn boundary).
     pub fn clear_dedup_cache(&self) {
         if let Ok(mut cache) = self.dedup_cache.lock() {
             cache.clear();
         }
     }
 
-    /// Get the number of entries in the dedup cache.
+    /// Number of entries in the dedup cache.
     pub fn dedup_cache_size(&self) -> usize {
         self.dedup_cache.lock().map(|c| c.len()).unwrap_or(0)
     }
 
-    /// Get JSON schemas for all registered tools.
-    ///
-    /// Returns a list of tool schema objects suitable for LLM tool-use.
+    /// Get OpenAI-compatible function schemas for all registered tools.
     pub fn get_schemas(&self) -> Vec<serde_json::Value> {
         let tools = self.tools.read().expect("ToolRegistry lock poisoned");
         tools
@@ -227,261 +196,13 @@ impl ToolRegistry {
             })
             .collect()
     }
-
-    /// Suggest similar tool names for a mistyped name (edit distance or substring match).
-    fn suggest_tool_names(&self, name: &str) -> Vec<String> {
-        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
-        let lower = name.to_lowercase();
-        let mut suggestions: Vec<String> = Vec::new();
-        for registered in tools.keys() {
-            let reg_lower = registered.to_lowercase();
-            // Substring match or short edit distance
-            if reg_lower.contains(&lower)
-                || lower.contains(&reg_lower)
-                || edit_distance(&lower, &reg_lower) <= 3
-            {
-                suggestions.push(registered.clone());
-            }
-        }
-        suggestions.sort();
-        suggestions.truncate(5);
-        suggestions
-    }
-
-    /// Try to find a tool by name with fuzzy matching fallback.
-    ///
-    /// If exact match fails, tries:
-    /// 1. Case-insensitive match
-    /// 2. Common name transformations (e.g., `ReadFile` -> `read_file`)
-    ///
-    /// Returns `(tool, resolved_name)` or `None`.
-    fn resolve_tool(&self, name: &str) -> Option<(Arc<dyn BaseTool>, String)> {
-        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
-
-        // Exact match (fast path)
-        if let Some(t) = tools.get(name) {
-            return Some((Arc::clone(t), name.to_string()));
-        }
-
-        // Case-insensitive match
-        let lower = name.to_lowercase();
-        for (registered_name, tool) in tools.iter() {
-            if registered_name.to_lowercase() == lower {
-                info!(
-                    requested = %name,
-                    resolved = %registered_name,
-                    "Fuzzy tool name match (case-insensitive)"
-                );
-                return Some((Arc::clone(tool), registered_name.clone()));
-            }
-        }
-
-        // CamelCase/PascalCase -> snake_case transformation
-        let snake = camel_to_snake_name(name);
-        if snake != name
-            && let Some(t) = tools.get(&snake)
-        {
-            info!(
-                requested = %name,
-                resolved = %snake,
-                "Fuzzy tool name match (camelCase -> snake_case)"
-            );
-            return Some((Arc::clone(t), snake));
-        }
-
-        None
-    }
-
-    /// Execute a tool by name with parameter normalization.
-    ///
-    /// Pipeline:
-    /// 1. Look up tool (with fuzzy name matching)
-    /// 2. Normalize parameters (camelCase -> snake_case, path resolution)
-    /// 3. Check dedup cache — return cached result if identical call in same turn
-    /// 4. Validate parameters against the tool's JSON Schema
-    /// 5. Run `before_execute` middleware (abort on error)
-    /// 6. Apply per-tool timeout config to context
-    /// 7. Execute tool
-    /// 8. Run `after_execute` middleware
-    /// 9. Cache result for dedup
-    /// 10. Attach duration_ms
-    pub async fn execute(
-        &self,
-        tool_name: &str,
-        args: HashMap<String, serde_json::Value>,
-        ctx: &ToolContext,
-    ) -> ToolResult {
-        // Clone Arc out of the read lock so we don't hold it during execution
-        let (tool, resolved_name) = match self.resolve_tool(tool_name) {
-            Some((t, name)) => (t, name),
-            None => {
-                // Build suggestion list for "did you mean?"
-                let suggestions = self.suggest_tool_names(tool_name);
-                let hint = if suggestions.is_empty() {
-                    String::new()
-                } else {
-                    format!(". Did you mean: {}?", suggestions.join(", "))
-                };
-                warn!(tool = %tool_name, "Unknown tool");
-                return ToolResult::fail(format!("Unknown tool: {tool_name}{hint}"));
-            }
-        };
-        let tool_name = &resolved_name;
-
-        // Normalize parameters
-        let working_dir = ctx.working_dir.to_string_lossy().to_string();
-        let normalized = normalizer::normalize_params(tool_name, args, Some(&working_dir));
-
-        // Deduplication: check cache
-        let dedup_key = make_dedup_key(tool_name, &normalized);
-        if let Ok(cache) = self.dedup_cache.lock()
-            && let Some(cached) = cache.get(&dedup_key)
-        {
-            info!(tool = %tool_name, "Returning cached result (dedup)");
-            return cached.clone();
-        }
-
-        // Validate parameters against schema
-        let schema = tool.parameter_schema();
-        let validation_errors = validation::validate_args_detailed(&normalized, &schema);
-        if !validation_errors.is_empty() {
-            // Try tool-specific formatter first, then fall back to generic message
-            let error_msg = tool
-                .format_validation_error(&validation_errors)
-                .unwrap_or_else(|| {
-                    let details: Vec<String> =
-                        validation_errors.iter().map(|e| e.to_string()).collect();
-                    format!(
-                        "The {} tool was called with invalid arguments:\n  - {}\nPlease fix the arguments and try again.",
-                        tool_name,
-                        details.join("\n  - ")
-                    )
-                });
-            warn!(tool = %tool_name, error = %error_msg, "Parameter validation failed");
-            return ToolResult::fail(error_msg);
-        }
-
-        // Clone middleware Arcs out of the lock so we can call async methods
-        let middleware: Vec<Arc<dyn ToolMiddleware>> = {
-            let mw = self.middleware.read().expect("ToolRegistry lock poisoned");
-            mw.clone()
-        };
-
-        // Run before_execute middleware
-        for mw in &middleware {
-            if let Err(err) = mw.before_execute(tool_name, &normalized, ctx).await {
-                warn!(tool = %tool_name, error = %err, "Middleware rejected execution");
-                return ToolResult::fail(format!("Middleware error: {err}"));
-            }
-        }
-
-        // Apply per-tool timeout config
-        let exec_ctx = {
-            let timeouts = self
-                .tool_timeouts
-                .read()
-                .expect("ToolRegistry lock poisoned");
-            if let Some(timeout_config) = timeouts.get(tool_name) {
-                let mut new_ctx = ctx.clone();
-                new_ctx.timeout_config = Some(timeout_config.clone());
-                new_ctx
-            } else {
-                ctx.clone()
-            }
-        };
-
-        // Execute
-        let start = std::time::Instant::now();
-        let mut result = tool.execute(normalized, &exec_ctx).await;
-        result.duration_ms = Some(start.elapsed().as_millis() as u64);
-
-        // Sanitize: truncate large outputs before they enter LLM context
-        let sanitized = self.sanitizer.sanitize_with_mcp_fallback(
-            tool_name,
-            result.success,
-            result.output.as_deref(),
-            result.error.as_deref(),
-        );
-        if sanitized.was_truncated {
-            result.output = sanitized.output;
-            result.error = sanitized.error;
-        }
-
-        // Run after_execute middleware
-        for mw in &middleware {
-            if let Err(err) = mw.after_execute(tool_name, &result).await {
-                warn!(tool = %tool_name, error = %err, "Middleware after_execute error");
-                // after_execute errors are logged but don't change the result
-            }
-        }
-
-        // Cache result for dedup
-        if let Ok(mut cache) = self.dedup_cache.lock() {
-            cache.insert(dedup_key, result.clone());
-        }
-
-        result
-    }
-}
-
-/// Simple Levenshtein edit distance between two strings.
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let m = a_chars.len();
-    let n = b_chars.len();
-
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
-        row[0] = i;
-    }
-    #[allow(clippy::needless_range_loop)]
-    for j in 0..=n {
-        dp[0][j] = j;
-    }
-    for i in 1..=m {
-        for j in 1..=n {
-            let cost = usize::from(a_chars[i - 1] != b_chars[j - 1]);
-            dp[i][j] = (dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1)
-                .min(dp[i - 1][j - 1] + cost);
-        }
-    }
-    dp[m][n]
-}
-
-/// Convert a camelCase or PascalCase tool name to snake_case.
-///
-/// Examples: `ReadFile` -> `read_file`, `webFetch` -> `web_fetch`
-fn camel_to_snake_name(name: &str) -> String {
-    let mut result = String::with_capacity(name.len() + 4);
-    for (i, ch) in name.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(ch.to_lowercase().next().unwrap_or(ch));
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
-
-/// Create a dedup cache key from tool name and normalized args.
-///
-/// Uses a deterministic JSON serialization of sorted keys + tool name.
-fn make_dedup_key(tool_name: &str, args: &HashMap<String, serde_json::Value>) -> String {
-    // Sort keys for deterministic hashing
-    let mut sorted_args: Vec<(&String, &serde_json::Value)> = args.iter().collect();
-    sorted_args.sort_by_key(|(k, _)| k.as_str());
-    let args_str = serde_json::to_string(&sorted_args).unwrap_or_default();
-    format!("{tool_name}:{args_str}")
 }
 
 #[cfg(test)]
 mod tests {
+    use super::helpers::{camel_to_snake_name, edit_distance, make_dedup_key};
     use super::*;
+    use crate::traits::ToolContext;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
