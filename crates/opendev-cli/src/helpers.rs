@@ -153,16 +153,6 @@ pub fn install_panic_handler() {
     }));
 }
 
-/// Shorten a working directory path for display.
-pub fn shorten_working_dir(path: &std::path::Path) -> String {
-    if let Some(home) = dirs_next::home_dir()
-        && let Ok(rest) = path.strip_prefix(&home)
-    {
-        return format!("~/{}", rest.display());
-    }
-    path.display().to_string()
-}
-
 /// Format a timestamp as a relative time string (e.g., "just now", "5m ago").
 pub fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
     let now = chrono::Utc::now();

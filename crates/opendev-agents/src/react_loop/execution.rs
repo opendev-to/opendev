@@ -588,6 +588,14 @@ impl ReactLoop {
                                     })
                                     .unwrap_or_default();
 
+                                // Normalize path params for consistent display
+                                let wd_str = tool_context.working_dir.to_string_lossy().to_string();
+                                let args_map = opendev_tools_core::normalizer::normalize_params(
+                                    &tool_name,
+                                    args_map,
+                                    Some(&wd_str),
+                                );
+
                                 if let Some(cb) = event_callback {
                                     cb.on_tool_started(&tool_call_id, &tool_name, &args_map);
                                 }
@@ -755,10 +763,18 @@ impl ReactLoop {
                         // Parse args JSON string into a HashMap for the registry
                         let args_value: Value =
                             serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-                        let mut args_map: std::collections::HashMap<String, Value> = args_value
+                        let args_map: std::collections::HashMap<String, Value> = args_value
                             .as_object()
                             .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                             .unwrap_or_default();
+
+                        // Normalize path params for consistent display
+                        let wd_str = tool_context.working_dir.to_string_lossy().to_string();
+                        let mut args_map = opendev_tools_core::normalizer::normalize_params(
+                            tool_name,
+                            args_map,
+                            Some(&wd_str),
+                        );
 
                         let tool_call_id_str =
                             tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");

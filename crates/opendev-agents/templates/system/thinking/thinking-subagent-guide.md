@@ -58,3 +58,6 @@ When considering delegation to a subagent, reason through these questions:
 - "Explain the error handling strategy" -> **Explore** (multi-file analysis)
 
 **Remember**: Subagent results aren't shown to the user - you must summarize their findings in your reasoning and response.
+
+### Rules
+- If the user ask you to spawn many subagents, dont resist, unless he wants you to spawn more than 5 subagents a time.

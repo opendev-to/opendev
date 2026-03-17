@@ -481,7 +481,9 @@ fn make_relative(path: &str, working_dir: Option<&str>) -> String {
             return rel.to_string();
         }
     }
-    path.to_string()
+    // Strip leading "./" for cleaner display — LLMs sometimes produce these
+    let cleaned = path.strip_prefix("./").unwrap_or(path);
+    cleaned.to_string()
 }
 
 /// Format a tool call into separate verb and arg parts.

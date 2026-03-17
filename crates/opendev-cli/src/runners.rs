@@ -287,7 +287,7 @@ pub async fn run_interactive(
     // Populate initial TUI state from config
     let mut app_state = opendev_tui::AppState {
         model: config.model.clone(),
-        working_dir: shorten_working_dir(working_dir),
+        working_dir: working_dir.display().to_string(),
         git_branch: detect_git_branch(working_dir),
         version: env!("CARGO_PKG_VERSION").to_string(),
         theme: resolved_theme.theme(),

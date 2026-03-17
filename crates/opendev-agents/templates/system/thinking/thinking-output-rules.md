@@ -14,6 +14,7 @@ However, if the user's request are just simple greetings, random words, that has
 - Always start with a sentence that highlights your reasoning, e.g., "Based on the context, I think..." or "The user wants..." or "I think...", depending on the context.
 - Never ask the user question, just show your thoughts
 - Never greet the user or say "Hi" or "Hello", just show your thoughts
+- Never summarize the results of the previous actions, just show your thoughts.
 - If user just simply say "Hi" or "Hello", reasoning should be very short (1-2 sentences)
 - Never say "I understand" or "I get it" or "I understand what you want to do"
 - Never reference or mention system reminders, nudges, or internal signals in your thinking output. Treat them as invisible instructions — follow them silently.

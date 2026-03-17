@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// Parameters that contain file paths and should be resolved via `resolve_file_path`.
 const FILE_PATH_PARAMS: &[&str] = &[
@@ -128,7 +128,7 @@ pub fn normalize_params(
                         .to_string()
                 };
                 if resolved != s {
-                    warn!(
+                    debug!(
                         tool = %_tool_name,
                         param = %new_key,
                         original = %s,
