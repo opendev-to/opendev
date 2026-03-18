@@ -55,6 +55,16 @@ impl App {
         use crate::formatters::display::strip_system_reminders;
 
         let num_messages = self.state.messages.len();
+        let content_width = self.state.terminal_width.saturating_sub(1);
+
+        // Width-change detection: if terminal was resized, clear all caches
+        if self.state.cached_width != content_width {
+            self.state.cached_width = content_width;
+            self.state.cached_lines.clear();
+            self.state.per_message_hashes.clear();
+            self.state.per_message_line_counts.clear();
+            self.state.markdown_cache.clear();
+        }
 
         // Compute per-message hashes for the current messages
         let new_hashes: Vec<u64> = self
@@ -177,6 +187,7 @@ impl App {
                     &mut self.state.cached_lines,
                     &mut self.state.markdown_cache,
                     Some(&self.state.working_dir),
+                    content_width,
                 );
             }
 
@@ -189,17 +200,20 @@ impl App {
     /// Render a single `DisplayMessage` into styled lines, appending to `lines`.
     /// `next_role` is the role of the following message (if any), used to suppress
     /// the trailing blank line before messages that attach to the previous one.
+    /// `content_width` is the available display width for word-wrapping (0 = no wrapping).
     pub(super) fn render_single_message(
         msg: &DisplayMessage,
         next_role: Option<&DisplayRole>,
         lines: &mut Vec<ratatui::text::Line<'static>>,
         markdown_cache: &mut HashMap<u64, Vec<ratatui::text::Line<'static>>>,
         working_dir: Option<&str>,
+        content_width: u16,
     ) {
         use crate::formatters::display::strip_system_reminders;
         use crate::formatters::markdown::MarkdownRenderer;
         use crate::formatters::style_tokens::{self, Indent};
         use crate::formatters::tool_registry::{categorize_tool, format_tool_call_parts_with_wd};
+        use crate::formatters::wrap::wrap_spans_to_lines;
         use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR};
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
@@ -208,6 +222,8 @@ impl App {
         if content.is_empty() && msg.tool_call.is_none() {
             return;
         }
+
+        let max_w = content_width as usize;
 
         match msg.role {
             DisplayRole::Assistant => {
@@ -219,37 +235,47 @@ impl App {
                     markdown_cache.insert(cache_key, rendered.clone());
                     rendered
                 };
-                let mut leading_consumed = false;
-                for md_line in md_lines {
-                    let line_text: String = md_line
-                        .spans
-                        .iter()
-                        .map(|s| s.content.to_string())
-                        .collect();
-                    let has_content = !line_text.trim().is_empty();
 
-                    if !leading_consumed && has_content {
-                        let mut spans = vec![Span::styled(
-                            format!("{} ", COMPLETED_CHAR),
-                            Style::default().fg(style_tokens::GREEN_BRIGHT),
-                        )];
-                        spans.extend(
-                            md_line
-                                .spans
-                                .into_iter()
-                                .map(|s| Span::styled(s.content.to_string(), s.style)),
-                        );
-                        lines.push(Line::from(spans));
-                        leading_consumed = true;
-                    } else {
-                        let mut spans = vec![Span::raw(Indent::CONT)];
-                        spans.extend(
-                            md_line
-                                .spans
-                                .into_iter()
-                                .map(|s| Span::styled(s.content.to_string(), s.style)),
-                        );
-                        lines.push(Line::from(spans));
+                let first_prefix = vec![Span::styled(
+                    format!("{} ", COMPLETED_CHAR),
+                    Style::default().fg(style_tokens::GREEN_BRIGHT),
+                )];
+                let cont_prefix = vec![Span::raw(Indent::CONT)];
+
+                if max_w > 0 {
+                    let wrapped = wrap_spans_to_lines(md_lines, first_prefix, cont_prefix, max_w);
+                    lines.extend(wrapped);
+                } else {
+                    // Fallback: no wrapping (width unknown)
+                    let mut leading_consumed = false;
+                    for md_line in md_lines {
+                        let line_text: String = md_line
+                            .spans
+                            .iter()
+                            .map(|s| s.content.to_string())
+                            .collect();
+                        let has_content = !line_text.trim().is_empty();
+
+                        if !leading_consumed && has_content {
+                            let mut spans = first_prefix.clone();
+                            spans.extend(
+                                md_line
+                                    .spans
+                                    .into_iter()
+                                    .map(|s| Span::styled(s.content.to_string(), s.style)),
+                            );
+                            lines.push(Line::from(spans));
+                            leading_consumed = true;
+                        } else {
+                            let mut spans = cont_prefix.clone();
+                            spans.extend(
+                                md_line
+                                    .spans
+                                    .into_iter()
+                                    .map(|s| Span::styled(s.content.to_string(), s.style)),
+                            );
+                            lines.push(Line::from(spans));
+                        }
                     }
                 }
             }
@@ -279,37 +305,47 @@ impl App {
                     markdown_cache.insert(cache_key, rendered.clone());
                     rendered
                 };
-                let mut leading_consumed = false;
-                for md_line in md_lines {
-                    let line_text: String = md_line
-                        .spans
-                        .iter()
-                        .map(|s| s.content.to_string())
-                        .collect();
-                    let has_content = !line_text.trim().is_empty();
 
-                    if !leading_consumed && has_content {
-                        let mut spans = vec![Span::styled(
-                            format!("{} ", style_tokens::THINKING_ICON),
-                            Style::default().fg(style_tokens::THINKING_BG),
-                        )];
-                        spans.extend(
-                            md_line
-                                .spans
-                                .into_iter()
-                                .map(|s| Span::styled(s.content.to_string(), s.style)),
-                        );
-                        lines.push(Line::from(spans));
-                        leading_consumed = true;
-                    } else {
-                        let mut spans = vec![Span::raw(Indent::CONT)];
-                        spans.extend(
-                            md_line
-                                .spans
-                                .into_iter()
-                                .map(|s| Span::styled(s.content.to_string(), s.style)),
-                        );
-                        lines.push(Line::from(spans));
+                let thinking_style = Style::default().fg(style_tokens::THINKING_BG);
+                let first_prefix = vec![Span::styled(
+                    format!("{} ", style_tokens::THINKING_ICON),
+                    thinking_style,
+                )];
+                let cont_prefix = vec![Span::styled(Indent::THINKING_CONT, thinking_style)];
+
+                if max_w > 0 {
+                    let wrapped = wrap_spans_to_lines(md_lines, first_prefix, cont_prefix, max_w);
+                    lines.extend(wrapped);
+                } else {
+                    let mut leading_consumed = false;
+                    for md_line in md_lines {
+                        let line_text: String = md_line
+                            .spans
+                            .iter()
+                            .map(|s| s.content.to_string())
+                            .collect();
+                        let has_content = !line_text.trim().is_empty();
+
+                        if !leading_consumed && has_content {
+                            let mut spans = first_prefix.clone();
+                            spans.extend(
+                                md_line
+                                    .spans
+                                    .into_iter()
+                                    .map(|s| Span::styled(s.content.to_string(), s.style)),
+                            );
+                            lines.push(Line::from(spans));
+                            leading_consumed = true;
+                        } else {
+                            let mut spans = cont_prefix.clone();
+                            spans.extend(
+                                md_line
+                                    .spans
+                                    .into_iter()
+                                    .map(|s| Span::styled(s.content.to_string(), s.style)),
+                            );
+                            lines.push(Line::from(spans));
+                        }
                     }
                 }
             }
@@ -687,6 +723,133 @@ mod tests {
         app.rebuild_cached_lines();
         assert_eq!(app.state.per_message_hashes.len(), 1);
         assert_eq!(app.state.per_message_line_counts.len(), 1);
+    }
+
+    #[test]
+    fn test_reasoning_message_produces_lines() {
+        let mut app = App::new();
+        app.state.terminal_height = 24;
+        app.state.terminal_width = 120;
+        app.state.messages.push(DisplayMessage {
+            role: DisplayRole::Reasoning,
+            content: "Let me think about this.\nFirst, I need to understand.\nThen solve.".into(),
+            tool_call: None,
+            collapsed: false,
+        });
+        app.rebuild_cached_lines();
+
+        // Should have produced lines
+        assert!(
+            !app.state.cached_lines.is_empty(),
+            "reasoning message should produce cached lines"
+        );
+        assert!(
+            app.state.cached_lines.len() >= 3,
+            "expected at least 3 lines (3 content + blank), got {}",
+            app.state.cached_lines.len()
+        );
+
+        // Check that first line has ⟡ prefix
+        let first_line = &app.state.cached_lines[0];
+        let first_text: String = first_line
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(
+            first_text.contains('⟡'),
+            "first line should have ⟡ icon, got: {first_text}"
+        );
+
+        // Check that continuation lines have │ prefix
+        for (i, line) in app.state.cached_lines.iter().enumerate().skip(1) {
+            let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+            if text.trim().is_empty() {
+                continue; // blank separator line
+            }
+            assert!(
+                text.starts_with('│'),
+                "line {i} should start with │, got: {text:?}"
+            );
+        }
+
+        // Content should be preserved
+        let all_text: String = app
+            .state
+            .cached_lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(
+            all_text.contains("think about this"),
+            "content lost: {all_text}"
+        );
+    }
+
+    #[test]
+    fn test_reasoning_via_cached_lines_widget() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::layout::Rect;
+        use crate::widgets::conversation::ConversationWidget;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = App::new();
+        app.state.terminal_width = 80;
+        app.state.terminal_height = 24;
+        app.state.messages.push(DisplayMessage {
+            role: DisplayRole::Reasoning,
+            content: "Thinking carefully about the problem at hand.".into(),
+            tool_call: None,
+            collapsed: false,
+        });
+        app.state.messages.push(DisplayMessage {
+            role: DisplayRole::Assistant,
+            content: "The result is clear.".into(),
+            tool_call: None,
+            collapsed: false,
+        });
+        app.state.message_generation = 1;
+        app.rebuild_cached_lines();
+
+        assert!(
+            !app.state.cached_lines.is_empty(),
+            "cached lines should not be empty after rebuild"
+        );
+
+        // Render with cached lines through the widget
+        let cached = app.state.cached_lines.clone();
+        let msgs = app.state.messages.clone();
+        terminal
+            .draw(|frame| {
+                let widget = ConversationWidget::new(&msgs, 0)
+                    .cached_lines(&cached);
+                frame.render_widget(widget, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let mut all_text = String::new();
+        for y in 0..24u16 {
+            for x in 0..80u16 {
+                if let Some(cell) = buf.cell(ratatui::layout::Position::new(x, y)) {
+                    all_text.push_str(cell.symbol());
+                }
+            }
+            all_text.push('\n');
+        }
+
+        assert!(
+            all_text.contains("Thinking carefully"),
+            "Cached reasoning content missing from rendered buffer.\nBuffer:\n{all_text}"
+        );
+        assert!(
+            all_text.contains("result is clear"),
+            "Cached assistant content missing from rendered buffer.\nBuffer:\n{all_text}"
+        );
     }
 
     // -- Slash command argument parsing tests --

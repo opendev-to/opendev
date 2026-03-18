@@ -11,6 +11,7 @@ pub mod markdown;
 pub mod style_tokens;
 pub mod todo_formatter;
 pub mod tool_registry;
+pub mod wrap;
 
 pub use base::{FormattedOutput, ToolFormatter};
 pub use display::{

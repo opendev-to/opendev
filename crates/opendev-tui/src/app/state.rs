@@ -101,6 +101,8 @@ pub struct AppState {
     pub per_message_line_counts: Vec<usize>,
     /// Per-message markdown render cache, keyed by hash of (role + content).
     pub markdown_cache: HashMap<u64, Vec<ratatui::text::Line<'static>>>,
+    /// Terminal width at which cached_lines were last built (for resize invalidation).
+    pub cached_width: u16,
     /// Scroll acceleration: last scroll direction (true = up, false = down).
     pub scroll_last_direction: Option<bool>,
     /// Scroll acceleration: timestamp of the last scroll key press.
@@ -186,6 +188,7 @@ impl Default for AppState {
             per_message_hashes: Vec::new(),
             per_message_line_counts: Vec::new(),
             markdown_cache: HashMap::new(),
+            cached_width: 80,
             scroll_last_direction: None,
             scroll_last_time: None,
             scroll_accel_level: 0,

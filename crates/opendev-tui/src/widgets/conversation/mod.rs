@@ -202,6 +202,7 @@ impl<'a> ConversationWidget<'a> {
                 DisplayRole::Reasoning => {
                     let md_lines =
                         MarkdownRenderer::render_muted(&content, style_tokens::THINKING_BG);
+                    let thinking_style = Style::default().fg(style_tokens::THINKING_BG);
                     let mut leading_consumed = false;
                     for md_line in md_lines.into_iter() {
                         let line_text: String = md_line
@@ -214,13 +215,14 @@ impl<'a> ConversationWidget<'a> {
                         if !leading_consumed && has_content {
                             let mut spans = vec![Span::styled(
                                 format!("{} ", style_tokens::THINKING_ICON),
-                                Style::default().fg(style_tokens::THINKING_BG),
+                                thinking_style,
                             )];
                             spans.extend(md_line.spans);
                             lines.push(Line::from(spans));
                             leading_consumed = true;
                         } else {
-                            let mut spans = vec![Span::raw(Indent::CONT)];
+                            let mut spans =
+                                vec![Span::styled(Indent::THINKING_CONT, thinking_style)];
                             spans.extend(md_line.spans);
                             lines.push(Line::from(spans));
                         }
@@ -1225,4 +1227,66 @@ mod tests {
             "Expected active tool 'Read' in output"
         );
     }
+
+    #[test]
+    fn test_reasoning_message_visible() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let msgs = vec![
+            DisplayMessage {
+                role: DisplayRole::Reasoning,
+                content: "Let me think step by step.\nFirst analyze the problem.\nThen find a solution.".into(),
+                tool_call: None,
+                collapsed: false,
+            },
+            DisplayMessage {
+                role: DisplayRole::Assistant,
+                content: "The answer is 42.".into(),
+                tool_call: None,
+                collapsed: false,
+            },
+        ];
+
+        terminal
+            .draw(|frame| {
+                let widget = ConversationWidget::new(&msgs, 0);
+                frame.render_widget(widget, frame.area());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let rows = buffer_text(&buf, Rect::new(0, 0, 80, 24));
+        let all_text = rows.join("\n");
+
+        // Thinking content should be visible
+        assert!(
+            all_text.contains("think step by step"),
+            "Reasoning content missing from render. Rows:\n{}",
+            rows.iter()
+                .enumerate()
+                .map(|(i, r)| format!("  [{i:2}] {r:?}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        // Assistant content should also be visible
+        assert!(
+            all_text.contains("answer is 42"),
+            "Assistant content missing from render"
+        );
+        // Check for thinking icon
+        assert!(
+            all_text.contains('⟡'),
+            "Missing ⟡ thinking icon. Rows:\n{}",
+            rows.iter()
+                .enumerate()
+                .map(|(i, r)| format!("  [{i:2}] {r:?}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
 }
