@@ -25,6 +25,8 @@ pub struct InstructionFile {
 /// Collected environment context for system prompt injection.
 #[derive(Debug, Clone, Default)]
 pub struct EnvironmentContext {
+    /// Absolute path to the working directory.
+    pub working_dir: String,
     /// Current git branch name.
     pub git_branch: Option<String>,
     /// Default branch (main/master).
@@ -79,6 +81,7 @@ impl EnvironmentContext {
         let instruction_files = instructions::discover_instruction_files(working_dir);
 
         Self {
+            working_dir: working_dir.display().to_string(),
             git_branch,
             git_default_branch,
             git_status,
@@ -100,6 +103,9 @@ impl EnvironmentContext {
 
         // Environment section
         let mut env_lines = vec![format!("# Environment")];
+        if !self.working_dir.is_empty() {
+            env_lines.push(format!("- Working directory: {}", self.working_dir));
+        }
         env_lines.push(format!("- Platform: {}", self.platform));
         env_lines.push(format!("- Date: {}", self.current_date));
         if let Some(ref shell) = self.shell {
@@ -264,6 +270,7 @@ mod tests {
     #[test]
     fn test_environment_context_format_prompt_block() {
         let ctx = EnvironmentContext {
+            working_dir: "/Users/test/myproject".to_string(),
             git_branch: Some("feature/test".to_string()),
             git_default_branch: Some("main".to_string()),
             git_status: Some("M src/lib.rs\n?? new_file.rs".to_string()),
@@ -280,6 +287,7 @@ mod tests {
 
         let block = ctx.format_prompt_block();
         assert!(block.contains("# Environment"));
+        assert!(block.contains("Working directory: /Users/test/myproject"));
         assert!(block.contains("macos aarch64"));
         assert!(block.contains("Rust"));
         assert!(block.contains("# Git Status"));

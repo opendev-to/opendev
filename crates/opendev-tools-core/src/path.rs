@@ -71,6 +71,44 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     components.iter().collect()
 }
 
+/// Strip hallucinated Docker-style prefixes like `/workspace/` or `/testbed/`.
+///
+/// If the path starts with a known fake prefix AND the resulting absolute path
+/// doesn't exist, rewrites it to be relative to the working directory.
+/// If the original absolute path does exist (e.g., there really is a `/workspace/` dir),
+/// it is left unchanged.
+fn strip_hallucinated_prefix(path_str: &str, working_dir: &Path) -> String {
+    for prefix in HALLUCINATED_PREFIXES {
+        if let Some(rest) = path_str.strip_prefix(prefix) {
+            let original = Path::new(path_str);
+            // Only rewrite if the original doesn't exist but the working_dir version does
+            // (or the working_dir version's parent exists for new file creation).
+            if !original.exists() {
+                let candidate = working_dir.join(rest);
+                if candidate.exists() || candidate.parent().map(|p| p.is_dir()).unwrap_or(false) {
+                    return candidate.to_string_lossy().to_string();
+                }
+                // Even if candidate doesn't exist, still rewrite — `/workspace/` is almost
+                // certainly wrong on a real system.
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+    }
+    // Also handle bare `/workspace` or `/testbed` (without trailing slash or subpath)
+    let bare_prefixes = ["/workspace", "/testbed"];
+    for prefix in &bare_prefixes {
+        if path_str == *prefix && !Path::new(prefix).exists() {
+            return working_dir.to_string_lossy().to_string();
+        }
+    }
+    path_str.to_string()
+}
+
+/// Well-known fake prefixes that LLMs hallucinate from Docker training data.
+/// When we see these as absolute path prefixes and the real path doesn't exist,
+/// we strip them and resolve relative to the actual working directory.
+const HALLUCINATED_PREFIXES: &[&str] = &["/workspace/", "/testbed/"];
+
 /// Resolve a user-provided file path against the working directory.
 ///
 /// Handles common LLM mistakes:
@@ -79,8 +117,11 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 /// - `myproject/main.rs` when cwd is `/home/user/myproject` -> `/home/user/myproject/main.rs`
 ///   (detects and strips redundant basename prefix)
 /// - Absolute paths with doubled project name
+/// - `/workspace/foo` or `/testbed/foo` -> `{working_dir}/foo` (LLM hallucination from Docker)
 pub fn resolve_file_path(user_path: &str, working_dir: &Path) -> PathBuf {
     let expanded = expand_home(user_path);
+    // Rewrite hallucinated Docker prefixes to working_dir-relative paths
+    let expanded = strip_hallucinated_prefix(&expanded, working_dir);
     let path = strip_curdir(Path::new(&expanded));
     let path = normalize_path(&path);
     let path = path.as_path();
@@ -142,6 +183,8 @@ pub fn resolve_file_path(user_path: &str, working_dir: &Path) -> PathBuf {
 /// leading directory component (matching the working dir's basename) helps.
 pub fn resolve_dir_path(user_path: &str, working_dir: &Path) -> PathBuf {
     let expanded = expand_home(user_path);
+    // Rewrite hallucinated Docker prefixes to working_dir-relative paths
+    let expanded = strip_hallucinated_prefix(&expanded, working_dir);
     let path = strip_curdir(Path::new(&expanded));
     let path = normalize_path(&path);
     let path = path.as_path();
@@ -433,5 +476,75 @@ mod tests {
             !result.to_string_lossy().contains('~'),
             "tilde should be expanded: {result:?}"
         );
+    }
+
+    // ---- hallucinated prefix tests ----
+
+    #[test]
+    fn test_resolve_file_path_workspace_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("myproject");
+        fs::create_dir(&project).unwrap();
+        fs::write(project.join("package.json"), "{}").unwrap();
+
+        // LLM hallucinates /workspace/package.json
+        let result = resolve_file_path("/workspace/package.json", &project);
+        assert_eq!(result, project.join("package.json"));
+    }
+
+    #[test]
+    fn test_resolve_file_path_workspace_nested() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("myproject");
+        let src = project.join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("main.rs"), "fn main() {}").unwrap();
+
+        let result = resolve_file_path("/workspace/src/main.rs", &project);
+        assert_eq!(result, project.join("src/main.rs"));
+    }
+
+    #[test]
+    fn test_resolve_file_path_testbed_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("myproject");
+        fs::create_dir(&project).unwrap();
+        fs::write(project.join("main.py"), "").unwrap();
+
+        let result = resolve_file_path("/testbed/main.py", &project);
+        assert_eq!(result, project.join("main.py"));
+    }
+
+    #[test]
+    fn test_resolve_dir_path_workspace_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("myproject");
+        let src = project.join("src");
+        fs::create_dir_all(&src).unwrap();
+
+        let result = resolve_dir_path("/workspace/src", &project);
+        assert_eq!(result, src);
+    }
+
+    #[test]
+    fn test_resolve_dir_path_bare_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("myproject");
+        fs::create_dir(&project).unwrap();
+
+        // /workspace alone should map to working_dir
+        let result = resolve_dir_path("/workspace", &project);
+        assert_eq!(result, project);
+    }
+
+    #[test]
+    fn test_resolve_file_path_workspace_nonexistent_file() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("myproject");
+        fs::create_dir(&project).unwrap();
+
+        // Even if the file doesn't exist, /workspace/ should still be rewritten
+        let result = resolve_file_path("/workspace/newfile.rs", &project);
+        assert_eq!(result, project.join("newfile.rs"));
     }
 }

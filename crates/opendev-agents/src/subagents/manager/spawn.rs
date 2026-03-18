@@ -120,6 +120,11 @@ impl SubagentManager {
             let wd = std::path::Path::new(working_dir);
             let mut parts = vec![spec.system_prompt.clone()];
 
+            // Always inject the working directory so the LLM knows the real path
+            parts.push(format!(
+                "\n\n## Working Directory\nYour working directory is: `{working_dir}`\nAll file paths should be relative to this directory or use this absolute path prefix. Do NOT use `/workspace/` or other Docker-style paths."
+            ));
+
             // Inject project structure into system prompt for Explore
             if matches!(
                 SubagentType::from_name(&spec.name),
@@ -168,13 +173,8 @@ impl SubagentManager {
             // Subagents use lower reasoning effort to avoid excessive thinking.
             // Cap at "medium" — "high" parent becomes "medium" subagent;
             // "medium" and "low" pass through unchanged.
-            reasoning_effort: parent_reasoning_effort.map(|e| {
-                if e == "high" {
-                    "medium".to_string()
-                } else {
-                    e
-                }
-            }),
+            reasoning_effort: parent_reasoning_effort
+                .map(|e| if e == "high" { "medium".to_string() } else { e }),
         });
 
         // Build tool schemas (filtered to allowed tools)
