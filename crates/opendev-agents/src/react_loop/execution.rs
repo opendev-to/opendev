@@ -334,8 +334,10 @@ impl ReactLoop {
                 .and_then(|u| u.get("completion_tokens").and_then(|t| t.as_u64()))
                 .unwrap_or(0);
 
-            // Emit reasoning content to TUI if present
-            if let Some(cb) = event_callback
+            // Emit reasoning content to TUI if present.
+            // Skip when streaming was used — deltas already delivered the content.
+            if !streaming
+                && let Some(cb) = event_callback
                 && let Some(ref reasoning) = response.reasoning_content
             {
                 cb.on_reasoning(reasoning);
