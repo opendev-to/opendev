@@ -10,16 +10,16 @@ use std::time::SystemTime;
 use opendev_tools_core::ToolResult;
 use tokio::process::Command;
 
-use super::FileSearchTool;
-use super::types::{OutputMode, RgError, SearchArgs};
+use super::types::{AstGrepArgs, GrepArgs, OutputMode, RgError};
+use super::{AstGrepTool, GrepTool, SEARCH_TIMEOUT, apply_pagination};
 
 // ---------------------------------------------------------------------------
 // AST-grep search
 // ---------------------------------------------------------------------------
 
-impl FileSearchTool {
+impl AstGrepTool {
     /// Run ast-grep (sg) for structural code search.
-    pub(super) async fn run_ast_grep(&self, args: &SearchArgs, search_path: &Path) -> ToolResult {
+    pub(super) async fn run_ast_grep(&self, args: &AstGrepArgs, search_path: &Path) -> ToolResult {
         let mut cmd = Command::new("sg");
         cmd.arg("--json");
         cmd.arg("-p");
@@ -32,7 +32,7 @@ impl FileSearchTool {
 
         cmd.arg(search_path);
 
-        let output = match tokio::time::timeout(Self::TIMEOUT, cmd.output()).await {
+        let output = match tokio::time::timeout(SEARCH_TIMEOUT, cmd.output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 if e.kind() == std::io::ErrorKind::NotFound {
@@ -144,19 +144,21 @@ impl FileSearchTool {
 
         ToolResult::ok_with_metadata(result, metadata)
     }
+}
 
-    // -----------------------------------------------------------------------
-    // Ripgrep search
-    // -----------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Ripgrep search
+// ---------------------------------------------------------------------------
 
+impl GrepTool {
     pub(super) async fn run_rg(
         &self,
-        args: &SearchArgs,
+        args: &GrepArgs,
         search_path: &Path,
     ) -> Result<ToolResult, RgError> {
         let mut cmd = Self::build_rg_command(args, search_path);
 
-        let output = match tokio::time::timeout(Self::TIMEOUT, cmd.output()).await {
+        let output = match tokio::time::timeout(SEARCH_TIMEOUT, cmd.output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 if e.kind() == std::io::ErrorKind::NotFound {
@@ -179,7 +181,7 @@ impl FileSearchTool {
                 } else {
                     &stdout
                 };
-                let result = Self::apply_pagination(output_str, args.offset, args.head_limit);
+                let result = apply_pagination(output_str, args.offset, args.head_limit);
 
                 if result.trim().is_empty() {
                     return Ok(ToolResult::ok(format!(
@@ -202,7 +204,14 @@ impl FileSearchTool {
             ))),
             Some(2) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(RgError::Other(stderr.to_string()))
+                if stderr.contains("unrecognized file type") {
+                    Err(RgError::Other(format!(
+                        "Invalid file type '{}'. Run `rg --type-list` to see valid types. Common: py, rs, js, ts, go, java, c, cpp",
+                        args.file_type.as_deref().unwrap_or("unknown")
+                    )))
+                } else {
+                    Err(RgError::Other(stderr.to_string()))
+                }
             }
             _ => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -214,12 +223,8 @@ impl FileSearchTool {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Fallback regex search (when rg is not installed)
-    // -----------------------------------------------------------------------
-
     /// Fallback: built-in regex search when rg is not installed.
-    pub(super) fn fallback_search(&self, args: &SearchArgs, search_path: &Path) -> ToolResult {
+    pub(super) fn fallback_search(&self, args: &GrepArgs, search_path: &Path) -> ToolResult {
         let regex = match regex::Regex::new(&args.pattern) {
             Ok(r) => r,
             Err(e) => return ToolResult::fail(format!("Invalid regex pattern: {e}")),
@@ -275,7 +280,6 @@ impl FileSearchTool {
                         unique_paths.push((key, mtime));
                     }
                 }
-                // Sort by mtime descending (newest first); files without mtime sort last
                 unique_paths.sort_by(|a, b| b.1.cmp(&a.1));
                 for (key, _) in &unique_paths {
                     output.push_str(key);
@@ -309,8 +313,7 @@ impl FileSearchTool {
             }
         }
 
-        // Apply pagination
-        output = Self::apply_pagination(&output, args.offset, args.head_limit);
+        output = apply_pagination(&output, args.offset, args.head_limit);
 
         if truncated {
             output.push_str(&format!("\n(showing first {MAX_RESULTS} matches)\n"));
@@ -330,7 +333,6 @@ impl FileSearchTool {
 // ---------------------------------------------------------------------------
 
 /// Sort file path lines by modification time (newest first).
-/// Files whose metadata cannot be read sort last.
 pub(super) fn sort_lines_by_mtime(lines: &str, search_path: &Path) -> String {
     let mut paths: Vec<&str> = lines.lines().filter(|l| !l.is_empty()).collect();
     paths.sort_by(|a, b| {
@@ -345,7 +347,6 @@ pub(super) fn sort_lines_by_mtime(lines: &str, search_path: &Path) -> String {
     result
 }
 
-/// Get the modification time for a path, resolving relative paths against search_path.
 fn get_mtime(file_path: &str, search_path: &Path) -> Option<SystemTime> {
     let p = Path::new(file_path);
     let full = if p.is_absolute() {
@@ -370,7 +371,6 @@ pub(super) fn search_file_fallback(
 ) {
     let content = match std::fs::read(path) {
         Ok(bytes) => {
-            // Skip binary files
             if bytes.iter().take(8192).any(|&b| b == 0) {
                 return;
             }

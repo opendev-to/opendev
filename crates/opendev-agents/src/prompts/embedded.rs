@@ -146,6 +146,8 @@ pub const TOOLS_TOOL_SCHEDULE: &str = include_str!("../../templates/tools/tool-s
 pub const TOOLS_TOOL_SEARCH_TOOLS: &str =
     include_str!("../../templates/tools/tool-search-tools.md");
 pub const TOOLS_TOOL_SEARCH: &str = include_str!("../../templates/tools/tool-search.md");
+pub const TOOLS_TOOL_GREP: &str = include_str!("../../templates/tools/tool-grep.md");
+pub const TOOLS_TOOL_AST_GREP: &str = include_str!("../../templates/tools/tool-ast-grep.md");
 pub const TOOLS_TOOL_SEND_MESSAGE: &str =
     include_str!("../../templates/tools/tool-send-message.md");
 pub const TOOLS_TOOL_TASK_COMPLETE: &str =
@@ -160,7 +162,7 @@ pub const TOOLS_TOOL_WRITE_TODOS: &str = include_str!("../../templates/tools/too
 // ---------------------------------------------------------------------------
 
 /// Total number of embedded templates.
-pub const TEMPLATE_COUNT: usize = 78;
+pub const TEMPLATE_COUNT: usize = 80;
 
 /// All embedded templates indexed by their relative path.
 ///
@@ -362,6 +364,8 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     m.insert("tools/tool-schedule.md", TOOLS_TOOL_SCHEDULE);
     m.insert("tools/tool-search-tools.md", TOOLS_TOOL_SEARCH_TOOLS);
     m.insert("tools/tool-search.md", TOOLS_TOOL_SEARCH);
+    m.insert("tools/tool-grep.md", TOOLS_TOOL_GREP);
+    m.insert("tools/tool-ast-grep.md", TOOLS_TOOL_AST_GREP);
     m.insert("tools/tool-send-message.md", TOOLS_TOOL_SEND_MESSAGE);
     m.insert("tools/tool-task-complete.md", TOOLS_TOOL_TASK_COMPLETE);
     m.insert("tools/tool-update-todo.md", TOOLS_TOOL_UPDATE_TODO);

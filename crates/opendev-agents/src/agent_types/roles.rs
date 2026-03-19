@@ -52,7 +52,7 @@ impl AgentRole {
             AgentRole::Plan => vec![
                 "read_file".into(),
                 "list_files".into(),
-                "search".into(),
+                "grep".into(),
                 "find_symbol".into(),
                 "find_referencing_symbols".into(),
                 "web_search".into(),
@@ -63,7 +63,7 @@ impl AgentRole {
                 "write_file".into(),
                 "edit_file".into(),
                 "list_files".into(),
-                "search".into(),
+                "grep".into(),
                 "bash".into(),
                 "task_complete".into(),
             ],
@@ -72,7 +72,7 @@ impl AgentRole {
                 "edit_file".into(),
                 "bash".into(),
                 "list_files".into(),
-                "search".into(),
+                "grep".into(),
                 "task_complete".into(),
             ],
         }

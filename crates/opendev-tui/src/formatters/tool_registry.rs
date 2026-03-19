@@ -136,11 +136,19 @@ static TOOL_REGISTRY: &[ToolDisplayEntry] = &[
     },
     // Search tools
     ToolDisplayEntry {
-        names: &["search", "Grep"],
+        names: &["grep", "search", "Grep"],
         category: ToolCategory::Search,
-        verb: "Search",
+        verb: "Grep",
         label: "project",
         primary_arg_keys: &["pattern", "query"],
+        result_format: ResultFormat::Directory,
+    },
+    ToolDisplayEntry {
+        names: &["ast_grep", "AstGrep"],
+        category: ToolCategory::Search,
+        verb: "AST",
+        label: "code",
+        primary_arg_keys: &["pattern"],
         result_format: ResultFormat::Directory,
     },
     ToolDisplayEntry {
@@ -549,13 +557,13 @@ fn format_parts_inner(
                 }
             })
             .unwrap_or_else(|| "Agent".to_string());
-        let task =
-            extract_arg_from_keys(&["description", "task"], args).unwrap_or_else(|| "working...".to_string());
+        let task = extract_arg_from_keys(&["description", "task"], args)
+            .unwrap_or_else(|| "working...".to_string());
         return (verb, task);
     }
 
-    // Special case: search tools show "pattern" in path
-    if matches!(tool_name, "search" | "Grep") {
+    // Special case: grep tools show "pattern" in path
+    if matches!(tool_name, "grep" | "search" | "Grep") {
         let pattern = args
             .get("pattern")
             .or_else(|| args.get("query"))
@@ -568,9 +576,26 @@ fn format_parts_inner(
         };
         if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
             let rel = shortener.shorten(path);
-            return ("Search".to_string(), format!("{pattern_display} in {rel}"));
+            return ("Grep".to_string(), format!("{pattern_display} in {rel}"));
         }
-        return ("Search".to_string(), pattern_display);
+        return ("Grep".to_string(), pattern_display);
+    }
+
+    // Special case: ast_grep tools show "pattern" [lang]
+    if matches!(tool_name, "ast_grep" | "AstGrep") {
+        let pattern = args
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("...");
+        let pattern_display = if pattern.len() > 40 {
+            format!("\"{}...\"", &pattern[..37])
+        } else {
+            format!("\"{pattern}\"")
+        };
+        if let Some(lang) = args.get("lang").and_then(|v| v.as_str()) {
+            return ("AST".to_string(), format!("{pattern_display} [{lang}]"));
+        }
+        return ("AST".to_string(), pattern_display);
     }
 
     // Unknown tools: derive pretty display name from tool_name itself

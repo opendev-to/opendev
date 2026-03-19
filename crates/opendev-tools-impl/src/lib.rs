@@ -81,7 +81,7 @@ pub use diff_preview::DiffPreviewTool;
 pub use file_edit::FileEditTool;
 pub use file_list::FileListTool;
 pub use file_read::FileReadTool;
-pub use file_search::FileSearchTool;
+pub use file_search::{AstGrepTool, GrepTool};
 pub use file_write::FileWriteTool;
 pub use git::GitTool;
 pub use insert_symbol::{InsertAfterSymbolTool, InsertBeforeSymbolTool};

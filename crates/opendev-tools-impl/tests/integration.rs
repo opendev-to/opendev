@@ -6,9 +6,7 @@
 use std::collections::HashMap;
 
 use opendev_tools_core::{BaseTool, ToolContext};
-use opendev_tools_impl::{
-    BashTool, FileEditTool, FileReadTool, FileSearchTool, FileWriteTool, GitTool,
-};
+use opendev_tools_impl::{BashTool, FileEditTool, FileReadTool, FileWriteTool, GitTool, GrepTool};
 use tempfile::TempDir;
 
 fn make_args(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
@@ -320,7 +318,7 @@ async fn search_finds_pattern_across_files() {
     std::fs::write(tmp.path().join("b.rs"), "fn helper() {}\n").unwrap();
     std::fs::write(tmp.path().join("c.txt"), "no functions here\n").unwrap();
 
-    let tool = FileSearchTool;
+    let tool = GrepTool;
     let ctx = ToolContext::new(tmp.path());
     let args = make_args(&[("pattern", serde_json::json!("fn \\w+"))]);
 
@@ -338,7 +336,7 @@ async fn search_respects_glob_filter() {
     std::fs::write(tmp.path().join("code.rs"), "fn foo() {}\n").unwrap();
     std::fs::write(tmp.path().join("readme.md"), "fn bar() {}\n").unwrap();
 
-    let tool = FileSearchTool;
+    let tool = GrepTool;
     let ctx = ToolContext::new(tmp.path());
     let args = make_args(&[
         ("pattern", serde_json::json!("fn ")),
@@ -358,7 +356,7 @@ async fn search_no_matches_is_not_error() {
     let tmp = TempDir::new().unwrap();
     std::fs::write(tmp.path().join("file.txt"), "hello world\n").unwrap();
 
-    let tool = FileSearchTool;
+    let tool = GrepTool;
     let ctx = ToolContext::new(tmp.path());
     let args = make_args(&[("pattern", serde_json::json!("nonexistent_pattern_xyz"))]);
 
@@ -370,7 +368,7 @@ async fn search_no_matches_is_not_error() {
 /// Verify search rejects invalid regex.
 #[tokio::test]
 async fn search_invalid_regex_fails() {
-    let tool = FileSearchTool;
+    let tool = GrepTool;
     let ctx = ToolContext::new("/tmp");
     let args = make_args(&[("pattern", serde_json::json!("[unclosed"))]);
 

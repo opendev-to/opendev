@@ -1,16 +1,10 @@
 use super::types::SubAgentSpec;
 
 /// Tools available to the Explore subagent.
-pub const CODE_EXPLORER_TOOLS: &[&str] = &["read_file", "search", "list_files", "run_command"];
+pub const CODE_EXPLORER_TOOLS: &[&str] = &["read_file", "grep", "list_files", "run_command"];
 
 /// Tools available to the Planner subagent.
-pub const PLANNER_TOOLS: &[&str] = &[
-    "read_file",
-    "search",
-    "list_files",
-    "write_file",
-    "edit_file",
-];
+pub const PLANNER_TOOLS: &[&str] = &["read_file", "grep", "list_files", "write_file", "edit_file"];
 
 /// Create the Explore subagent spec.
 pub fn code_explorer(system_prompt: &str) -> SubAgentSpec {
@@ -53,7 +47,7 @@ pub fn ask_user(system_prompt: &str) -> SubAgentSpec {
 /// Tools available to the General subagent (broad access for multi-step tasks).
 pub const GENERAL_TOOLS: &[&str] = &[
     "read_file",
-    "search",
+    "grep",
     "list_files",
     "write_file",
     "edit_file",
@@ -85,7 +79,7 @@ pub fn general(system_prompt: &str) -> SubAgentSpec {
 /// Tools available to the Build/Test subagent.
 pub const BUILD_TOOLS: &[&str] = &[
     "read_file",
-    "search",
+    "grep",
     "list_files",
     "run_command",
     "edit_file",
@@ -107,7 +101,7 @@ pub fn build(system_prompt: &str) -> SubAgentSpec {
 }
 
 /// Tools available to the Project Init subagent.
-pub const PROJECT_INIT_TOOLS: &[&str] = &["read_file", "list_files", "search", "run_command"];
+pub const PROJECT_INIT_TOOLS: &[&str] = &["read_file", "list_files", "grep", "run_command"];
 
 /// Create the Project Init subagent spec.
 pub fn project_init(system_prompt: &str) -> SubAgentSpec {
@@ -129,7 +123,7 @@ mod tests {
         assert_eq!(spec.name, "Explore");
         assert!(spec.has_tool_restriction());
         assert!(spec.tools.contains(&"read_file".to_string()));
-        assert!(spec.tools.contains(&"search".to_string()));
+        assert!(spec.tools.contains(&"grep".to_string()));
         assert!(!spec.tools.contains(&"write_file".to_string()));
     }
 
@@ -186,7 +180,7 @@ mod tests {
         assert_eq!(spec.tools.len(), 4);
         assert!(spec.tools.contains(&"read_file".to_string()));
         assert!(spec.tools.contains(&"list_files".to_string()));
-        assert!(spec.tools.contains(&"search".to_string()));
+        assert!(spec.tools.contains(&"grep".to_string()));
         assert!(spec.tools.contains(&"run_command".to_string()));
         assert!(spec.model.is_none());
     }

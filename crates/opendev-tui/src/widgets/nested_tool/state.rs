@@ -155,9 +155,12 @@ impl SubagentDisplayState {
         for tool in self.active_tools.values() {
             match tool.tool_name.as_str() {
                 "read_file" | "read_pdf" => read_count += 1,
-                "search" | "list_files" | "find_symbol" | "find_referencing_symbols" => {
-                    search_count += 1
-                }
+                "grep"
+                | "ast_grep"
+                | "search"
+                | "list_files"
+                | "find_symbol"
+                | "find_referencing_symbols" => search_count += 1,
                 name => other_name = Some(name.to_string()),
             }
         }
@@ -302,7 +305,7 @@ mod tests {
     #[test]
     fn test_activity_summary_searching() {
         let mut state = SubagentDisplayState::new("id-act2".into(), "test".into(), "task".into());
-        state.add_tool_call("search".into(), "tc-1".into(), HashMap::new());
+        state.add_tool_call("grep".into(), "tc-1".into(), HashMap::new());
         state.add_tool_call("list_files".into(), "tc-2".into(), HashMap::new());
         assert_eq!(state.activity_summary(), "Searching for 2 patterns...");
     }

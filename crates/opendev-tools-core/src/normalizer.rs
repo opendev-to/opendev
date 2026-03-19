@@ -219,7 +219,7 @@ mod tests {
         args.insert("filePath".into(), serde_json::json!("/tmp/test.rs"));
         args.insert("maxResults".into(), serde_json::json!(10));
 
-        let result = normalize_params("search", args, None);
+        let result = normalize_params("grep", args, None);
         assert!(result.contains_key("file_path"));
         assert!(result.contains_key("max_results"));
         assert!(!result.contains_key("filePath"));
@@ -230,7 +230,7 @@ mod tests {
         let mut args = HashMap::new();
         args.insert("query".into(), serde_json::json!("  hello world  "));
 
-        let result = normalize_params("search", args, None);
+        let result = normalize_params("grep", args, None);
         assert_eq!(result["query"], serde_json::json!("hello world"));
     }
 
@@ -281,7 +281,7 @@ mod tests {
         let mut args = HashMap::new();
         args.insert("query".into(), serde_json::json!("src/main.rs"));
 
-        let result = normalize_params("search", args, Some("/workspace"));
+        let result = normalize_params("grep", args, Some("/workspace"));
         // "query" is not a path param, should not be resolved
         assert_eq!(result["query"], serde_json::json!("src/main.rs"));
     }

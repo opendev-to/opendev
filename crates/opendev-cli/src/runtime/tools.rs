@@ -27,7 +27,8 @@ pub(super) fn register_default_tools(
     registry.register(Arc::new(FileEditTool));
     registry.register(Arc::new(MultiEditTool));
     registry.register(Arc::new(FileListTool));
-    registry.register(Arc::new(FileSearchTool));
+    registry.register(Arc::new(GrepTool));
+    registry.register(Arc::new(AstGrepTool));
 
     // Git
     registry.register(Arc::new(GitTool));

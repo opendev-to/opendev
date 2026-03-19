@@ -1,6 +1,7 @@
 //! Main execution loop: run(), run_inner().
 
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::{Instrument, debug, info, info_span, warn};
@@ -26,6 +27,117 @@ use tokio_util::sync::CancellationToken;
 use super::ReactLoop;
 use super::compaction::{apply_staged_compaction, do_llm_compaction, record_artifact};
 use super::types::{IterationMetrics, READ_OPS, ToolCallMetric, TurnResult};
+
+/// Per-iteration event emitter that centralizes display-suppression logic.
+///
+/// During normal iterations, all events pass through to the callback.
+/// During completion-nudge verification iterations, text and reasoning
+/// events are silently dropped while tool events still pass through.
+///
+/// This struct is the ONLY way text/reasoning should be emitted to the
+/// callback from the react loop. Do NOT call event_callback directly
+/// for text/reasoning — always go through the emitter.
+struct IterationEmitter<'a> {
+    cb: Option<&'a dyn crate::traits::AgentEventCallback>,
+    suppress_content: bool,
+    text_emitted: AtomicBool,
+    reasoning_emitted: AtomicBool,
+}
+
+impl<'a> IterationEmitter<'a> {
+    fn new(
+        cb: Option<&'a dyn crate::traits::AgentEventCallback>,
+        suppress_content: bool,
+    ) -> Self {
+        Self {
+            cb,
+            suppress_content,
+            text_emitted: AtomicBool::new(false),
+            reasoning_emitted: AtomicBool::new(false),
+        }
+    }
+
+    /// Emit a streaming text chunk. Suppressed during nudge iterations.
+    fn emit_text(&self, text: &str) {
+        if !self.suppress_content
+            && let Some(cb) = self.cb
+        {
+            cb.on_agent_chunk(text);
+            self.text_emitted.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Emit reasoning content. Suppressed during nudge iterations.
+    fn emit_reasoning(&self, text: &str) {
+        if !self.suppress_content
+            && let Some(cb) = self.cb
+        {
+            cb.on_reasoning(text);
+            self.reasoning_emitted.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Emit text if streaming didn't deliver it (non-streaming fallback).
+    fn emit_text_if_not_streamed(&self, content: &str) {
+        if !self.suppress_content
+            && !content.is_empty()
+            && !self.text_emitted.load(Ordering::Relaxed)
+            && let Some(cb) = self.cb
+        {
+            cb.on_agent_chunk(content);
+            self.text_emitted.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Emit reasoning from response body if streaming didn't already deliver it.
+    fn emit_reasoning_if_not_streamed(&self, reasoning: &str) {
+        if !self.suppress_content
+            && !reasoning.is_empty()
+            && !self.reasoning_emitted.load(Ordering::Relaxed)
+            && let Some(cb) = self.cb
+        {
+            cb.on_reasoning(reasoning);
+            self.reasoning_emitted.store(true, Ordering::Relaxed);
+        }
+    }
+
+    // --- Tool events: NEVER suppressed ---
+
+    fn emit_tool_started(
+        &self,
+        id: &str,
+        name: &str,
+        args: &std::collections::HashMap<String, serde_json::Value>,
+    ) {
+        if let Some(cb) = self.cb {
+            cb.on_tool_started(id, name, args);
+        }
+    }
+
+    fn emit_tool_finished(&self, id: &str, success: bool) {
+        if let Some(cb) = self.cb {
+            cb.on_tool_finished(id, success);
+        }
+    }
+
+    fn emit_tool_result(&self, id: &str, name: &str, output: &str, success: bool) {
+        if let Some(cb) = self.cb {
+            cb.on_tool_result(id, name, output, success);
+        }
+    }
+
+    fn emit_token_usage(&self, input: u64, output: u64) {
+        if let Some(cb) = self.cb {
+            cb.on_token_usage(input, output);
+        }
+    }
+
+    fn emit_context_usage(&self, pct: f64) {
+        if let Some(cb) = self.cb {
+            cb.on_context_usage(pct);
+        }
+    }
+}
 
 impl ReactLoop {
     #[allow(clippy::too_many_arguments)]
@@ -147,6 +259,7 @@ impl ReactLoop {
         loop {
             iteration += 1;
             let iter_start = Instant::now();
+            let emitter = IterationEmitter::new(event_callback, completion_nudge_sent);
 
             if self.check_iteration_limit(iteration) {
                 info!(
@@ -247,25 +360,12 @@ impl ReactLoop {
             debug!(streaming, "LLM call mode");
             let http_result = if streaming {
                 // Use SSE streaming — fires callbacks as chunks arrive.
-                // After a completion nudge, suppress text output so the
-                // nudge's verification response is not shown to the user.
-                let cb = event_callback;
-                let suppress_text = completion_nudge_sent;
+                // Suppression is handled by the emitter automatically.
                 let stream_cb = opendev_http::streaming::FnStreamCallback(|event| {
                     use opendev_http::streaming::StreamEvent;
                     match event {
-                        StreamEvent::TextDelta(text) => {
-                            if !suppress_text
-                                && let Some(cb) = cb
-                            {
-                                cb.on_agent_chunk(text);
-                            }
-                        }
-                        StreamEvent::ReasoningDelta(text) => {
-                            if let Some(cb) = cb {
-                                cb.on_reasoning(text);
-                            }
-                        }
+                        StreamEvent::TextDelta(text) => emitter.emit_text(text),
+                        StreamEvent::ReasoningDelta(text) => emitter.emit_reasoning(text),
                         _ => {}
                     }
                 });
@@ -298,6 +398,11 @@ impl ReactLoop {
             let llm_latency_ms = llm_start.elapsed().as_millis() as u64;
 
             if http_result.interrupted {
+                // Background request also cancels the token — distinguish from hard interrupt
+                if task_monitor.is_some_and(|m| m.is_background_requested()) {
+                    info!(iteration, "Background requested during LLM call — yielding");
+                    return Ok(AgentResult::backgrounded(messages.clone()));
+                }
                 return Ok(AgentResult::interrupted(messages.clone()));
             }
 
@@ -343,12 +448,17 @@ impl ReactLoop {
                 .unwrap_or(0);
 
             // Emit reasoning content to TUI if present.
-            // Skip when streaming was used — deltas already delivered the content.
-            if !streaming
-                && let Some(cb) = event_callback
-                && let Some(ref reasoning) = response.reasoning_content
-            {
-                cb.on_reasoning(reasoning);
+            // Skip when streaming was used (deltas already delivered).
+            // Suppression during nudge iterations is handled by the emitter.
+            if let Some(ref reasoning) = response.reasoning_content {
+                emitter.emit_reasoning_if_not_streamed(reasoning);
+            }
+
+            // Emit text content if streaming didn't deliver it.
+            // This covers: non-streaming mode and models/providers that don't
+            // send TextDelta events in the stream. Nudge suppression is automatic.
+            if let Some(ref content) = response.content {
+                emitter.emit_text_if_not_streamed(content);
             }
 
             // Track token usage
@@ -360,10 +470,8 @@ impl ReactLoop {
             }
 
             // Emit token usage event to callback
-            if let Some(cb) = event_callback
-                && (input_tokens > 0 || output_tokens > 0)
-            {
-                cb.on_token_usage(input_tokens, output_tokens);
+            if input_tokens > 0 || output_tokens > 0 {
+                emitter.emit_token_usage(input_tokens, output_tokens);
             }
 
             // Record cost tracking
@@ -382,9 +490,7 @@ impl ReactLoop {
                 && let Ok(mut c) = comp.lock()
             {
                 c.update_from_api_usage(input_tokens, messages.len());
-                if let Some(cb) = event_callback {
-                    cb.on_context_usage(c.usage_pct());
-                }
+                emitter.emit_context_usage(c.usage_pct());
             }
 
             // Initialize per-iteration metrics
@@ -409,6 +515,10 @@ impl ReactLoop {
                 TurnResult::Interrupted => {
                     iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
                     self.push_metrics(iter_metrics);
+                    if task_monitor.is_some_and(|m| m.is_background_requested()) {
+                        info!(iteration, "Background requested (TurnResult) — yielding");
+                        return Ok(AgentResult::backgrounded(messages.clone()));
+                    }
                     return Ok(AgentResult::interrupted(messages.clone()));
                 }
                 TurnResult::MaxIterations => {
@@ -464,13 +574,14 @@ impl ReactLoop {
                         continue;
                     }
 
-                    // Accept completion — only emit the chunk if we didn't
-                    // already stream it via TextDelta callbacks.
-                    if !streaming
-                        && let Some(cb) = event_callback
-                    {
-                        cb.on_agent_chunk(&content);
+                    // Check for background request before accepting completion
+                    if task_monitor.is_some_and(|m| m.is_background_requested()) {
+                        info!(iteration, "Background requested at completion — yielding");
+                        iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                        self.push_metrics(iter_metrics);
+                        return Ok(AgentResult::backgrounded(messages.clone()));
                     }
+
                     iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
                     self.push_metrics(iter_metrics);
                     // Play completion sound (respects 30s cooldown)
@@ -582,9 +693,7 @@ impl ReactLoop {
                                     Some(&wd_str),
                                 );
 
-                                if let Some(cb) = event_callback {
-                                    cb.on_tool_started(&tool_call_id, &tool_name, &args_map);
-                                }
+                                emitter.emit_tool_started(&tool_call_id, &tool_name, &args_map);
 
                                 let exec_ctx = match cancel {
                                     Some(ct) => {
@@ -606,12 +715,44 @@ impl ReactLoop {
                             })
                             .collect();
 
-                        // Execute all in parallel, collect results
-                        let results = futures::future::join_all(futures).await;
+                        // Execute all in parallel, with cancellation support
+                        let results = match cancel {
+                            Some(ct) => {
+                                tokio::select! {
+                                    results = futures::future::join_all(futures) => results,
+                                    _ = ct.cancelled() => {
+                                        // Cancelled — emit stub results for all tool calls
+                                        // so message history stays valid
+                                        for tc in &tool_calls {
+                                            let tc_id = tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
+                                            let t_name = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("unknown");
+                                            emitter.emit_tool_result(tc_id, t_name, "Interrupted by user", false);
+                                            emitter.emit_tool_finished(tc_id, false);
+                                            messages.push(serde_json::json!({
+                                                "role": "tool",
+                                                "tool_call_id": tc_id,
+                                                "name": t_name,
+                                                "content": "Interrupted by user",
+                                            }));
+                                        }
+                                        if task_monitor.is_some_and(|m| m.is_background_requested()) {
+                                            info!(iteration, "Background requested during parallel tools — yielding");
+                                            iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                                            self.push_metrics(iter_metrics);
+                                            return Ok(AgentResult::backgrounded(messages.clone()));
+                                        }
+                                        iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                                        self.push_metrics(iter_metrics);
+                                        return Ok(AgentResult::interrupted(messages.clone()));
+                                    }
+                                }
+                            }
+                            None => futures::future::join_all(futures).await,
+                        };
 
                         let mut _any_tool_failed = false;
                         for (tc_id, t_name, tool_result) in results {
-                            if let Some(cb) = event_callback {
+                            {
                                 let output_str = if tool_result.success {
                                     tool_result.output.as_deref().unwrap_or("")
                                 } else {
@@ -620,8 +761,8 @@ impl ReactLoop {
                                         .as_deref()
                                         .unwrap_or("Tool execution failed")
                                 };
-                                cb.on_tool_result(&tc_id, &t_name, output_str, tool_result.success);
-                                cb.on_tool_finished(&tc_id, tool_result.success);
+                                emitter.emit_tool_result(&tc_id, &t_name, output_str, tool_result.success);
+                                emitter.emit_tool_finished(&tc_id, tool_result.success);
                             }
 
                             if !tool_result.success {
@@ -655,6 +796,17 @@ impl ReactLoop {
                             task_monitor.is_some_and(|m| m.should_interrupt());
                         let interrupted_by_cancel = cancel.is_some_and(|c| c.is_cancelled());
                         if interrupted_by_monitor || interrupted_by_cancel {
+                            // Background request also cancels the token — check before treating as hard interrupt
+                            if task_monitor.is_some_and(|m| m.is_background_requested()) {
+                                info!(
+                                    iteration,
+                                    "Background requested after parallel tools — yielding"
+                                );
+                                iter_metrics.total_duration_ms =
+                                    iter_start.elapsed().as_millis() as u64;
+                                self.push_metrics(iter_metrics);
+                                return Ok(AgentResult::backgrounded(messages.clone()));
+                            }
                             let partial = PartialResult::from_interrupted_state(
                                 messages,
                                 response.content.as_deref(),
@@ -724,11 +876,7 @@ impl ReactLoop {
                             // Emit as agent chunk so TUI displays it — but
                             // skip if streaming already delivered the content
                             // via TextDelta callbacks.
-                            if !streaming
-                                && let Some(cb) = event_callback
-                            {
-                                cb.on_agent_chunk(&display_text);
-                            }
+                            emitter.emit_text_if_not_streamed(&display_text);
                             iter_metrics.total_duration_ms =
                                 iter_start.elapsed().as_millis() as u64;
                             self.push_metrics(iter_metrics);
@@ -769,9 +917,7 @@ impl ReactLoop {
                         let tool_call_id_str =
                             tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
 
-                        if let Some(cb) = event_callback {
-                            cb.on_tool_started(tool_call_id_str, tool_name, &args_map);
-                        }
+                        emitter.emit_tool_started(tool_call_id_str, tool_name, &args_map);
 
                         // Per-agent permission enforcement.
                         // For pattern-level rules (e.g. bash commands), use the
@@ -807,15 +953,13 @@ impl ReactLoop {
                                             "name": tool_name,
                                             "content": result_content,
                                         }));
-                                        if let Some(cb) = event_callback {
-                                            cb.on_tool_result(
-                                                tool_call_id_str,
-                                                tool_name,
-                                                "Permission denied by agent rules",
-                                                false,
-                                            );
-                                            cb.on_tool_finished(tool_call_id_str, false);
-                                        }
+                                        emitter.emit_tool_result(
+                                            tool_call_id_str,
+                                            tool_name,
+                                            "Permission denied by agent rules",
+                                            false,
+                                        );
+                                        emitter.emit_tool_finished(tool_call_id_str, false);
                                         continue;
                                     }
                                     PermissionAction::Allow => {
@@ -858,18 +1002,16 @@ impl ReactLoop {
                                                             "name": tool_name,
                                                             "content": result_content,
                                                         }));
-                                                        if let Some(cb) = event_callback {
-                                                            cb.on_tool_result(
-                                                                tool_call_id_str,
-                                                                tool_name,
-                                                                "Tool call denied by user",
-                                                                false,
-                                                            );
-                                                            cb.on_tool_finished(
-                                                                tool_call_id_str,
-                                                                false,
-                                                            );
-                                                        }
+                                                        emitter.emit_tool_result(
+                                                            tool_call_id_str,
+                                                            tool_name,
+                                                            "Tool call denied by user",
+                                                            false,
+                                                        );
+                                                        emitter.emit_tool_finished(
+                                                            tool_call_id_str,
+                                                            false,
+                                                        );
                                                         continue;
                                                     }
                                                     _ => {}
@@ -948,15 +1090,13 @@ impl ReactLoop {
                                             "name": tool_name,
                                             "content": result_content,
                                         }));
-                                        if let Some(cb) = event_callback {
-                                            cb.on_tool_result(
-                                                tool_call_id_str,
-                                                tool_name,
-                                                "Command denied by user",
-                                                false,
-                                            );
-                                            cb.on_tool_finished(tool_call_id_str, false);
-                                        }
+                                        emitter.emit_tool_result(
+                                            tool_call_id_str,
+                                            tool_name,
+                                            "Command denied by user",
+                                            false,
+                                        );
+                                        emitter.emit_tool_finished(tool_call_id_str, false);
                                         continue;
                                     }
                                     Ok(d) => {
@@ -1047,27 +1187,25 @@ impl ReactLoop {
                             record_artifact(ai, tool_name, &args_value, &tool_result);
                         }
 
-                        if let Some(cb) = event_callback {
-                            // Skip emitting the tool result to the TUI when interrupted —
-                            // the AgentInterrupted event already shows the message.
-                            if !was_interrupted {
-                                let output_str = if tool_result.success {
-                                    tool_result.output.as_deref().unwrap_or("")
-                                } else {
-                                    tool_result
-                                        .error
-                                        .as_deref()
-                                        .unwrap_or("Tool execution failed")
-                                };
-                                cb.on_tool_result(
-                                    tool_call_id_str,
-                                    tool_name,
-                                    output_str,
-                                    tool_result.success,
-                                );
-                            }
-                            cb.on_tool_finished(tool_call_id_str, tool_result.success);
+                        // Skip emitting the tool result to the TUI when interrupted —
+                        // the AgentInterrupted event already shows the message.
+                        if !was_interrupted {
+                            let output_str = if tool_result.success {
+                                tool_result.output.as_deref().unwrap_or("")
+                            } else {
+                                tool_result
+                                    .error
+                                    .as_deref()
+                                    .unwrap_or("Tool execution failed")
+                            };
+                            emitter.emit_tool_result(
+                                tool_call_id_str,
+                                tool_name,
+                                output_str,
+                                tool_result.success,
+                            );
                         }
+                        emitter.emit_tool_finished(tool_call_id_str, tool_result.success);
 
                         // Generate concise summary for session persistence / context
                         let _result_summary = summarize_tool_result(
@@ -1127,7 +1265,7 @@ impl ReactLoop {
                         if tool_result.success
                             && matches!(
                                 tool_name,
-                                "read_file" | "edit_file" | "write_file" | "search"
+                                "read_file" | "edit_file" | "write_file" | "grep"
                             )
                         {
                             let file_path_str = args_value
@@ -1178,6 +1316,18 @@ impl ReactLoop {
                             task_monitor.is_some_and(|m| m.should_interrupt());
                         let interrupted_by_cancel = cancel.is_some_and(|c| c.is_cancelled());
                         if interrupted_by_monitor || interrupted_by_cancel {
+                            // Background request also cancels the token — check before treating as hard interrupt
+                            if task_monitor.is_some_and(|m| m.is_background_requested()) {
+                                info!(
+                                    iteration,
+                                    "Background requested during sequential tools — yielding"
+                                );
+                                iter_metrics.total_duration_ms =
+                                    iter_start.elapsed().as_millis() as u64;
+                                self.push_metrics(iter_metrics);
+                                return Ok(AgentResult::backgrounded(messages.clone()));
+                            }
+
                             // Append stub results for remaining unexecuted tool calls
                             // so message history doesn't have dangling tool_calls
                             for remaining_tc in &tool_calls[completed_tool_count..] {
@@ -1224,6 +1374,18 @@ impl ReactLoop {
                                 );
                             }
                             return Ok(result);
+                        }
+
+                        // Check for background request between sequential tool executions
+                        if task_monitor.is_some_and(|m| m.is_background_requested()) {
+                            info!(
+                                iteration,
+                                "Background requested after sequential tool — yielding"
+                            );
+                            iter_metrics.total_duration_ms =
+                                iter_start.elapsed().as_millis() as u64;
+                            self.push_metrics(iter_metrics);
+                            return Ok(AgentResult::backgrounded(messages.clone()));
                         }
                     }
 

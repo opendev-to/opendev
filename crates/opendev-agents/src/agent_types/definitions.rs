@@ -106,7 +106,7 @@ mod tests {
         let schemas = vec![
             serde_json::json!({"function": {"name": "read_file"}}),
             serde_json::json!({"function": {"name": "bash"}}),
-            serde_json::json!({"function": {"name": "search"}}),
+            serde_json::json!({"function": {"name": "grep"}}),
         ];
         let code = AgentDefinition::from_role(AgentRole::Code);
         assert_eq!(code.filter_tool_schemas(&schemas).len(), 3);
