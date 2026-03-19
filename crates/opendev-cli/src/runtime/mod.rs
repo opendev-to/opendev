@@ -285,34 +285,21 @@ impl AgentRuntime {
                 (url, hdrs, None)
             }
             provider => {
-                // All other OpenAI-compatible providers
-                let url = match provider {
-                    "fireworks" => "https://api.fireworks.ai/inference/v1/chat/completions",
-                    "groq" => "https://api.groq.com/openai/v1/chat/completions",
-                    "mistral" => "https://api.mistral.ai/v1/chat/completions",
-                    "deepinfra" => "https://api.deepinfra.com/v1/openai/chat/completions",
-                    "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
-                    _ => {
-                        // Custom provider: use api_base_url or default to OpenAI
-                        ""
-                    }
-                };
-                let url = if url.is_empty() {
-                    config
-                        .api_base_url
-                        .clone()
-                        .map(|base| {
-                            let trimmed = base.trim_end_matches('/');
-                            if trimmed.ends_with("/chat/completions") {
-                                trimmed.to_string()
-                            } else {
-                                format!("{trimmed}/chat/completions")
-                            }
-                        })
-                        .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string())
-                } else {
-                    url.to_string()
-                };
+                // OpenAI-compatible providers — use config api_base_url or fall back to OpenAI
+                let url = config
+                    .api_base_url
+                    .clone()
+                    .map(|base| {
+                        let trimmed = base.trim_end_matches('/');
+                        if trimmed.ends_with("/chat/completions") {
+                            trimmed.to_string()
+                        } else {
+                            format!("{trimmed}/chat/completions")
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        "https://api.openai.com/v1/chat/completions".to_string()
+                    });
 
                 let mut hdrs = HeaderMap::new();
                 if let Ok(val) = HeaderValue::from_str(&format!("Bearer {api_key}")) {
@@ -492,6 +479,15 @@ impl AgentRuntime {
             }
         }
 
+        // Reset reasoning effort: new model may not support the current level.
+        // User can re-enable via Ctrl+Shift+T.
+        if !new_model_info
+            .as_ref()
+            .is_some_and(|info| info.capabilities.iter().any(|c| c == "reasoning"))
+        {
+            self.llm_caller.config.reasoning_effort = None;
+        }
+
         // If provider changed, rebuild the HTTP client
         if new_provider_id != current_provider {
             let provider_info = registry.get_provider(&new_provider_id);
@@ -513,7 +509,15 @@ impl AgentRuntime {
                 ));
             }
 
-            let new_client = Self::build_http_client(&new_provider_id, &api_key, new_model, None)?;
+            let base_url = provider_info
+                .map(|pi| pi.api_base_url.clone())
+                .filter(|s| !s.is_empty());
+            let new_client = Self::build_http_client(
+                &new_provider_id,
+                &api_key,
+                new_model,
+                base_url.as_deref(),
+            )?;
             self.http_client = Arc::new(new_client);
             info!(
                 provider = %new_provider_id,
@@ -606,31 +610,19 @@ impl AgentRuntime {
                     (url, hdrs, None)
                 }
                 _ => {
-                    // All other OpenAI-compatible providers
-                    let url = match provider {
-                        "fireworks" => "https://api.fireworks.ai/inference/v1/chat/completions",
-                        "groq" => "https://api.groq.com/openai/v1/chat/completions",
-                        "mistral" => "https://api.mistral.ai/v1/chat/completions",
-                        "deepinfra" => "https://api.deepinfra.com/v1/openai/chat/completions",
-                        "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
-                        _ => "",
-                    };
-                    let url = if url.is_empty() {
-                        api_base_url
-                            .map(|base| {
-                                let trimmed = base.trim_end_matches('/');
-                                if trimmed.ends_with("/chat/completions") {
-                                    trimmed.to_string()
-                                } else {
-                                    format!("{trimmed}/chat/completions")
-                                }
-                            })
-                            .unwrap_or_else(|| {
-                                "https://api.openai.com/v1/chat/completions".to_string()
-                            })
-                    } else {
-                        url.to_string()
-                    };
+                    // OpenAI-compatible providers — use registry api_base_url
+                    let url = api_base_url
+                        .map(|base| {
+                            let trimmed = base.trim_end_matches('/');
+                            if trimmed.ends_with("/chat/completions") {
+                                trimmed.to_string()
+                            } else {
+                                format!("{trimmed}/chat/completions")
+                            }
+                        })
+                        .unwrap_or_else(|| {
+                            "https://api.openai.com/v1/chat/completions".to_string()
+                        });
                     let mut hdrs = HeaderMap::new();
                     if let Ok(val) = HeaderValue::from_str(&format!("Bearer {api_key}")) {
                         hdrs.insert(AUTHORIZATION, val);

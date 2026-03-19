@@ -29,6 +29,61 @@ impl App {
         idx
     }
 
+    /// Attempt to background the running agent. Returns true if initiated.
+    fn try_background_agent(&mut self) -> bool {
+        if !self.state.agent_active || self.state.backgrounding_pending {
+            return false;
+        }
+        if !self.state.bg_agent_manager.can_accept() {
+            self.push_system_message(format!(
+                "Maximum background agents reached ({}).",
+                self.state.bg_agent_manager.max_concurrent
+            ));
+            return false;
+        }
+        if let Some(ref token) = self.interrupt_token {
+            token.request_background();
+            self.state.backgrounding_pending = true;
+            true
+        } else {
+            self.push_system_message(
+                "Cannot background: agent token not ready yet.".to_string(),
+            );
+            false
+        }
+    }
+
+    /// Dismiss any active modal controllers with permissive responses to unblock
+    /// the react loop so it can reach the background check on the next iteration.
+    fn dismiss_modals_for_background(&mut self) {
+        if self.approval_controller.active() {
+            let command = self.approval_controller.command().to_string();
+            // Auto-approve to unblock the tool execution
+            self.approval_controller.confirm();
+            if let Some(tx) = self.approval_response_tx.take() {
+                let _ = tx.send(opendev_runtime::ToolApprovalDecision {
+                    approved: true,
+                    choice: "yes".to_string(),
+                    command,
+                });
+            }
+        }
+        if self.ask_user_controller.active() {
+            // Send default answer to unblock
+            self.ask_user_controller.cancel();
+            self.ask_user_response_tx.take();
+        }
+        if self.plan_approval_controller.active() {
+            // Auto-approve the plan to unblock
+            if let Some(decision) = self.plan_approval_controller.approve() {
+                self.state.mode = super::OperationMode::Normal;
+                if let Some(tx) = self.plan_approval_response_tx.take() {
+                    let _ = tx.send(decision);
+                }
+            }
+        }
+    }
+
     /// Handle a key press event.
     pub(super) fn handle_key(&mut self, key: crossterm::event::KeyEvent) {
         // Only process key-press and repeat events (Kitty protocol also sends Release)
@@ -36,6 +91,16 @@ impl App {
             key.kind,
             crossterm::event::KeyEventKind::Press | crossterm::event::KeyEventKind::Repeat
         ) {
+            return;
+        }
+
+        // Ctrl+B — background agent: handle before any modal can swallow it
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('b') {
+            if self.try_background_agent() {
+                // Dismiss any active modal with a permissive response to unblock the react loop
+                self.dismiss_modals_for_background();
+            }
+            self.state.dirty = true;
             return;
         }
 
@@ -53,6 +118,8 @@ impl App {
                             "Model switched to: {} ({})",
                             selected.name, selected.provider_display
                         ));
+                        // Reset reasoning level — new model may have different support
+                        self.state.reasoning_level = super::enums::ReasoningLevel::Off;
                         // Propagate to backend
                         if let Some(ref tx) = self.user_message_tx {
                             let _ = tx.send(format!("\x00__MODEL_CHANGE__{}", self.state.model));
@@ -373,16 +440,11 @@ impl App {
             // Enter — accept autocomplete, submit message, or execute slash command
             (_, KeyCode::Enter) => {
                 if self.state.autocomplete.is_visible() {
-                    // If the input is already a complete slash command (exact match),
-                    // dismiss autocomplete and submit instead of accepting the suggestion.
+                    // If the input is already a known slash command, dismiss autocomplete
+                    // and submit it directly — don't let autocomplete replace it.
                     let is_exact_slash = self.state.input_buffer.starts_with('/')
                         && !self.state.input_buffer[1..].contains(' ')
-                        && self
-                            .state
-                            .autocomplete
-                            .items()
-                            .first()
-                            .is_some_and(|item| item.insert_text == self.state.input_buffer);
+                        && crate::controllers::is_command(&self.state.input_buffer[1..]);
 
                     if is_exact_slash {
                         self.state.autocomplete.dismiss();
@@ -645,26 +707,7 @@ impl App {
             (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
                 self.execute_slash_command("/sessions");
             }
-            // Ctrl+B — background running agent (no-op when idle)
-            (KeyModifiers::CONTROL, KeyCode::Char('b')) => {
-                if self.state.agent_active && !self.state.backgrounding_pending {
-                    // Background the running agent
-                    if !self.state.bg_agent_manager.can_accept() {
-                        self.push_system_message(format!(
-                            "Maximum background agents reached ({}).",
-                            self.state.bg_agent_manager.max_concurrent
-                        ));
-                    } else if let Some(ref token) = self.interrupt_token {
-                        token.request_background();
-                        self.state.backgrounding_pending = true;
-                    } else {
-                        self.push_system_message(
-                            "Cannot background: agent token not ready yet.".to_string(),
-                        );
-                    }
-                }
-                self.state.dirty = true;
-            }
+            // Ctrl+B handled at top of handle_key (before modals)
             // Regular character input
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                 self.state.command_history.reset_navigation();
@@ -793,5 +836,43 @@ mod tests {
         app.handle_key(down);
         assert_eq!(app.state.scroll_accel_level, 0);
         assert_eq!(app.state.scroll_offset, 6); // 9 - 3
+    }
+
+    #[test]
+    fn test_models_command_opens_picker_with_autocomplete() {
+        let mut app = App::new();
+        // Simulate typing "/models" character by character
+        for c in "/models".chars() {
+            let key = crossterm::event::KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+            app.handle_key(key);
+        }
+        assert_eq!(app.state.input_buffer, "/models");
+
+        // Autocomplete should be visible (showing /models command)
+        // (It may or may not be visible depending on the completer setup in tests)
+
+        // Press Enter — should execute /models, not accept autocomplete
+        let enter = crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        app.handle_key(enter);
+
+        // Input should be cleared (command was submitted)
+        assert!(app.state.input_buffer.is_empty());
+
+        // Should either open picker or show "No models" message
+        let has_picker = app.model_picker_controller.is_some();
+        let has_no_models_msg = app
+            .state
+            .messages
+            .iter()
+            .any(|m| m.content.contains("No models"));
+        assert!(
+            has_picker || has_no_models_msg,
+            "Expected model picker or 'No models' message, got messages: {:?}",
+            app.state
+                .messages
+                .iter()
+                .map(|m| &m.content)
+                .collect::<Vec<_>>()
+        );
     }
 }
