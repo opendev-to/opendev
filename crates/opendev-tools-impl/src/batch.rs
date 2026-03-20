@@ -112,7 +112,10 @@ impl BaseTool for BatchTool {
 
         for (i, inv) in invocations.iter().enumerate() {
             let tool_name = match inv.get("tool").and_then(|v| v.as_str()) {
-                Some(name) => name.to_string(),
+                Some(name) => name
+                    .strip_prefix("functions.")
+                    .unwrap_or(name)
+                    .to_string(),
                 None => {
                     errors.push(format!("[{i}] missing 'tool' field"));
                     continue;
@@ -532,6 +535,24 @@ mod tests {
         let formatted = tool.format_validation_error(&errors).unwrap();
         assert!(formatted.contains("invocations: expected type 'array'"));
         assert!(formatted.contains("extra_field: Unknown parameter"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_strips_functions_prefix() {
+        let registry = make_registry_with_tools();
+        let tool = BatchTool::new(registry);
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[(
+            "invocations",
+            serde_json::json!([
+                {"tool": "functions.echo", "input": {"message": "prefixed"}}
+            ]),
+        )]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        let output = result.output.unwrap();
+        assert!(output.contains("1 succeeded, 0 failed"));
+        assert!(output.contains("prefixed"));
     }
 
     #[tokio::test]
