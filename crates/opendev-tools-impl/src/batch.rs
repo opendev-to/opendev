@@ -117,10 +117,7 @@ impl BaseTool for BatchTool {
                 .or_else(|| inv.get("name"))
                 .and_then(|v| v.as_str())
             {
-                Some(name) => name
-                    .strip_prefix("functions.")
-                    .unwrap_or(name)
-                    .to_string(),
+                Some(name) => name.strip_prefix("functions.").unwrap_or(name).to_string(),
                 None => {
                     errors.push(format!("[{i}] missing 'tool' field"));
                     continue;
@@ -160,7 +157,19 @@ impl BaseTool for BatchTool {
                     }
                 })
                 .map(|obj| obj.into_iter().collect())
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    // Fallback: extract all keys except tool/name as params.
+                    // Handles LLMs that put params directly in the invocation object
+                    // without an `input` wrapper.
+                    inv.as_object()
+                        .map(|obj| {
+                            obj.iter()
+                                .filter(|(k, _)| !matches!(k.as_str(), "tool" | "name"))
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                });
 
             parsed.push((i, tool_name, tool_input));
         }
@@ -680,6 +689,81 @@ mod tests {
         let output = result.output.unwrap();
         assert!(output.contains("1 succeeded"));
         assert!(output.contains("json string"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_flat_params_fallback() {
+        let registry = make_registry_with_tools();
+        let tool = BatchTool::new(registry);
+        let ctx = ToolContext::new("/tmp");
+        // No "input" wrapper — params are directly in the invocation object
+        let args = make_args(&[(
+            "invocations",
+            serde_json::json!([
+                {"tool": "echo", "message": "hello"}
+            ]),
+        )]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        let output = result.output.unwrap();
+        assert!(output.contains("1 succeeded, 0 failed"));
+        assert!(output.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_flat_params_with_multiple_keys() {
+        let registry = make_registry_with_tools();
+        let tool = BatchTool::new(registry);
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[(
+            "invocations",
+            serde_json::json!([
+                {"tool": "echo", "message": "hello", "extra": "data"}
+            ]),
+        )]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        let output = result.output.unwrap();
+        assert!(output.contains("1 succeeded"));
+        assert!(output.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_flat_params_ignores_tool_and_name_keys() {
+        let registry = make_registry_with_tools();
+        let tool = BatchTool::new(registry);
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[(
+            "invocations",
+            serde_json::json!([
+                {"tool": "echo", "name": "functions.echo", "message": "hello"}
+            ]),
+        )]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        let output = result.output.unwrap();
+        assert!(output.contains("1 succeeded"));
+        assert!(output.contains("hello"));
+        // "tool" and "name" should not leak into the params
+        assert!(!output.contains("functions.echo"));
+    }
+
+    #[tokio::test]
+    async fn test_batch_prefers_input_over_flat() {
+        let registry = make_registry_with_tools();
+        let tool = BatchTool::new(registry);
+        let ctx = ToolContext::new("/tmp");
+        let args = make_args(&[(
+            "invocations",
+            serde_json::json!([
+                {"tool": "echo", "input": {"message": "from_input"}, "message": "from_flat"}
+            ]),
+        )]);
+        let result = tool.execute(args, &ctx).await;
+        assert!(result.success);
+        let output = result.output.unwrap();
+        assert!(output.contains("from_input"));
+        assert!(!output.contains("from_flat"));
     }
 
     #[tokio::test]
