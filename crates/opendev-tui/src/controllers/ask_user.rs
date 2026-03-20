@@ -4,13 +4,14 @@
 //! The key handler is responsible for sending the answer through the response
 //! channel stored in `App::ask_user_response_tx`.
 
-/// Controller for displaying questions with selectable options.
+/// Controller for displaying questions with selectable options or free-text input.
 pub struct AskUserController {
     question: String,
     options: Vec<String>,
     default: Option<String>,
     selected: usize,
     active: bool,
+    text_input: String,
 }
 
 impl AskUserController {
@@ -22,6 +23,7 @@ impl AskUserController {
             default: None,
             selected: 0,
             active: false,
+            text_input: String::new(),
         }
     }
 
@@ -48,6 +50,26 @@ impl AskUserController {
     /// The default value (used as fallback on cancel/Esc).
     pub fn default_value(&self) -> Option<String> {
         self.default.clone()
+    }
+
+    /// Whether the prompt has selectable options.
+    pub fn has_options(&self) -> bool {
+        !self.options.is_empty()
+    }
+
+    /// The current free-text input buffer.
+    pub fn text_input(&self) -> &str {
+        &self.text_input
+    }
+
+    /// Append a character to the free-text input.
+    pub fn push_char(&mut self, c: char) {
+        self.text_input.push(c);
+    }
+
+    /// Remove the last character from the free-text input.
+    pub fn pop_char(&mut self) {
+        self.text_input.pop();
     }
 
     /// Start the ask-user prompt.
@@ -77,16 +99,31 @@ impl AskUserController {
 
     /// Confirm the current selection and deactivate.
     ///
-    /// Returns the selected option text, or `None` if options list is empty.
-    /// The caller is responsible for sending the answer through the response channel.
+    /// When options are present, returns the selected option text.
+    /// When no options exist, returns the free-text input (or default if input is empty).
+    /// Returns `None` only if there is nothing to confirm.
     pub fn confirm(&mut self) -> Option<String> {
-        if !self.active || self.options.is_empty() {
+        if !self.active {
             return None;
         }
 
-        let answer = self.options[self.selected].clone();
-        self.cleanup();
-        Some(answer)
+        if !self.options.is_empty() {
+            let answer = self.options[self.selected].clone();
+            self.cleanup();
+            return Some(answer);
+        }
+
+        // Free-text mode: use text input, fall back to default
+        let answer = if self.text_input.is_empty() {
+            self.default.clone()
+        } else {
+            Some(self.text_input.clone())
+        };
+
+        if answer.is_some() {
+            self.cleanup();
+        }
+        answer
     }
 
     /// Cancel the prompt and deactivate.
@@ -105,6 +142,7 @@ impl AskUserController {
         self.options.clear();
         self.default = None;
         self.selected = 0;
+        self.text_input.clear();
     }
 }
 
@@ -183,9 +221,73 @@ mod tests {
     }
 
     #[test]
-    fn test_confirm_empty_options() {
+    fn test_confirm_empty_options_no_input() {
         let mut ctrl = AskUserController::new();
         ctrl.start("Q?".into(), vec![], None);
+        // No text input and no default → None
         assert!(ctrl.confirm().is_none());
+        assert!(ctrl.active()); // still active since nothing to confirm
+    }
+
+    #[test]
+    fn test_confirm_empty_options_with_default() {
+        let mut ctrl = AskUserController::new();
+        ctrl.start("Q?".into(), vec![], Some("yes".into()));
+        // No text input but has default → returns default
+        let answer = ctrl.confirm().unwrap();
+        assert_eq!(answer, "yes");
+        assert!(!ctrl.active());
+    }
+
+    #[test]
+    fn test_free_text_input() {
+        let mut ctrl = AskUserController::new();
+        ctrl.start("What's your name?".into(), vec![], None);
+        assert!(!ctrl.has_options());
+
+        ctrl.push_char('A');
+        ctrl.push_char('l');
+        ctrl.push_char('i');
+        assert_eq!(ctrl.text_input(), "Ali");
+
+        ctrl.pop_char();
+        assert_eq!(ctrl.text_input(), "Al");
+
+        ctrl.push_char('e');
+        ctrl.push_char('x');
+        let answer = ctrl.confirm().unwrap();
+        assert_eq!(answer, "Alex");
+        assert!(!ctrl.active());
+    }
+
+    #[test]
+    fn test_free_text_overrides_default() {
+        let mut ctrl = AskUserController::new();
+        ctrl.start("Name?".into(), vec![], Some("default".into()));
+        ctrl.push_char('X');
+        let answer = ctrl.confirm().unwrap();
+        assert_eq!(answer, "X"); // typed text wins over default
+    }
+
+    #[test]
+    fn test_has_options() {
+        let mut ctrl = AskUserController::new();
+        ctrl.start("Q?".into(), sample_options(), None);
+        assert!(ctrl.has_options());
+
+        let mut ctrl2 = AskUserController::new();
+        ctrl2.start("Q?".into(), vec![], None);
+        assert!(!ctrl2.has_options());
+    }
+
+    #[test]
+    fn test_cleanup_clears_text_input() {
+        let mut ctrl = AskUserController::new();
+        ctrl.start("Q?".into(), vec![], None);
+        ctrl.push_char('a');
+        ctrl.push_char('b');
+        ctrl.cancel();
+        assert!(!ctrl.active());
+        assert_eq!(ctrl.text_input(), "");
     }
 }

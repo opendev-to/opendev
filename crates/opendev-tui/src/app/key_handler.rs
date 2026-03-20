@@ -305,8 +305,18 @@ impl App {
         // Delegate to ask-user controller when active
         if self.ask_user_controller.active() {
             match key.code {
-                KeyCode::Up => self.ask_user_controller.prev(),
-                KeyCode::Down => self.ask_user_controller.next(),
+                KeyCode::Up if self.ask_user_controller.has_options() => {
+                    self.ask_user_controller.prev();
+                }
+                KeyCode::Down if self.ask_user_controller.has_options() => {
+                    self.ask_user_controller.next();
+                }
+                KeyCode::Char(c) if !self.ask_user_controller.has_options() => {
+                    self.ask_user_controller.push_char(c);
+                }
+                KeyCode::Backspace if !self.ask_user_controller.has_options() => {
+                    self.ask_user_controller.pop_char();
+                }
                 KeyCode::Enter => {
                     if let Some(answer) = self.ask_user_controller.confirm()
                         && let Some(tx) = self.ask_user_response_tx.take()
@@ -816,6 +826,56 @@ impl App {
 mod tests {
     use super::super::*;
     use crossterm::event::{KeyCode, KeyModifiers};
+
+    #[test]
+    fn test_task_watcher_close_q() {
+        let mut app = App::new();
+        app.state.task_watcher_open = true;
+        let key = crossterm::event::KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        app.handle_key(key);
+        assert!(!app.state.task_watcher_open, "q should close task watcher");
+        assert!(app.state.force_clear, "q should set force_clear");
+    }
+
+    #[test]
+    fn test_task_watcher_close_esc() {
+        let mut app = App::new();
+        app.state.task_watcher_open = true;
+        let key = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        app.handle_key(key);
+        assert!(!app.state.task_watcher_open, "Esc should close task watcher");
+        assert!(app.state.force_clear, "Esc should set force_clear");
+    }
+
+    #[test]
+    fn test_task_watcher_close_ctrl_b() {
+        let mut app = App::new();
+        app.state.task_watcher_open = true;
+        let key = crossterm::event::KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        app.handle_key(key);
+        assert!(!app.state.task_watcher_open, "Ctrl+B should close task watcher");
+        assert!(app.state.force_clear, "Ctrl+B should set force_clear");
+    }
+
+    #[test]
+    fn test_task_watcher_close_ctrl_p() {
+        let mut app = App::new();
+        app.state.task_watcher_open = true;
+        let key = crossterm::event::KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        app.handle_key(key);
+        assert!(!app.state.task_watcher_open, "Ctrl+P should close task watcher");
+        assert!(app.state.force_clear, "Ctrl+P should set force_clear");
+    }
+
+    #[test]
+    fn test_task_watcher_close_alt_b() {
+        let mut app = App::new();
+        app.state.task_watcher_open = true;
+        let key = crossterm::event::KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT);
+        app.handle_key(key);
+        assert!(!app.state.task_watcher_open, "Alt+B should close task watcher");
+        assert!(app.state.force_clear, "Alt+B should set force_clear");
+    }
 
     #[test]
     fn test_handle_key_char_input() {

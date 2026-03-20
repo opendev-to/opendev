@@ -679,21 +679,49 @@ impl App {
             Style::default().fg(style_tokens::PRIMARY),
         ))];
 
-        let option_lines: Vec<Line> = ask_options
-            .iter()
-            .enumerate()
-            .map(|(i, opt)| Self::build_option_line(i == selected, &format!("{}.", i + 1), opt, ""))
-            .collect();
+        if ask_options.is_empty() {
+            // Free-text input mode
+            let text = self.ask_user_controller.text_input();
+            let input_line = Line::from(vec![
+                Span::styled("    ", Style::default()),
+                Span::styled(
+                    if text.is_empty() {
+                        "\u{2588}".to_string()
+                    } else {
+                        format!("{text}\u{2588}")
+                    },
+                    Style::default().fg(style_tokens::ACCENT),
+                ),
+            ]);
 
-        Self::render_popup_panel(
-            frame,
-            input_area,
-            " Question ",
-            &content_lines,
-            &option_lines,
-            "\u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
-            None,
-        );
+            Self::render_popup_panel(
+                frame,
+                input_area,
+                " Question ",
+                &content_lines,
+                &[input_line],
+                "Type answer \u{00b7} Enter confirm \u{00b7} Esc cancel",
+                None,
+            );
+        } else {
+            let option_lines: Vec<Line> = ask_options
+                .iter()
+                .enumerate()
+                .map(|(i, opt)| {
+                    Self::build_option_line(i == selected, &format!("{}.", i + 1), opt, "")
+                })
+                .collect();
+
+            Self::render_popup_panel(
+                frame,
+                input_area,
+                " Question ",
+                &content_lines,
+                &option_lines,
+                "\u{2191}/\u{2193} choose \u{00b7} Enter confirm \u{00b7} Esc cancel",
+                None,
+            );
+        }
     }
 
     /// Render the model picker panel above the input area.
