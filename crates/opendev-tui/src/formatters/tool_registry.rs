@@ -350,6 +350,14 @@ static TOOL_REGISTRY: &[ToolDisplayEntry] = &[
         primary_arg_keys: &["name", "skill"],
         result_format: ResultFormat::Generic,
     },
+    ToolDisplayEntry {
+        names: &["past_sessions"],
+        category: ToolCategory::Other,
+        verb: "Sessions",
+        label: "sessions",
+        primary_arg_keys: &["action", "session_id", "query"],
+        result_format: ResultFormat::Generic,
+    },
 ];
 
 /// Default entry for unknown tools.
@@ -541,6 +549,27 @@ fn format_parts_inner(
         let task = extract_arg_from_keys(&["description", "task"], args)
             .unwrap_or_else(|| "working...".to_string());
         return (verb, task);
+    }
+
+    // Special case: past_sessions shows action-specific verbs
+    if tool_name == "past_sessions" {
+        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("list");
+        return match action {
+            "list" => ("List Sessions".to_string(), String::new()),
+            "read" => {
+                let id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("...");
+                ("Read Session".to_string(), id.to_string())
+            }
+            "search" => {
+                let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("...");
+                ("Search Sessions".to_string(), format!("\"{q}\""))
+            }
+            "info" => {
+                let id = args.get("session_id").and_then(|v| v.as_str()).unwrap_or("...");
+                ("Session Info".to_string(), id.to_string())
+            }
+            other => ("Sessions".to_string(), other.to_string()),
+        };
     }
 
     // Special case: grep tools show "pattern" in path
