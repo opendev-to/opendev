@@ -184,6 +184,8 @@ impl App {
             AppEvent::AgentStarted => {
                 self.state.agent_active = true;
                 self.state.backgrounded_task_info = None;
+                // Clear finished (non-backgrounded) subagents from previous query
+                self.state.active_subagents.retain(|s| !s.finished || s.backgrounded);
                 self.state.dirty = true;
             }
             AppEvent::AgentChunk(text) => {
@@ -225,6 +227,21 @@ impl App {
             }
 
             // Reasoning events
+            AppEvent::ReasoningBlockStart => {
+                if let Some(last) = self.state.messages.last()
+                    && last.role == DisplayRole::Reasoning
+                    && !last.content.is_empty()
+                {
+                    self.state.messages.push(DisplayMessage {
+                        role: DisplayRole::Reasoning,
+                        content: String::new(),
+                        tool_call: None,
+                        collapsed: false,
+                    });
+                    self.state.dirty = true;
+                    self.state.message_generation += 1;
+                }
+            }
             AppEvent::ReasoningContent(content) => {
                 // Append to previous reasoning message in this turn (streaming sends deltas)
                 if let Some(last) = self.state.messages.last_mut()
@@ -253,6 +270,13 @@ impl App {
                 // This avoids the race where SubagentStarted (forwarded by the bridge task)
                 // arrives after ToolResult (sent directly), causing stats to be lost.
                 if tool_name == "spawn_subagent" {
+                    // If all existing subagents are finished, this is a new batch — clear stale entries
+                    let all_finished = !self.state.active_subagents.is_empty()
+                        && self.state.active_subagents.iter().all(|s| s.finished);
+                    if all_finished {
+                        self.state.active_subagents.retain(|s| s.backgrounded);
+                    }
+
                     let agent_name = args
                         .get("agent_type")
                         .and_then(|v| v.as_str())
@@ -341,9 +365,11 @@ impl App {
                     } else {
                         result_lines
                     };
-                    let always_collapse = false;
+                    use crate::formatters::tool_registry::{categorize_tool, ToolCategory};
+                    let is_file_read =
+                        categorize_tool(&tool_name) == ToolCategory::FileRead;
                     let collapse =
-                        always_collapse || (lines.len() > 5 && !is_diff_tool(&tool_name));
+                        is_file_read || (lines.len() > 5 && !is_diff_tool(&tool_name));
                     (lines, collapse)
                 };
 

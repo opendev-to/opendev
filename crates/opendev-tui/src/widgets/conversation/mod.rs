@@ -314,7 +314,8 @@ impl<'a> ConversationWidget<'a> {
             let is_read = categorize_tool(&tc.name)
                 == crate::formatters::tool_registry::ToolCategory::FileRead;
             let label = if is_read {
-                format!("  {}  ({count} lines)", CONTINUATION_CHAR)
+                let verb = crate::formatters::tool_registry::lookup_tool(&tc.name).verb;
+                format!("  {}  {verb} {count} lines", CONTINUATION_CHAR)
             } else {
                 format!(
                     "  {}  ({count} lines collapsed, press Ctrl+O to expand)",
@@ -562,9 +563,10 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
             .collect();
-        // read_file shows short summary without "Ctrl+O" hint
-        assert!(text.contains("2 lines"));
+        // read_file shows "Read 2 lines" without parentheses or "Ctrl+O" hint
+        assert!(text.contains("Read 2 lines"));
         assert!(!text.contains("Ctrl+O"));
+        assert!(!text.contains("("));
     }
 
     #[test]
