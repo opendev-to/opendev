@@ -130,7 +130,10 @@ mod tests {
 
     #[test]
     fn test_watcher_nonexistent_file() {
-        let path = PathBuf::from("/tmp/nonexistent-opendev-test-42.json");
+        let path = std::env::temp_dir().join("nonexistent-opendev-test-42.json");
+        // Ensure it doesn't exist from a prior run
+        let _ = std::fs::remove_file(&path);
+
         let mut watcher = ConfigWatcher::new(vec![path.clone()]);
         assert!(!watcher.check());
 
