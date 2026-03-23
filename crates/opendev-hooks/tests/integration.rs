@@ -3,6 +3,10 @@
 //! Tests the full hook lifecycle: event matching, subprocess execution,
 //! exit code protocol (0=success, 2=block), timeout enforcement,
 //! JSON output parsing, and multi-matcher orchestration.
+//!
+//! These tests rely on Unix shell syntax (sh -c, single quotes, >&2)
+//! and are skipped on non-Unix platforms.
+#![cfg(unix)]
 
 use serde_json::json;
 
