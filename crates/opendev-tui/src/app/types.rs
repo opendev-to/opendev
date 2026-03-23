@@ -24,6 +24,8 @@ pub enum DisplayRole {
     SlashCommand,
     /// Slash command result — rendered with `  ⎿  ` prefix, attaches to previous.
     CommandResult,
+    /// Plan content — rendered in a bordered panel with markdown.
+    Plan,
 }
 
 /// Rendering configuration for simple (non-markdown, non-collapsible) roles.
@@ -92,7 +94,7 @@ impl DisplayRole {
                 continuation: Indent::RESULT_CONT,
                 attach_to_previous: true,
             }),
-            Self::Assistant | Self::Reasoning => None,
+            Self::Assistant | Self::Reasoning | Self::Plan => None,
         }
     }
 }

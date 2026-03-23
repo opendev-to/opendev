@@ -700,20 +700,66 @@ impl App {
                         let status = if success { "completed" } else { "failed" };
                         self.state.bg_agent_manager.push_activity(
                             &bg_task_id,
-                            format!("  Subagent {status} ({tool_call_count} tools)"),
+                            format!("  Subagent {status} · {tool_call_count} tools"),
                         );
+                        // Auto-hide parent when all subagents finished and no pending spawns
+                        // (mirrors kill cascade in key_handler.rs)
+                        let has_remaining = self.state.active_subagents.iter().any(|s| {
+                            s.backgrounded
+                                && !s.finished
+                                && self.state.bg_subagent_map.get(&s.subagent_id)
+                                    == Some(&bg_task_id)
+                        });
+                        let pending = self
+                            .state
+                            .bg_agent_manager
+                            .get_task(&bg_task_id)
+                            .is_some_and(|t| t.pending_spawn_count > 0);
+                        if !has_remaining && !pending {
+                            self.state.bg_agent_manager.hide_task(&bg_task_id);
+                        }
                     }
                 } else if let Some(bg_task_id) = self.state.bg_subagent_map.remove(&subagent_id) {
                     let status = if success { "completed" } else { "failed" };
                     self.state.bg_agent_manager.push_activity(
                         &bg_task_id,
-                        format!("  Subagent {status} ({tool_call_count} tools)"),
+                        format!("  Subagent {status} · {tool_call_count} tools"),
                     );
+                    // Auto-hide parent when all subagents finished and no pending spawns
+                    let has_remaining = self.state.active_subagents.iter().any(|s| {
+                        s.backgrounded
+                            && !s.finished
+                            && self.state.bg_subagent_map.get(&s.subagent_id)
+                                == Some(&bg_task_id)
+                    });
+                    let pending = self
+                        .state
+                        .bg_agent_manager
+                        .get_task(&bg_task_id)
+                        .is_some_and(|t| t.pending_spawn_count > 0);
+                    if !has_remaining && !pending {
+                        self.state.bg_agent_manager.hide_task(&bg_task_id);
+                    }
                 }
                 // Clean up per-subagent cancel token
                 self.state.subagent_cancel_tokens.remove(&subagent_id);
                 // Remove finished subagents after marking them
                 // (keep them for one more render so the user sees the result)
+                // Clamp focus after potential visibility change
+                let total_visible = self.state.active_subagents.len()
+                    + self
+                        .state
+                        .bg_agent_manager
+                        .all_tasks()
+                        .iter()
+                        .filter(|t| !t.hidden)
+                        .count();
+                if total_visible > 0 {
+                    self.state.task_watcher_focus =
+                        self.state.task_watcher_focus.min(total_visible - 1);
+                } else {
+                    self.state.task_watcher_focus = 0;
+                }
                 self.state.dirty = true;
             }
 
@@ -760,8 +806,8 @@ impl App {
                 self.state.plan_content_display = Some(plan_content.clone());
                 // Add plan as a message in the conversation
                 self.state.messages.push(DisplayMessage {
-                    role: DisplayRole::System,
-                    content: format!("── Plan ──\n{plan_content}"),
+                    role: DisplayRole::Plan,
+                    content: plan_content.clone(),
                     tool_call: None,
                     collapsed: false,
                 });

@@ -163,6 +163,55 @@ impl<'a> ConversationWidget<'a> {
         }
     }
 
+    /// Render plan content in a bordered panel with markdown formatting.
+    fn render_plan_panel(content: &str, lines: &mut Vec<Line<'_>>) {
+        let border_style = Style::default().fg(style_tokens::CYAN);
+        let border_w = 40;
+        let h_bar: String = style_tokens::BOX_H.repeat(border_w);
+
+        // Top border: ╭── Plan ──────...
+        let label = " Plan ";
+        let top_after = border_w.saturating_sub(2 + label.len());
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{}{}", style_tokens::BOX_TL, style_tokens::BOX_H.repeat(2)),
+                border_style,
+            ),
+            Span::styled(
+                label.to_string(),
+                border_style.add_modifier(ratatui::style::Modifier::BOLD),
+            ),
+            Span::styled(style_tokens::BOX_H.repeat(top_after), border_style),
+        ]));
+
+        // Top padding
+        lines.push(Line::from(vec![Span::styled(
+            style_tokens::BOX_V.to_string(),
+            border_style,
+        )]));
+
+        // Render content through markdown
+        let md_lines = MarkdownRenderer::render(content);
+        let prefix = format!("{}  ", style_tokens::BOX_V);
+        for md_line in md_lines {
+            let mut spans = vec![Span::styled(prefix.clone(), border_style)];
+            spans.extend(md_line.spans);
+            lines.push(Line::from(spans));
+        }
+
+        // Bottom padding
+        lines.push(Line::from(vec![Span::styled(
+            style_tokens::BOX_V.to_string(),
+            border_style,
+        )]));
+
+        // Bottom border: ╰──────────────...
+        lines.push(Line::from(vec![Span::styled(
+            format!("{}{}", style_tokens::BOX_BL, h_bar),
+            border_style,
+        )]));
+    }
+
     /// Build styled lines from messages.
     fn build_lines(&self) -> Vec<Line<'a>> {
         let mut lines: Vec<Line> = Vec::new();
@@ -247,6 +296,9 @@ impl<'a> ConversationWidget<'a> {
                             lines.push(Line::from(spans));
                         }
                     }
+                }
+                DisplayRole::Plan => {
+                    Self::render_plan_panel(&content, &mut lines);
                 }
             }
 
@@ -560,10 +612,10 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.to_string())
             .collect();
-        // Should show display name like "Bash(ls -la)" not raw "run_command"
+        // Should show display name like "Bash ls -la" not raw "run_command"
         assert!(text.contains("Bash"));
         assert!(text.contains("ls -la"));
-        assert!(text.contains("(3s)"));
+        assert!(text.contains("3s"));
     }
 
     #[test]
@@ -1231,7 +1283,7 @@ mod tests {
             .collect();
         assert!(text.contains("> Do something") || text.contains("Do something"));
         assert!(text.contains("Bash"));
-        assert!(text.contains("(3s)"));
+        assert!(text.contains("3s"));
     }
 
     #[test]
