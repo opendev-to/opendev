@@ -28,6 +28,17 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/opendev-to/opendev"
+rust-version = "1.94"
+
+[profile.release]
+strip = true
+lto = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [workspace.dependencies]
 # Serialization

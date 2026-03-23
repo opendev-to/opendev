@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="figures/introduction.png" alt="OpenDev Introduction" width="800"/>
+  <img src="demo_assets/demo.gif" alt="OpenDev Demo" width="800"/>
 </p>
 
 ---
@@ -47,12 +47,28 @@ OpenDev is written in **Rust** for maximum performance and minimal resource usag
 
 ### Installation
 
+#### macOS / Linux
+
 ```bash
-# From source
+# One-liner
+curl -fsSL https://opendev.to/install.sh | sh
+
+# Homebrew
+brew install opendev-to/tap/opendev
+```
+
+#### Windows (PowerShell)
+
+```powershell
+irm https://opendev.to/install.ps1 | iex
+```
+
+#### From source (all platforms)
+
+```bash
 git clone https://github.com/opendev-to/opendev.git
-cd opendev
-cargo build --release -p opendev-cli
-cp target/release/opendev ~/.local/bin/
+cd opendev && cargo build --release -p opendev-cli
+# Binary at target/release/opendev (or opendev.exe on Windows)
 ```
 
 ### Quick Start

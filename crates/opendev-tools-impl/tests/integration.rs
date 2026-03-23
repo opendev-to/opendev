@@ -365,21 +365,18 @@ async fn search_no_matches_is_not_error() {
     assert!(result.output.unwrap().contains("No matches"));
 }
 
-/// Verify search rejects invalid regex.
+/// Verify search auto-promotes invalid regex to fixed-string mode instead of failing.
 #[tokio::test]
-async fn search_invalid_regex_fails() {
+async fn search_invalid_regex_becomes_fixed_string() {
     let tool = GrepTool;
-    let ctx = ToolContext::new("/tmp");
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    std::fs::write(dir.join("test.txt"), "[unclosed is literal text\n").unwrap();
+    let ctx = ToolContext::new(dir.to_str().unwrap());
     let args = make_args(&[("pattern", serde_json::json!("[unclosed"))]);
 
     let result = tool.execute(args, &ctx).await;
-    assert!(!result.success, "invalid regex should fail");
-    let err = result.error.unwrap();
-    // rg returns "Search failed: ..." while fallback returns "Invalid regex pattern: ..."
-    assert!(
-        err.contains("regex") || err.contains("Search failed") || err.contains("unclosed"),
-        "unexpected error: {err}"
-    );
+    assert!(result.success, "invalid regex should auto-promote to fixed-string search");
 }
 
 // ========================================================================
