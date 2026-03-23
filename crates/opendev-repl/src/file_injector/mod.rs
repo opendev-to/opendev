@@ -591,7 +591,9 @@ mod tests {
     #[test]
     fn test_resolve_path_absolute() {
         let (_dir, inj) = tmp_injector();
-        let resolved = inj.resolve_path("/tmp/some_file.py");
-        assert_eq!(resolved, PathBuf::from("/tmp/some_file.py"));
+        let abs_path = std::env::temp_dir().join("some_file.py");
+        let abs_str = abs_path.to_str().unwrap();
+        let resolved = inj.resolve_path(abs_str);
+        assert_eq!(resolved, abs_path);
     }
 }
