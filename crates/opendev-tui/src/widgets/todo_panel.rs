@@ -241,22 +241,48 @@ impl Widget for TodoPanelWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (done, in_progress, total) = self.counts();
 
-        let title_text = if self.expanded {
-            if let Some(name) = self.plan_name {
-                format!(" TODOS: {name} ({done}/{total}) ")
-            } else {
-                format!(" TODOS ({done}/{total}) ")
-            }
+        let has_in_progress = in_progress > 0;
+
+        let spinner_span = if self.expanded && has_in_progress {
+            Span::styled(
+                format!(
+                    "{} ",
+                    SPINNER_FRAMES[self.spinner_tick % SPINNER_FRAMES.len()]
+                ),
+                Style::default()
+                    .fg(style_tokens::PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            format!(" TODOS ({done}/{total}) ")
+            Span::raw("")
         };
 
-        let title = Line::from(Span::styled(
-            title_text,
-            Style::default()
-                .fg(style_tokens::ACCENT)
-                .add_modifier(Modifier::BOLD),
-        ));
+        let title_text = if self.expanded {
+            if let Some(name) = self.plan_name {
+                format!("TODOS: {name} ({done}/{total})")
+            } else {
+                format!("TODOS ({done}/{total})")
+            }
+        } else {
+            format!("TODOS ({done}/{total})")
+        };
+
+        let title = Line::from(vec![
+            Span::raw(" "),
+            spinner_span,
+            Span::styled(
+                title_text,
+                Style::default()
+                    .fg(style_tokens::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " · Ctrl+T to toggle ",
+                Style::default()
+                    .fg(style_tokens::GREY)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]);
 
         let border_color = if done == total && total > 0 {
             style_tokens::SUCCESS
@@ -437,5 +463,37 @@ mod tests {
         let items = make_items();
         let widget = TodoPanelWidget::new(&items).with_expanded(false);
         assert_eq!(widget.required_height(), 3);
+    }
+
+    #[test]
+    fn test_expanded_title_has_spinner_when_in_progress() {
+        let items = make_items(); // has 1 in-progress item
+        let widget = TodoPanelWidget::new(&items).with_spinner_tick(2);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 10));
+        widget.render(Rect::new(0, 0, 80, 10), &mut buf);
+        // Extract top row text from buffer
+        let top_row: String = (0..80).map(|x| buf.cell((x, 0)).unwrap().symbol().to_string()).collect::<String>();
+        // Should contain a spinner frame (tick 2 = '⠹')
+        assert!(top_row.contains('⠹'), "Expected spinner in title, got: {top_row}");
+        assert!(top_row.contains("Ctrl+T to toggle"), "Expected hint in title, got: {top_row}");
+    }
+
+    #[test]
+    fn test_expanded_title_no_spinner_when_all_done() {
+        let items = vec![
+            TodoDisplayItem {
+                id: 1,
+                title: "Done".into(),
+                status: TodoDisplayStatus::Completed,
+                active_form: None,
+            },
+        ];
+        let widget = TodoPanelWidget::new(&items).with_spinner_tick(2);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 6));
+        widget.render(Rect::new(0, 0, 80, 6), &mut buf);
+        let top_row: String = (0..80).map(|x| buf.cell((x, 0)).unwrap().symbol().to_string()).collect::<String>();
+        // No spinner when all done
+        assert!(!top_row.contains('⠹'), "Should not have spinner when all done, got: {top_row}");
+        assert!(top_row.contains("Ctrl+T to toggle"), "Expected hint in title, got: {top_row}");
     }
 }
