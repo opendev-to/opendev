@@ -18,6 +18,9 @@ use ratatui::{
 };
 
 use crate::formatters::style_tokens;
+use crate::formatters::tool_line::{
+    ToolLineStyle, format_elapsed, tool_line_active, tool_line_completed,
+};
 use crate::formatters::tool_registry::format_tool_call_parts_short;
 use crate::widgets::spinner::{
     FAILURE_CHAR, SPINNER_FRAMES, SUCCESS_CHAR, TREE_BRANCH, TREE_LAST, TREE_VERTICAL,
@@ -104,12 +107,7 @@ impl Widget for NestedToolWidget<'_> {
                 task_text
             };
 
-            // Format elapsed as Xm Ys or Xs
-            let elapsed_str = if elapsed >= 60 {
-                format!("{}m {}s", elapsed / 60, elapsed % 60)
-            } else {
-                format!("{elapsed}s")
-            };
+            let elapsed_str = format_elapsed(elapsed);
 
             // Format token count
             let token_str = if subagent.token_count > 0 {
@@ -165,25 +163,18 @@ impl Widget for NestedToolWidget<'_> {
                     shortener,
                 );
 
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {vertical}{tool_connector} "),
-                        Style::default().fg(style_tokens::SUBTLE),
-                    ),
-                    Span::styled(
-                        format!("{spinner_ch} "),
-                        Style::default().fg(style_tokens::BLUE_BRIGHT),
-                    ),
-                    Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
-                    Span::styled(
-                        format!(" {arg}"),
-                        Style::default().fg(style_tokens::SUBTLE),
-                    ),
-                    Span::styled(
-                        format!(" ({tool_elapsed}s)"),
-                        Style::default().fg(style_tokens::SUBTLE),
-                    ),
-                ]));
+                let tree_prefix = vec![Span::styled(
+                    format!("  {vertical}{tool_connector} "),
+                    Style::default().fg(style_tokens::SUBTLE),
+                )];
+                lines.push(tool_line_active(
+                    tree_prefix,
+                    spinner_ch,
+                    verb,
+                    arg,
+                    Some(format!("({})", format_elapsed(tool_elapsed))),
+                    ToolLineStyle::Nested,
+                ));
             }
 
             // Show last few completed tools (max 3)
@@ -193,27 +184,21 @@ impl Widget for NestedToolWidget<'_> {
             for (j, completed) in visible_completed.iter().enumerate() {
                 let is_last_tool = j == visible_completed.len() - 1;
                 let tool_connector = if is_last_tool { TREE_LAST } else { TREE_BRANCH };
-                let (icon, color) = if completed.success {
-                    (SUCCESS_CHAR, style_tokens::SUCCESS)
-                } else {
-                    (FAILURE_CHAR, style_tokens::ERROR)
-                };
                 let (verb, arg) =
                     format_tool_call_parts_short(&completed.tool_name, &completed.args, shortener);
 
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {vertical}{tool_connector} "),
-                        Style::default().fg(style_tokens::SUBTLE),
-                    ),
-                    Span::styled(format!("{icon} "), Style::default().fg(color)),
-                    Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
-                    Span::styled(format!(" {arg}"), Style::default().fg(style_tokens::SUBTLE)),
-                    Span::styled(
-                        format!(" ({}s)", completed.elapsed.as_secs()),
-                        Style::default().fg(style_tokens::SUBTLE),
-                    ),
-                ]));
+                let tree_prefix = vec![Span::styled(
+                    format!("  {vertical}{tool_connector} "),
+                    Style::default().fg(style_tokens::SUBTLE),
+                )];
+                lines.push(tool_line_completed(
+                    tree_prefix,
+                    completed.success,
+                    verb,
+                    arg,
+                    Some(format!("({})", format_elapsed(completed.elapsed.as_secs()))),
+                    ToolLineStyle::Nested,
+                ));
             }
 
             // Show hidden count if there are more completed tools

@@ -11,6 +11,7 @@ pub mod markdown;
 pub mod path_shortener;
 pub mod style_tokens;
 pub mod todo_formatter;
+pub mod tool_line;
 pub mod tool_registry;
 pub mod wrap;
 

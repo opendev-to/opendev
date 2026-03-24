@@ -14,8 +14,11 @@ use ratatui::{
 
 use crate::app::ToolExecution;
 use crate::formatters::style_tokens;
+use crate::formatters::tool_line::{
+    ToolLineStyle, format_elapsed, tool_line_active, tool_line_completed,
+};
 use crate::formatters::tool_registry::format_tool_call_parts_short;
-use crate::widgets::spinner::{COMPLETED_CHAR, SPINNER_FRAMES};
+use crate::widgets::spinner::SPINNER_FRAMES;
 
 /// Widget that displays active tool executions.
 pub struct ToolDisplayWidget<'a> {
@@ -53,43 +56,32 @@ impl Widget for ToolDisplayWidget<'_> {
         let mut lines: Vec<Line> = Vec::new();
 
         for tool in self.tools {
-            // Spinner / status indicator
-            let (spinner_str, spinner_color) = if tool.is_finished() {
-                if tool.is_success() {
-                    (COMPLETED_CHAR.to_string(), style_tokens::SUCCESS)
-                } else {
-                    (COMPLETED_CHAR.to_string(), style_tokens::ERROR)
-                }
-            } else {
-                // Animated braille spinner
-                let frame_idx = tool.tick_count % SPINNER_FRAMES.len();
-                (
-                    SPINNER_FRAMES[frame_idx].to_string(),
-                    style_tokens::BLUE_BRIGHT,
-                )
-            };
-
             // Tool header with elapsed time
             let (verb, arg) = format_tool_call_parts_short(&tool.name, &tool.args, &shortener);
-            let elapsed_str = format!(" ({}s)", tool.elapsed_secs);
+            let indent_prefix = vec![Span::raw("  ")];
+            let elapsed = Some(format!("({})", format_elapsed(tool.elapsed_secs)));
 
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("  {spinner_str} "),
-                    Style::default().fg(spinner_color),
-                ),
-                Span::styled(
+            if tool.is_finished() {
+                lines.push(tool_line_completed(
+                    indent_prefix,
+                    tool.is_success(),
                     verb,
-                    Style::default()
-                        .fg(style_tokens::PRIMARY)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!(" {arg}"),
-                    Style::default().fg(style_tokens::SUBTLE),
-                ),
-                Span::styled(elapsed_str, Style::default().fg(style_tokens::GREY)),
-            ]));
+                    arg,
+                    elapsed,
+                    ToolLineStyle::Primary,
+                ));
+            } else {
+                let frame_idx = tool.tick_count % SPINNER_FRAMES.len();
+                let spinner_ch = SPINNER_FRAMES[frame_idx];
+                lines.push(tool_line_active(
+                    indent_prefix,
+                    spinner_ch,
+                    verb,
+                    arg,
+                    elapsed,
+                    ToolLineStyle::Primary,
+                ));
+            }
 
             // Tree indent for nested tools
             let indent = if tool.depth > 0 {

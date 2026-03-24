@@ -7,11 +7,12 @@ use ratatui::{
 
 use crate::app::DisplayToolCall;
 use crate::formatters::style_tokens;
+use crate::formatters::tool_line::{ToolLineStyle, tool_line_completed};
 use crate::formatters::tool_registry::format_tool_call_parts_with_wd;
 use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR};
 
 /// Format a tool call as a styled line with category color coding.
-pub(super) fn format_tool_call(tc: &DisplayToolCall, working_dir: Option<&str>) -> Line<'static> {
+pub(crate) fn format_tool_call(tc: &DisplayToolCall, working_dir: Option<&str>) -> Line<'static> {
     let (icon, icon_color) = if tc.success {
         (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
     } else {
@@ -33,39 +34,28 @@ pub(super) fn format_tool_call(tc: &DisplayToolCall, working_dir: Option<&str>) 
 
     let (verb, arg) = format_tool_call_parts_with_wd(&tc.name, &tc.arguments, working_dir);
 
-    Line::from(vec![
-        Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-        Span::styled(
-            verb,
-            Style::default()
-                .fg(style_tokens::PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!(" {arg}"), Style::default().fg(style_tokens::SUBTLE)),
-    ])
+    tool_line_completed(vec![], tc.success, verb, arg, None, ToolLineStyle::Primary)
 }
 
 /// Format a nested tool call with ⎿ continuation indent (Python style).
-pub(super) fn format_nested_tool_call(
+pub(crate) fn format_nested_tool_call(
     tc: &DisplayToolCall,
     _depth: usize,
     working_dir: Option<&str>,
 ) -> Line<'static> {
-    let (icon, icon_color) = if tc.success {
-        (COMPLETED_CHAR, style_tokens::GREEN_BRIGHT)
-    } else {
-        ('\u{2717}', style_tokens::ERROR) // ✗
-    };
-
     let (verb, arg) = format_tool_call_parts_with_wd(&tc.name, &tc.arguments, working_dir);
 
-    Line::from(vec![
-        Span::styled(
-            format!("  {CONTINUATION_CHAR}  "),
-            Style::default().fg(style_tokens::GREY),
-        ),
-        Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-        Span::styled(verb, Style::default().fg(style_tokens::SUBTLE)),
-        Span::styled(format!(" {arg}"), Style::default().fg(style_tokens::GREY)),
-    ])
+    let continuation_prefix = vec![Span::styled(
+        format!("  {CONTINUATION_CHAR}  "),
+        Style::default().fg(style_tokens::GREY),
+    )];
+
+    tool_line_completed(
+        continuation_prefix,
+        tc.success,
+        verb,
+        arg,
+        None,
+        ToolLineStyle::Nested,
+    )
 }
