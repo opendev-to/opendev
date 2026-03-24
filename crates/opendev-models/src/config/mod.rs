@@ -332,7 +332,7 @@ fn default_plan_mode_explore_variant() -> String {
     "enabled".to_string()
 }
 fn default_reasoning_effort() -> String {
-    "high".to_string()
+    "medium".to_string()
 }
 
 impl Default for AppConfig {
@@ -346,7 +346,7 @@ impl Default for AppConfig {
             api_base_url: None,
             max_tokens: 16384,
             temperature: 0.6,
-            reasoning_effort: "high".to_string(),
+            reasoning_effort: "medium".to_string(),
             auto_save_interval: 5,
             max_context_tokens: 100_000,
             verbose: false,
