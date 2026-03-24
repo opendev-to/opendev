@@ -1,8 +1,0 @@
-[profile.default]
-retries = 0
-slow-timeout = { period = "30s" }
-fail-fast = true
-
-[profile.ci]
-retries = 2
-fail-fast = false
