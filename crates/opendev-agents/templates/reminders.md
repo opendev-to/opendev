@@ -80,10 +80,16 @@ Be specific about file paths and changes made.
 For complex tasks, briefly explain your reasoning in 1-2 sentences. For simple tasks, act directly.
 
 --- incomplete_todos_nudge ---
-STOP — you have {count} incomplete todo(s):
+You have {count} incomplete todo(s):
 {todo_list}
 
-You MUST NOT finish. Continue working on the next incomplete todo immediately. Only call task_complete after ALL todos are done.
+Work through your remaining todos using this workflow:
+1. Call update_todo(id, status="in_progress") to mark the next item as in-progress
+2. Implement that item (write code, edit files, run commands)
+3. Call complete_todo(id) when the item is done
+4. Repeat for each remaining todo
+
+Do NOT call task_complete until ALL todos are done.
 
 --- file_read_nudge ---
 You have made {consecutive_reads} consecutive read-only operations without taking action.
