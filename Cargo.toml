@@ -33,7 +33,7 @@ rust-version = "1.94"
 
 [profile.release]
 strip = true
-lto = true
+lto = "thin"
 
 # The profile that 'dist' will build with
 [profile.dist]
