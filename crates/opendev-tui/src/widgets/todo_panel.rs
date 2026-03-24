@@ -124,7 +124,7 @@ impl<'a> TodoPanelWidget<'a> {
             if partial > 0 {
                 bar_spans.push(Span::styled(
                     ">".to_string(),
-                    Style::default().fg(style_tokens::WARNING),
+                    Style::default().fg(style_tokens::PRIMARY),
                 ));
             }
             if empty > 0 {
@@ -152,7 +152,7 @@ impl<'a> TodoPanelWidget<'a> {
                 TodoDisplayStatus::InProgress => (
                     " \u{25B6} ", // play triangle
                     Style::default()
-                        .fg(style_tokens::WARNING)
+                        .fg(style_tokens::PRIMARY)
                         .add_modifier(Modifier::BOLD),
                 ),
                 TodoDisplayStatus::Pending => (
@@ -206,12 +206,12 @@ impl<'a> TodoPanelWidget<'a> {
             Span::styled(
                 format!(" {spinner} "),
                 Style::default()
-                    .fg(style_tokens::WARNING)
+                    .fg(style_tokens::PRIMARY)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 active_text.to_string(),
-                Style::default().fg(style_tokens::WARNING),
+                Style::default().fg(style_tokens::PRIMARY),
             ),
             Span::styled(
                 format!("  ({done}/{total})"),
@@ -230,7 +230,7 @@ impl Widget for TodoPanelWidget<'_> {
             .filter(|i| i.status == TodoDisplayStatus::Completed)
             .count();
 
-        let title = if self.expanded {
+        let title_text = if self.expanded {
             if let Some(name) = self.plan_name {
                 format!(" TODOS: {name} ({done}/{total}) ")
             } else {
@@ -240,10 +240,15 @@ impl Widget for TodoPanelWidget<'_> {
             format!(" TODOS ({done}/{total}) ")
         };
 
+        let title = Line::from(Span::styled(
+            title_text,
+            Style::default().fg(style_tokens::ACCENT),
+        ));
+
         let border_color = if done == total && total > 0 {
             style_tokens::SUCCESS
         } else {
-            style_tokens::CYAN
+            style_tokens::GREY
         };
 
         let block = Block::default()
