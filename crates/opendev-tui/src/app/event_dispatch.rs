@@ -360,6 +360,10 @@ impl App {
                         &tool_name, &output,
                     );
                     (vec![summary], false)
+                } else if tool_name == "present_plan" {
+                    // Plan content is already displayed via PlanApprovalRequested → DisplayRole::Plan.
+                    // Suppress the redundant tool result message.
+                    (Vec::new(), false)
                 } else {
                     use crate::widgets::conversation::is_diff_tool;
                     let result_lines: Vec<String> =

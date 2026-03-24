@@ -56,14 +56,15 @@ pub(super) fn register_default_tools(
     registry.register(Arc::new(TaskCompleteTool));
     registry.register(Arc::new(VlmTool));
     registry.register(Arc::new(DiffPreviewTool));
-    // Plan tool — with channel for TUI approval
+    // Todo manager — created before plan tool so it can be shared
+    let todo_manager = Arc::new(Mutex::new(opendev_runtime::TodoManager::new()));
+
+    // Plan tool — with channel for TUI approval AND todo manager
     let (plan_approval_tx, plan_approval_rx) = opendev_runtime::plan_approval_channel();
     registry.register(Arc::new(
-        PresentPlanTool::new().with_approval_tx(plan_approval_tx),
+        PresentPlanTool::with_todo_manager(Arc::clone(&todo_manager))
+            .with_approval_tx(plan_approval_tx),
     ));
-
-    // Todo tools (5 separate tools sharing one manager)
-    let todo_manager = Arc::new(Mutex::new(opendev_runtime::TodoManager::new()));
     registry.register(Arc::new(WriteTodosTool::new(Arc::clone(&todo_manager))));
     registry.register(Arc::new(UpdateTodoTool::new(Arc::clone(&todo_manager))));
     registry.register(Arc::new(CompleteTodoTool::new(Arc::clone(&todo_manager))));
