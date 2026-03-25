@@ -304,16 +304,24 @@ jobs:
           fi
           echo "Found formula: $FORMULA"
 
-          # Clone the tap repo and push the formula
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/opendev-to/homebrew-tap.git" tap
+          # cargo-dist names the generated class after the binary package
+          # (`OpendevCli`), but Homebrew requires the class to match the
+          # formula filename (`opendev.rb` -> `Opendev`).
+          perl -0pi -e 's/^class\s+\w+\s+< Formula$/class Opendev < Formula/m' "$FORMULA"
+          grep -q '^class Opendev < Formula$' "$FORMULA"
+
+          # Clone the tap's canonical branch explicitly to avoid publishing
+          # into an unexpected local HEAD state.
+          git clone --branch main --single-branch "https://x-access-token:${GH_TOKEN}@github.com/opendev-to/homebrew-tap.git" tap
           mkdir -p tap/Formula
           cp "$FORMULA" tap/Formula/opendev.rb
           cd tap
+          git rev-parse --verify HEAD
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/opendev.rb
           git commit -m "Update opendev to ${{ needs.plan.outputs.tag }}" || echo "No changes"
-          git push
+          git push origin HEAD:main
 
   announce:
     needs:

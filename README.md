@@ -22,7 +22,7 @@
 
 ### Introduction
 
-OpenDev is an open-source, terminal-native coding agent built as a compound AI system. Instead of a single monolithic LLM, it uses a structured ensemble of agents and workflows — each independently bound to a user-configured model.
+OpenDev is an open-source, terminal-native coding agent built as a compound AI system. Instead of a single monolithic LLM, it uses a structured ensemble of agents and workflows -- each independently bound to a user-configured model.
 
 Work is organized into concurrent sessions composed of specialized sub-agents. Each agent executes typed workflows (Execution, Thinking, Compaction) that independently bind to an LLM, enabling fine-grained cost, latency, and capability trade-offs per workflow.
 
@@ -92,6 +92,23 @@ cargo build --release -p opendev-cli
 # Binary at target/release/opendev (or opendev.exe on Windows)
 ```
 
+If you use the repo for development, you may also have a local symlink at `~/.local/bin/opendev` pointing at `target/release/opendev`. That can take precedence over the Homebrew binary in `/opt/homebrew/bin/opendev`.
+
+To test a Homebrew install from a clean shell state:
+
+```bash
+rm -f ~/.local/bin/opendev
+hash -r
+brew uninstall opendev
+brew untap opendev-to/tap
+brew tap opendev-to/tap
+brew install opendev-to/tap/opendev
+which opendev
+opendev --version
+```
+
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for the full local development and Homebrew testing workflow.
+
 > **All release binaries, checksums, and installers are available on the [GitHub Releases](https://github.com/opendev-to/opendev/releases) page.**
 
 #### Supported platforms
@@ -110,10 +127,18 @@ cargo build --release -p opendev-cli
 opendev --version
 ```
 
+If Homebrew reports `Not a valid ref: refs/remotes/origin/main` while auto-updating the tap, remove the stale local tap clone and retry:
+
+```bash
+brew untap opendev-to/tap
+brew tap opendev-to/tap
+brew install opendev-to/tap/opendev
+```
+
 ### Quick Start
 
 ```bash
-# Set an API key (OpenAI, Anthropic, or Fireworks — any one will do)
+# Set an API key (OpenAI, Anthropic, or Fireworks -- any one will do)
 export OPENAI_API_KEY="sk-..."
 # export ANTHROPIC_API_KEY="sk-ant-..."
 # export FIREWORKS_API_KEY="fw_..."
@@ -189,6 +214,8 @@ cargo clippy --workspace      # Lint
 cargo fmt --all               # Format
 cargo test -p opendev-cli     # Test a specific crate
 ```
+
+Detailed local-dev, symlink, Homebrew, and release-testing notes are in [DEVELOPMENT.md](./DEVELOPMENT.md).
 
 ### Web UI
 

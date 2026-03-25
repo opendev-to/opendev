@@ -42,7 +42,7 @@ plan -> build-local-artifacts -> build-global-artifacts -> host -> publish-homeb
 | **build-local-artifacts** | per-platform matrix | Builds platform-specific binaries and archives for all 5 targets in parallel. |
 | **build-global-artifacts** | ubuntu-22.04 | Builds platform-agnostic installers (shell, PowerShell), checksums, and Homebrew formula from local artifacts. |
 | **host** | ubuntu-22.04 | Uploads all artifacts and creates the GitHub Release with auto-generated title/body from CHANGELOG.md. |
-| **publish-homebrew** | ubuntu-22.04 | Clones `opendev-to/homebrew-tap`, copies the generated formula to `Formula/opendev.rb`, commits and pushes. |
+| **publish-homebrew** | ubuntu-22.04 | Clones `opendev-to/homebrew-tap` on `main`, rewrites the generated formula class to `Opendev`, copies it to `Formula/opendev.rb`, then commits and pushes. |
 | **announce** | ubuntu-22.04 | Final step (placeholder for future announcement integrations). |
 
 ## Target Platforms
