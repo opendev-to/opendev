@@ -501,6 +501,113 @@ fn snapshot_track_and_patch() {
     );
 }
 
+/// Snapshot diff ignores OpenDev internal overflow artifacts.
+#[test]
+fn snapshot_diff_ignores_internal_tool_output() {
+    let tmp = TempDir::new().unwrap();
+    let project_dir = tmp.path().to_string_lossy().to_string();
+
+    let init_ok = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&project_dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !init_ok {
+        return;
+    }
+
+    std::fs::write(tmp.path().join(".gitignore"), ".opendev/\n").unwrap();
+    std::fs::write(tmp.path().join("file.txt"), "baseline\n").unwrap();
+
+    let mut mgr = SnapshotManager::new(&project_dir);
+    let Some(hash1) = mgr.track() else {
+        return;
+    };
+
+    let tool_output_dir = tmp.path().join(".opendev").join("tool-output");
+    std::fs::create_dir_all(&tool_output_dir).unwrap();
+    std::fs::write(tool_output_dir.join("tool_1_read_file.txt"), "generated\n").unwrap();
+
+    let hash2 = mgr.track().unwrap();
+    let stats = mgr.diff_numstat(&hash1, &hash2);
+    assert!(
+        stats.is_empty(),
+        "internal tool-output files should be ignored"
+    );
+}
+
+/// Snapshot diff still reports real workspace edits.
+#[test]
+fn snapshot_diff_reports_real_file_changes() {
+    let tmp = TempDir::new().unwrap();
+    let project_dir = tmp.path().to_string_lossy().to_string();
+
+    let init_ok = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&project_dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !init_ok {
+        return;
+    }
+
+    std::fs::write(tmp.path().join(".gitignore"), ".opendev/\n").unwrap();
+    std::fs::write(tmp.path().join("file.txt"), "before\n").unwrap();
+
+    let mut mgr = SnapshotManager::new(&project_dir);
+    let Some(hash1) = mgr.track() else {
+        return;
+    };
+
+    std::fs::write(tmp.path().join("file.txt"), "before\nafter\n").unwrap();
+
+    let hash2 = mgr.track().unwrap();
+    let stats = mgr.diff_numstat(&hash1, &hash2);
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].file_path, "file.txt");
+    assert!(stats[0].additions > 0);
+}
+
+/// Snapshot diff ignores internal artifacts when mixed with real edits.
+#[test]
+fn snapshot_diff_mixed_real_and_internal_changes_only_reports_real_files() {
+    let tmp = TempDir::new().unwrap();
+    let project_dir = tmp.path().to_string_lossy().to_string();
+
+    let init_ok = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&project_dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !init_ok {
+        return;
+    }
+
+    std::fs::write(tmp.path().join(".gitignore"), ".opendev/\n").unwrap();
+    std::fs::write(tmp.path().join("file.txt"), "before\n").unwrap();
+
+    let mut mgr = SnapshotManager::new(&project_dir);
+    let Some(hash1) = mgr.track() else {
+        return;
+    };
+
+    std::fs::write(tmp.path().join("file.txt"), "before\nafter\n").unwrap();
+    let tool_output_dir = tmp.path().join(".opendev").join("tool-output");
+    std::fs::create_dir_all(&tool_output_dir).unwrap();
+    std::fs::write(tool_output_dir.join("tool_2_read_file.txt"), "generated\n").unwrap();
+
+    let hash2 = mgr.track().unwrap();
+    let stats = mgr.diff_numstat(&hash1, &hash2);
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].file_path, "file.txt");
+}
+
 // ========================================================================
 // Session persistence round-trip tests
 // ========================================================================

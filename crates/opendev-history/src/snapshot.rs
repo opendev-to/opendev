@@ -121,7 +121,18 @@ impl SnapshotManager {
             return None;
         }
 
-        match self.git(&["--work-tree", &self.project_dir, "add", "--all", "--force"]) {
+        // Exclude OpenDev's own generated artifacts so read-only exploration does
+        // not surface as user file edits in snapshot-based diff summaries.
+        match self.git(&[
+            "--work-tree",
+            &self.project_dir,
+            "add",
+            "--all",
+            "--force",
+            "--",
+            ".",
+            ":(exclude).opendev/tool-output",
+        ]) {
             Ok(_) => {}
             Err(e) => {
                 debug!("Failed to stage files: {}", e);
