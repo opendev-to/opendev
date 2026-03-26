@@ -17,6 +17,10 @@ pub const MAX_BYTES: usize = 50 * 1024;
 /// Retention period for temp output files (7 days).
 const RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
 
+/// Maximum size for overflow files (1 MB). Prevents a single tool call
+/// from writing unbounded output to disk.
+const MAX_OVERFLOW_BYTES: usize = 1_024 * 1_024;
+
 /// Direction from which to keep lines when truncating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TruncateDirection {
@@ -153,6 +157,9 @@ pub fn truncate_output(
 }
 
 /// Save full output to a uniquely-named file in the overflow directory.
+///
+/// If `text` exceeds [`MAX_OVERFLOW_BYTES`], the saved file is itself truncated
+/// (head 75% + tail 25%) to prevent unbounded disk usage.
 fn save_overflow(dir: &Path, text: &str) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
 
@@ -164,7 +171,25 @@ fn save_overflow(dir: &Path, text: &str) -> std::io::Result<PathBuf> {
     let filename = format!("tool_{timestamp}_{}", &id[..8]);
     let filepath = dir.join(filename);
 
-    std::fs::write(&filepath, text)?;
+    let to_write = if text.len() > MAX_OVERFLOW_BYTES {
+        let head_size = MAX_OVERFLOW_BYTES * 3 / 4;
+        let tail_size = MAX_OVERFLOW_BYTES - head_size;
+        let head: String = text.chars().take(head_size).collect();
+        let tail: String = text
+            .chars()
+            .rev()
+            .take(tail_size)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let omitted = text.len() - head_size - tail_size;
+        format!("{head}\n\n[... {omitted} bytes omitted from overflow file ...]\n\n{tail}")
+    } else {
+        text.to_string()
+    };
+
+    std::fs::write(&filepath, &to_write)?;
     Ok(filepath)
 }
 

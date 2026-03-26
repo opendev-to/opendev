@@ -78,6 +78,11 @@ fn default_rules() -> HashMap<String, TruncationRule> {
 /// Maximum age for overflow files (7 days).
 const OVERFLOW_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
 
+/// Maximum size for overflow files (1 MB). Outputs larger than this are
+/// themselves truncated before writing to disk, preventing a single runaway
+/// tool call from filling the filesystem.
+const MAX_OVERFLOW_BYTES: usize = 1_024 * 1_024;
+
 /// Sanitizes tool results by applying truncation rules.
 ///
 /// Integrates as a single pass before results enter the message history,
@@ -310,11 +315,34 @@ impl ToolResultSanitizer {
         let filename = format!("tool_{timestamp}_{safe_name}.txt");
         let path = dir.join(&filename);
 
-        match std::fs::write(&path, content) {
+        // Cap overflow file size to prevent disk exhaustion from huge outputs.
+        let to_write = if content.len() > MAX_OVERFLOW_BYTES {
+            // Use head/tail so the agent can see both the start and end of the output.
+            let head_size = MAX_OVERFLOW_BYTES * 3 / 4;
+            let tail_size = MAX_OVERFLOW_BYTES - head_size;
+            let head: String = content.chars().take(head_size).collect();
+            let tail: String = content
+                .chars()
+                .rev()
+                .take(tail_size)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            let omitted = content.len() - head_size - tail_size;
+            format!(
+                "{head}\n\n[... {omitted} bytes omitted from overflow file ...]\n\n{tail}"
+            )
+        } else {
+            content.to_string()
+        };
+
+        match std::fs::write(&path, &to_write) {
             Ok(()) => {
                 debug!(
                     path = %path.display(),
-                    bytes = content.len(),
+                    original_bytes = content.len(),
+                    written_bytes = to_write.len(),
                     "Saved overflow output"
                 );
                 Some(path)
@@ -616,5 +644,31 @@ mod tests {
 
         assert!(!old_file.exists(), "Old file should be removed");
         assert!(recent_file.exists(), "Recent file should be kept");
+    }
+
+    #[test]
+    fn test_overflow_file_capped_at_max_size() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let overflow_dir = tmp.path().join("tool-output");
+        let sanitizer = ToolResultSanitizer::new().with_overflow_dir(overflow_dir);
+
+        // Create output larger than MAX_OVERFLOW_BYTES (1 MB).
+        let huge_output = "x".repeat(2 * 1024 * 1024);
+        let result = sanitizer.sanitize("read_file", true, Some(&huge_output), None);
+
+        assert!(result.was_truncated);
+        let path = result.overflow_path.unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+
+        // Saved file should be capped around MAX_OVERFLOW_BYTES, not the full 2 MB.
+        assert!(
+            saved.len() < MAX_OVERFLOW_BYTES + 200, // small margin for the omission marker
+            "Overflow file should be capped: got {} bytes",
+            saved.len()
+        );
+        assert!(
+            saved.contains("bytes omitted from overflow file"),
+            "Capped overflow should contain omission marker"
+        );
     }
 }
