@@ -178,7 +178,7 @@ impl<'a> ConversationWidget<'a> {
     /// Render plan content in a bordered panel with markdown formatting.
     fn render_plan_panel(content: &str, lines: &mut Vec<Line<'_>>) {
         let border_style = Style::default().fg(style_tokens::CYAN);
-        let border_w: usize = 32;
+        let border_w: usize = 60;
         let inner_w = border_w.saturating_sub(1);
         let label = " Plan ";
         let top_after = border_w.saturating_sub(3 + label.len() + 1);

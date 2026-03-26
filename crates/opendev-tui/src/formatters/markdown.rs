@@ -50,6 +50,9 @@ impl MdPalette {
     /// Build a muted palette for thinking/reasoning display.
     /// Uses the given `base` color for text and derives dimmed variants
     /// for structural elements.
+    /// Build a muted palette for thinking/reasoning display.
+    /// Uses the given `base` color for text and derives dimmed variants
+    /// for structural elements.
     pub fn muted(base: Color) -> Self {
         // Derive slightly brighter heading from the base for contrast
         let heading = dim_color(style_tokens::HEADING_1, 0.50);
@@ -169,6 +172,10 @@ impl MarkdownRenderer {
 
             // Headers — each level gets a distinct style for visual hierarchy
             if let Some(header) = raw_line.strip_prefix("### ") {
+                // Blank line before header (if not first line)
+                if !lines.is_empty() {
+                    lines.push(Line::from(""));
+                }
                 let h: Cow<'static, str> = Cow::Owned(header.to_string());
                 lines.push(Line::from(Span::styled(
                     h,
@@ -176,15 +183,24 @@ impl MarkdownRenderer {
                         .fg(palette.heading_3)
                         .add_modifier(Modifier::BOLD | base_mod),
                 )));
+                // Blank line after header
+                lines.push(Line::from(""));
             } else if let Some(header) = raw_line.strip_prefix("## ") {
+                if !lines.is_empty() {
+                    lines.push(Line::from(""));
+                }
                 let h: Cow<'static, str> = Cow::Owned(header.to_string());
                 lines.push(Line::from(Span::styled(
                     h,
                     Style::default()
                         .fg(palette.heading_2)
-                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED | base_mod),
+                        .add_modifier(Modifier::BOLD | base_mod),
                 )));
+                lines.push(Line::from(""));
             } else if let Some(header) = raw_line.strip_prefix("# ") {
+                if !lines.is_empty() {
+                    lines.push(Line::from(""));
+                }
                 let h: Cow<'static, str> = Cow::Owned(header.to_string());
                 lines.push(Line::from(Span::styled(
                     h,
@@ -192,6 +208,7 @@ impl MarkdownRenderer {
                         .fg(palette.heading)
                         .add_modifier(Modifier::BOLD | Modifier::UNDERLINED | base_mod),
                 )));
+                lines.push(Line::from(""));
             } else if is_bullet_line(raw_line) {
                 // Bullet list (supports nesting)
                 let trimmed = raw_line.trim_start();
@@ -411,7 +428,6 @@ fn parse_inline_spans_with_palette(text: &str, palette: &MdPalette) -> Vec<Span<
                 let code: Cow<'static, str> = Cow::Owned(text[code_start..code_end].to_string());
                 let mut style = Style::default()
                     .fg(palette.code_fg)
-                    .bg(palette.code_bg)
                     .add_modifier(base_mod);
                 if in_bold {
                     style = style.add_modifier(Modifier::BOLD);
@@ -515,7 +531,8 @@ mod tests {
     #[test]
     fn test_headers() {
         let lines = MarkdownRenderer::render("# Title\n## Subtitle\n### Section");
-        assert_eq!(lines.len(), 3);
+        // With spacing: title + blank + blank + subtitle + blank + blank + section + blank = 8
+        assert_eq!(lines.len(), 8);
     }
 
     #[test]
@@ -647,7 +664,7 @@ mod tests {
         // "code" should have code styling and bold
         let code_span = spans.iter().find(|s| s.content.as_ref() == "code").unwrap();
         assert!(code_span.style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(code_span.style.bg, Some(MdPalette::default().code_bg));
+        assert_eq!(code_span.style.fg, Some(MdPalette::default().code_fg));
         // " more" should be bold
         let more_span = spans
             .iter()
@@ -730,7 +747,7 @@ mod tests {
             .iter()
             .find(|s| s.content.as_ref().contains("`backtick`"))
             .unwrap();
-        assert_eq!(code_span.style.bg, Some(MdPalette::default().code_bg));
+        assert_eq!(code_span.style.fg, Some(MdPalette::default().code_fg));
     }
 
     #[test]

@@ -172,13 +172,13 @@ impl Theme {
             phase_critique: Color::Rgb(255, 179, 71),
             phase_refinement: Color::Rgb(0, 191, 255),
 
-            heading_1: Color::Rgb(210, 205, 245),
-            heading_2: Color::Rgb(186, 182, 215),
-            heading_3: Color::Rgb(155, 152, 190),
-            code_fg: Color::Rgb(150, 190, 160),
+            heading_1: Color::Rgb(208, 212, 220),
+            heading_2: Color::Rgb(208, 212, 220),
+            heading_3: Color::Rgb(208, 212, 220),
+            code_fg: Color::Rgb(120, 190, 180),
             code_bg: Color::Rgb(30, 30, 30),
-            bullet: Color::Rgb(140, 148, 160),
-            bold_fg: Color::Rgb(222, 216, 200),
+            bullet: Color::Rgb(208, 212, 220),
+            bold_fg: Color::Rgb(208, 212, 220),
         }
     }
 
@@ -213,13 +213,13 @@ impl Theme {
             phase_critique: Color::Rgb(180, 120, 0),
             phase_refinement: Color::Rgb(0, 140, 200),
 
-            heading_1: Color::Rgb(60, 50, 100),
-            heading_2: Color::Rgb(80, 70, 110),
-            heading_3: Color::Rgb(100, 92, 130),
-            code_fg: Color::Rgb(50, 120, 70),
+            heading_1: Color::Rgb(30, 30, 30),
+            heading_2: Color::Rgb(30, 30, 30),
+            heading_3: Color::Rgb(30, 30, 30),
+            code_fg: Color::Rgb(50, 130, 120),
             code_bg: Color::Rgb(240, 240, 240),
-            bullet: Color::Rgb(120, 120, 135),
-            bold_fg: Color::Rgb(50, 45, 35),
+            bullet: Color::Rgb(30, 30, 30),
+            bold_fg: Color::Rgb(30, 30, 30),
         }
     }
 
@@ -254,13 +254,13 @@ impl Theme {
             phase_critique: Color::Rgb(255, 184, 108), // Orange
             phase_refinement: Color::Rgb(139, 233, 253), // Cyan
 
-            heading_1: Color::Rgb(210, 195, 250), // Bright purple
-            heading_2: Color::Rgb(180, 165, 220), // Soft purple
-            heading_3: Color::Rgb(150, 138, 195), // Muted purple
-            code_fg: Color::Rgb(140, 210, 155),   // Muted green
+            heading_1: Color::Rgb(248, 248, 242), // Foreground (primary)
+            heading_2: Color::Rgb(248, 248, 242), // Foreground (primary)
+            heading_3: Color::Rgb(248, 248, 242), // Foreground (primary)
+            code_fg: Color::Rgb(150, 170, 220),   // Soft steel blue
             code_bg: Color::Rgb(40, 42, 54),      // Background
-            bullet: Color::Rgb(98, 114, 164),     // Comment
-            bold_fg: Color::Rgb(235, 225, 210),   // Warm off-white
+            bullet: Color::Rgb(248, 248, 242),    // Foreground (primary)
+            bold_fg: Color::Rgb(248, 248, 242),   // Foreground (primary)
         }
     }
 }
@@ -310,13 +310,13 @@ pub const DIFF_ADD_BG: Color = Color::Rgb(0, 40, 0);
 pub const DIFF_DEL_BG: Color = Color::Rgb(40, 0, 0);
 
 // Markdown heading colors
-pub const HEADING_1: Color = Color::Rgb(210, 205, 245);
-pub const HEADING_2: Color = Color::Rgb(186, 182, 215);
-pub const HEADING_3: Color = Color::Rgb(155, 152, 190);
-pub const CODE_FG: Color = Color::Rgb(150, 190, 160);
+pub const HEADING_1: Color = Color::Rgb(208, 212, 220);
+pub const HEADING_2: Color = Color::Rgb(208, 212, 220);
+pub const HEADING_3: Color = Color::Rgb(208, 212, 220);
+pub const CODE_FG: Color = Color::Rgb(120, 190, 180);
 pub const CODE_BG: Color = Color::Rgb(30, 30, 30);
-pub const BULLET: Color = Color::Rgb(140, 148, 160);
-pub const BOLD_FG: Color = Color::Rgb(222, 216, 200);
+pub const BULLET: Color = Color::Rgb(208, 212, 220);
+pub const BOLD_FG: Color = Color::Rgb(208, 212, 220);
 
 // Icons
 pub const THINKING_ICON: &str = "\u{27e1}"; // ⟡
