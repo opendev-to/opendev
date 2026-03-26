@@ -45,6 +45,34 @@ OpenDev is written in **Rust** for maximum performance and minimal resource usag
 
 ---
 
+### ⚡ Agent Fleet — Parallel Execution at Scale
+
+<p align="center">
+  <img src="figures/agent_fleet.png" alt="OpenDev Agent Fleet" width="800"/>
+</p>
+
+<p align="center"><em>A fleet of agents, each independently exploring a different crate — all running concurrently in a single session.</em></p>
+
+Need to survey an entire codebase? Refactor across 20 crates? Run a dozen tool calls at once? **Spawn a fleet.**
+
+OpenDev's agent fleet launches multiple sub-agents in parallel, each with its own LLM binding, context window, and tool access. Because the runtime is written in Rust with fully async I/O, there is zero interpreter overhead — agents fan out across your workspace and converge results back in seconds, not minutes.
+
+```
+You                          OpenDev Fleet
+ │                           ┌─ Agent 1 → crate/agents
+ │   "survey all crates"     ├─ Agent 2 → crate/http
+ │ ─────────────────────►    ├─ Agent 3 → crate/tui
+ │                           ├─ Agent 4 → crate/tools
+ │                           ├─  ...
+ │   ◄── aggregated results  └─ Agent N → crate/config
+```
+
+- **Concurrent, not sequential.** Every agent runs its own async task — no GIL, no queue, no waiting.
+- **Rust-native performance.** Near-zero overhead per agent. Memory-safe parallelism via Tokio.
+- **Independent LLM bindings.** Each agent in the fleet can target a different model or provider.
+
+---
+
 ### Installation
 
 #### macOS
