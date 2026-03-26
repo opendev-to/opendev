@@ -313,14 +313,27 @@ impl ReactLoop {
                         }
                     }
                     Ok(_) | Err(_) => {
-                        warn!("Wind-down LLM call failed, returning hard-stop");
+                        warn!("Wind-down LLM call failed, falling back to last content");
                     }
                 }
 
-                return Ok(AgentResult::fail(
-                    "Max iterations reached without completion",
-                    messages.clone(),
-                ));
+                // Graceful fallback: return last assistant content rather than
+                // discarding all work done. The subagent completed iterations
+                // of real work — a failed summary call shouldn't negate that.
+                let last_content = messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("Max iterations reached.")
+                    .to_string();
+                let wind_down_msg = format!(
+                    "[Max iterations ({}) reached — summary unavailable]\n\n{}",
+                    iteration - 1,
+                    last_content
+                );
+                return Ok(AgentResult::ok(wind_down_msg, messages.clone()));
             }
 
             // Check for interrupt

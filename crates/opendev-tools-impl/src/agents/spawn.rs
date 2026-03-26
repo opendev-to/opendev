@@ -303,19 +303,35 @@ impl BaseTool for SpawnSubagentTool {
                 }
 
                 // Build output for injection
+                let interrupted = run_result.agent_result.interrupted;
                 let mut output = format!("__subagent_stats__:tc={}\n", run_result.tool_call_count);
                 output.push_str(&format!("task_id: {child_session_id} (for resuming)\n\n"));
+                if interrupted {
+                    output.push_str("[WARNING: subagent was interrupted — result is partial]\n\n");
+                }
 
                 const MAX_SUBAGENT_OUTPUT: usize = 50 * 1024;
                 let content = &run_result.agent_result.content;
                 if content.len() > MAX_SUBAGENT_OUTPUT {
                     let half = MAX_SUBAGENT_OUTPUT / 2;
-                    output.push_str(&content[..half]);
                     output.push_str(&format!(
-                        "\n\n[...truncated {} chars of subagent output...]\n\n",
+                        "[WARNING: output truncated from {} to {} chars — result may be incomplete]\n\n",
+                        content.len(),
+                        MAX_SUBAGENT_OUTPUT
+                    ));
+                    output.push_str(
+                        opendev_runtime::safe_truncate(content, half),
+                    );
+                    output.push_str(&format!(
+                        "\n\n[...truncated {} chars...]\n\n",
                         content.len() - MAX_SUBAGENT_OUTPUT
                     ));
-                    output.push_str(&content[content.len() - half..]);
+                    // Take last `half` bytes, walking forward to a char boundary
+                    let mut tail_start = content.len() - half;
+                    while tail_start < content.len() && !content.is_char_boundary(tail_start) {
+                        tail_start += 1;
+                    }
+                    output.push_str(&content[tail_start..]);
                 } else {
                     output.push_str(content);
                 }
@@ -328,13 +344,17 @@ impl BaseTool for SpawnSubagentTool {
                 }
 
                 // Send finished event to TUI
+                let effective_success = run_result.agent_result.success && !interrupted;
                 if let Some(ref tx) = self.event_tx {
                     let _ = tx.send(SubagentEvent::Finished {
                         subagent_id: subagent_id.clone(),
                         subagent_name: agent_type.to_string(),
-                        success: run_result.agent_result.success,
+                        success: effective_success,
                         result_summary: if content.len() > 200 {
-                            format!("{}...", &content[..200])
+                            format!(
+                                "{}...",
+                                opendev_runtime::safe_truncate(content, 200)
+                            )
                         } else {
                             content.clone()
                         },
