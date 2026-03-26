@@ -50,32 +50,31 @@ impl App {
                 }
             }
             Some(super::PendingItem::BackgroundResult { .. }) => {
-                // Batch all consecutive BackgroundResult items into one LLM call
-                let mut parts = Vec::new();
-                while matches!(
-                    self.state.pending_queue.front(),
-                    Some(super::PendingItem::BackgroundResult { .. })
-                ) {
-                    if let Some(super::PendingItem::BackgroundResult {
-                        task_id,
-                        query,
-                        result,
-                        tool_call_count,
-                        ..
-                    }) = self.state.pending_queue.pop_front()
-                    {
-                        parts.push(format!(
-                            "[Background task [{task_id}] completed ({tool_call_count} tools)]\n\
-                             Task: {query}\n\n\
-                             {result}"
-                        ));
-                    }
+                // Process one background result at a time so the foreground agent
+                // reasons about each task independently (no cross-group pollution).
+                if let Some(super::PendingItem::BackgroundResult {
+                    task_id,
+                    query,
+                    result,
+                    tool_call_count,
+                    ..
+                }) = self.state.pending_queue.pop_front()
+                {
+                    let msg = format!(
+                        "[Background task [{task_id}] completed ({tool_call_count} tools)]\n\
+                         Task: {query}\n\n\
+                         {result}"
+                    );
+                    // Display as a user-like message so the agent's streaming
+                    // response creates a NEW assistant message instead of
+                    // appending to the previous nudge message.
+                    self.message_controller
+                        .handle_user_submit(&mut self.state, &msg);
+                    self.state.agent_active = true;
+                    self.state.message_generation += 1;
+                    let _ = self.event_tx.send(AppEvent::UserSubmit(msg));
+                    self.state.dirty = true;
                 }
-                let msg = parts.join("\n\n");
-                self.state.agent_active = true;
-                self.state.message_generation += 1;
-                let _ = self.event_tx.send(AppEvent::UserSubmit(msg));
-                self.state.dirty = true;
             }
             None => {}
         }

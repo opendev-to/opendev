@@ -83,4 +83,4 @@ pub use tool_approval_channel::{
     ToolApprovalDecision, ToolApprovalReceiver, ToolApprovalRequest, ToolApprovalSender,
     tool_approval_channel,
 };
-pub use tool_summarizer::summarize_tool_result;
+pub use tool_summarizer::{build_background_result, summarize_tool_result};
