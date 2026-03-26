@@ -21,15 +21,13 @@ fn display_message_hash(msg: &DisplayMessage) -> u64 {
     msg.content.hash(&mut hasher);
     msg.collapsed.hash(&mut hasher);
     msg.thinking_duration_secs.hash(&mut hasher);
-    // For unfinalized reasoning, use a unique value each call to force re-render
-    // every tick (drives the shimmer animation and elapsed timer)
-    if msg.thinking_duration_secs.is_none() && msg.thinking_started_at.is_some() {
-        // Use a monotonic counter to ensure the hash is always unique.
-        // This is safe because unfinalized reasoning is transient (short-lived).
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        COUNTER
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            .hash(&mut hasher);
+    // For unfinalized reasoning, hash elapsed millis (tick-aligned) to drive
+    // shimmer animation and elapsed timer updates without excessive re-renders
+    if msg.thinking_duration_secs.is_none()
+        && let Some(started) = msg.thinking_started_at
+    {
+        // ~30fps: changes every 33ms, matching the tick rate
+        (started.elapsed().as_millis() / 33).hash(&mut hasher);
     }
     if let Some(ref tc) = msg.tool_call {
         tc.name.hash(&mut hasher);
