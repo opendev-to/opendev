@@ -20,7 +20,8 @@ impl App {
             .task_progress(self.state.task_progress.as_ref())
             .spinner_char(self.state.spinner.current())
             .compaction_active(self.state.compaction_active)
-            .backgrounding_pending(self.state.backgrounding_pending);
+            .backgrounding_pending(self.state.backgrounding_pending)
+            .thinking_verb(self.state.spinner.current_verb(), self.state.spinner.is_verb_fully_revealed());
         widget
             .build_spinner_lines()
             .iter()
@@ -92,7 +93,8 @@ impl App {
                     .task_progress(self.state.task_progress.as_ref())
                     .spinner_char(self.state.spinner.current())
                     .compaction_active(self.state.compaction_active)
-                    .backgrounding_pending(self.state.backgrounding_pending);
+                    .backgrounding_pending(self.state.backgrounding_pending)
+                    .thinking_verb(self.state.spinner.current_verb(), self.state.spinner.is_verb_fully_revealed());
             if !self.state.cached_lines.is_empty() {
                 conversation = conversation.cached_lines(&self.state.cached_lines);
             }

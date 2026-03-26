@@ -4,6 +4,10 @@
 //! Provides consistent spinner animation for tool execution, thinking phases,
 //! and agent activity indicators.
 
+use super::thinking_verbs::{
+    self, THINKING_VERBS,
+};
+
 /// Braille-dot spinner frames (matches Python `SPINNER_FRAMES`).
 pub const SPINNER_FRAMES: &[char] = &[
     '\u{280b}', // ⠋
@@ -45,6 +49,10 @@ pub struct SpinnerState {
     frame_index: usize,
     /// Monotonic tick counter (incremented each animation frame).
     tick_count: u64,
+    /// Current index into the THINKING_VERBS array.
+    verb_index: usize,
+    /// Tick counter within the current verb's animation cycle.
+    verb_tick: u64,
 }
 
 impl SpinnerState {
@@ -53,6 +61,8 @@ impl SpinnerState {
         Self {
             frame_index: 0,
             tick_count: 0,
+            verb_index: 0,
+            verb_tick: 0,
         }
     }
 
@@ -61,6 +71,15 @@ impl SpinnerState {
         let ch = SPINNER_FRAMES[self.frame_index];
         self.frame_index = (self.frame_index + 1) % SPINNER_FRAMES.len();
         self.tick_count += 1;
+
+        // Advance verb animation
+        self.verb_tick += 1;
+        let current_verb = THINKING_VERBS[self.verb_index];
+        if self.verb_tick >= thinking_verbs::cycle_ticks_for(current_verb) {
+            self.verb_tick = 0;
+            self.verb_index = thinking_verbs::next_verb_index(self.verb_index);
+        }
+
         ch
     }
 
@@ -74,10 +93,24 @@ impl SpinnerState {
         self.tick_count
     }
 
+    /// Get the current thinking verb text (typewriter-revealed).
+    pub fn current_verb(&self) -> &str {
+        let verb = THINKING_VERBS[self.verb_index];
+        thinking_verbs::compute_verb_text(verb, self.verb_tick)
+    }
+
+    /// Whether the current verb is fully revealed (for ellipsis display).
+    pub fn is_verb_fully_revealed(&self) -> bool {
+        let verb = THINKING_VERBS[self.verb_index];
+        thinking_verbs::is_fully_revealed(verb, self.verb_tick)
+    }
+
     /// Reset to initial state.
     pub fn reset(&mut self) {
         self.frame_index = 0;
         self.tick_count = 0;
+        self.verb_index = 0;
+        self.verb_tick = 0;
     }
 }
 
@@ -122,5 +155,30 @@ mod tests {
         spinner.reset();
         assert_eq!(spinner.tick_count(), 0);
         assert_eq!(spinner.current(), SPINNER_FRAMES[0]);
+        assert_eq!(spinner.current_verb(), "T"); // reset to first verb, tick 0
+    }
+
+    #[test]
+    fn test_verb_advances() {
+        let mut spinner = SpinnerState::new();
+        let first_verb = THINKING_VERBS[0];
+        // Tick past the first verb's full cycle
+        let cycle = thinking_verbs::cycle_ticks_for(first_verb);
+        for _ in 0..cycle {
+            spinner.tick();
+        }
+        // Should now be on a different verb
+        assert_ne!(spinner.current_verb(), &first_verb[..1]);
+    }
+
+    #[test]
+    fn test_verb_no_immediate_repeat() {
+        let mut spinner = SpinnerState::new();
+        let first_idx = spinner.verb_index;
+        let cycle = thinking_verbs::cycle_ticks_for(THINKING_VERBS[first_idx]);
+        for _ in 0..cycle {
+            spinner.tick();
+        }
+        assert_ne!(spinner.verb_index, first_idx);
     }
 }

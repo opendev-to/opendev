@@ -7,6 +7,7 @@ pub mod nested_tool;
 pub mod progress;
 pub mod spinner;
 pub mod status_bar;
+pub mod thinking_verbs;
 pub mod toast;
 pub mod todo_panel;
 pub mod tool_display;

@@ -164,7 +164,12 @@ impl<'a> ConversationWidget<'a> {
                         Style::default().fg(style_tokens::BLUE_BRIGHT),
                     ),
                     Span::styled(
-                        format!("{}... ", progress.description),
+                        if progress.description == "Thinking" {
+                            let suffix = if self.verb_fully_revealed { "... " } else { " " };
+                            format!("{}{}", self.thinking_verb, suffix)
+                        } else {
+                            format!("{}... ", progress.description)
+                        },
                         Style::default().fg(style_tokens::SUBTLE),
                     ),
                     Span::styled(
