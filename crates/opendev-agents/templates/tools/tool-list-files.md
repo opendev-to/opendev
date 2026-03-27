@@ -17,3 +17,15 @@ Fast file pattern matching tool that works with any codebase size.
 - When doing an open-ended search that may require multiple rounds of globbing and grepping, consider using a subagent instead
 - You can speculatively perform multiple searches in the same response if they are potentially useful
 - For searching file contents rather than file names, use the search tool instead
+
+## Common patterns
+
+- List all files in a subdirectory: `pattern="**/*"` with `path="src/game"`
+- List files by extension: `pattern="**/*.ts"` (from working dir) or `pattern="**/*.ts"` with `path="src"`
+- List top-level files only: `pattern="*"` with desired `path`
+
+## Common mistakes
+
+- `pattern="src/game/**"` → `**` alone matches directories, not files. Use `pattern="**/*"` with `path="src/game"`
+- `pattern="flappy/**"` with `path="src/game"` → same issue. Use `pattern="**/*"` with `path="src/game/flappy"`
+- Putting directory paths in `pattern` instead of `path` wastes a retry when the dir doesn't exist

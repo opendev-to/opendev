@@ -58,11 +58,11 @@ impl BaseTool for FileListTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Glob pattern to match files (e.g., \"**/*.rs\", \"src/**/*.ts\")"
+                    "description": "Glob pattern to match files relative to `path`. Use **/* for all files, **/*.ext for files by extension. IMPORTANT: ** alone matches directories, not files — always use **/* or **/*.ext to match files."
                 },
                 "path": {
                     "type": "string",
-                    "description": "Directory to search in (defaults to working directory)"
+                    "description": "Base directory to search in. To list files in a subdirectory, set this to the subdirectory path instead of including it in the pattern. Defaults to working directory."
                 },
                 "max_depth": {
                     "type": "number",
@@ -215,9 +215,15 @@ impl BaseTool for FileListTool {
                     base_dir.display()
                 ));
             }
+            let hint = if pattern.ends_with("**") && !pattern.ends_with("**/*") {
+                "\nHint: '**' alone matches directories, not files. Try '**/*' or '**/*.ext' instead."
+            } else {
+                ""
+            };
             return ToolResult::ok(format!(
-                "No files found matching '{pattern}' in {}",
-                base_dir.display()
+                "No files found matching '{pattern}' in {}{}",
+                base_dir.display(),
+                hint
             ));
         }
 
