@@ -152,8 +152,14 @@ impl App {
                     content.lines().count()
                 };
                 let tool_lines = if let Some(ref tc) = msg.tool_call {
+                    use crate::formatters::tool_registry::{ResultFormat, lookup_tool};
+                    let is_bash = lookup_tool(&tc.name).result_format == ResultFormat::Bash;
                     1 + if !tc.collapsed {
                         tc.result_lines.len()
+                    } else if is_bash {
+                        // Bash preview: ≤4 lines shown inline, >4 shows 5 (2+ellipsis+2), 0 shows 1
+                        let n = tc.result_lines.len();
+                        if n == 0 { 1 } else { n.min(4).max(if n > 4 { 5 } else { n }) }
                     } else if !tc.result_lines.is_empty() {
                         1
                     } else {
@@ -276,8 +282,9 @@ impl App {
         use crate::formatters::display::strip_system_reminders;
         use crate::formatters::markdown::MarkdownRenderer;
         use crate::formatters::style_tokens::{self, Indent};
-        use crate::formatters::tool_registry::format_tool_call_parts_short;
+        use crate::formatters::tool_registry::{ResultFormat, format_tool_call_parts_short};
         use crate::formatters::wrap::wrap_spans_to_lines;
+        use crate::widgets::conversation::build_bash_preview;
         use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR};
         use ratatui::style::{Modifier, Style};
         use ratatui::text::{Line, Span};
@@ -605,6 +612,9 @@ impl App {
             use crate::widgets::conversation::{
                 is_diff_tool, parse_unified_diff, render_diff_entries,
             };
+            let is_bash =
+                crate::formatters::tool_registry::lookup_tool(&tc.name).result_format
+                    == ResultFormat::Bash;
             let effective_collapsed = tc.collapsed && !is_diff_tool(&tc.name);
             if !effective_collapsed && !tc.result_lines.is_empty() {
                 let use_diff = is_diff_tool(&tc.name);
@@ -634,14 +644,20 @@ impl App {
                         ]));
                     }
                 }
-            } else if effective_collapsed && !tc.result_lines.is_empty() {
-                let count = tc.result_lines.len();
-                let verb = crate::formatters::tool_registry::lookup_tool(&tc.name).verb;
-                let label = format!("  {}  {verb} {count} lines", CONTINUATION_CHAR);
-                lines.push(Line::from(Span::styled(
-                    label,
-                    Style::default().fg(style_tokens::SUBTLE),
-                )));
+            } else if effective_collapsed {
+                if is_bash {
+                    lines.extend(build_bash_preview(&tc.result_lines, tc.success));
+                } else if !tc.result_lines.is_empty() {
+                    let count = tc.result_lines.len();
+                    let verb = crate::formatters::tool_registry::lookup_tool(&tc.name).verb;
+                    let label = format!("  {}  {verb} {count} lines", CONTINUATION_CHAR);
+                    lines.push(Line::from(Span::styled(
+                        label,
+                        Style::default().fg(style_tokens::SUBTLE),
+                    )));
+                }
+            } else if tc.result_lines.is_empty() && is_bash {
+                lines.extend(build_bash_preview(&tc.result_lines, tc.success));
             }
 
             for nested in &tc.nested_calls {

@@ -143,8 +143,12 @@ impl DisplayToolCall {
             })
             .unwrap_or_default();
 
-        let is_file_read = categorize_tool(&tc.name) == ToolCategory::FileRead;
-        let collapsed = is_file_read || (result_lines.len() > 5 && !is_diff_tool(&tc.name));
+        let category = categorize_tool(&tc.name);
+        let is_file_read = category == ToolCategory::FileRead;
+        let is_bash = category == ToolCategory::Bash;
+        let collapsed = is_file_read
+            || (is_bash && result_lines.len() > 4)
+            || (!is_bash && result_lines.len() > 5 && !is_diff_tool(&tc.name));
 
         let nested_calls = tc
             .nested_tool_calls

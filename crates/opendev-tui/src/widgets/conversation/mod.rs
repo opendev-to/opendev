@@ -32,6 +32,7 @@ use crate::app::{DisplayMessage, DisplayRole, DisplayToolCall, RoleStyle, ToolEx
 use crate::formatters::display::strip_system_reminders;
 use crate::formatters::markdown::MarkdownRenderer;
 use crate::formatters::style_tokens::{self, Indent};
+use crate::formatters::tool_registry::ResultFormat;
 use crate::widgets::progress::TaskProgress;
 use crate::widgets::spinner::{COMPLETED_CHAR, CONTINUATION_CHAR, SPINNER_FRAMES};
 
@@ -440,6 +441,10 @@ impl<'a> ConversationWidget<'a> {
         let tool_line = format_tool_call(tc, Some(self.working_dir));
         lines.push(tool_line);
 
+        let is_bash =
+            crate::formatters::tool_registry::lookup_tool(&tc.name).result_format
+                == ResultFormat::Bash;
+
         // Collapsible result lines (diff tools are never collapsed)
         let effective_collapsed = tc.collapsed && !check_diff_tool(&tc.name);
         if !effective_collapsed && !tc.result_lines.is_empty() {
@@ -473,21 +478,28 @@ impl<'a> ConversationWidget<'a> {
                     ]));
                 }
             }
-        } else if effective_collapsed && !tc.result_lines.is_empty() {
-            let count = tc.result_lines.len();
-            let verb = crate::formatters::tool_registry::lookup_tool(&tc.name).verb;
-            let label = if !tc.success {
-                format!(
-                    "  {}  {verb} {count} lines (Ctrl+O to expand)",
-                    CONTINUATION_CHAR
-                )
-            } else {
-                format!("  {}  {verb} {count} lines", CONTINUATION_CHAR)
-            };
-            lines.push(Line::from(Span::styled(
-                label,
-                Style::default().fg(style_tokens::SUBTLE),
-            )));
+        } else if effective_collapsed {
+            if is_bash {
+                lines.extend(build_bash_preview(&tc.result_lines, tc.success));
+            } else if !tc.result_lines.is_empty() {
+                let count = tc.result_lines.len();
+                let verb = crate::formatters::tool_registry::lookup_tool(&tc.name).verb;
+                let label = if !tc.success {
+                    format!(
+                        "  {}  {verb} {count} lines (Ctrl+O to expand)",
+                        CONTINUATION_CHAR
+                    )
+                } else {
+                    format!("  {}  {verb} {count} lines", CONTINUATION_CHAR)
+                };
+                lines.push(Line::from(Span::styled(
+                    label,
+                    Style::default().fg(style_tokens::SUBTLE),
+                )));
+            }
+        } else if tc.result_lines.is_empty() && is_bash {
+            // Empty bash output: show "(no output)"
+            lines.extend(build_bash_preview(&tc.result_lines, tc.success));
         }
 
         // Nested tool calls (from subagent execution)
@@ -496,6 +508,55 @@ impl<'a> ConversationWidget<'a> {
             lines.push(nested_line);
         }
     }
+}
+
+/// Build a Codex-style inline preview for Bash tool results.
+///
+/// - Empty output → single `(no output)` line
+/// - ≤4 lines → all lines shown inline
+/// - >4 lines → first 2, `… +N lines`, last 2
+pub(crate) fn build_bash_preview(result_lines: &[String], success: bool) -> Vec<Line<'static>> {
+    let text_color = if success {
+        style_tokens::SUBTLE
+    } else {
+        style_tokens::ERROR
+    };
+    let total = result_lines.len();
+
+    // Helper: build a result line with the appropriate prefix
+    let make_line = |idx: usize, text: &str| {
+        let prefix: Cow<'static, str> = if idx == 0 {
+            format!("  {}  ", CONTINUATION_CHAR).into()
+        } else {
+            Cow::Borrowed(Indent::RESULT_CONT)
+        };
+        Line::from(vec![
+            Span::styled(prefix, Style::default().fg(style_tokens::GREY)),
+            Span::styled(text.to_string(), Style::default().fg(text_color)),
+        ])
+    };
+
+    if total == 0 {
+        return vec![make_line(0, "(no output)")];
+    }
+
+    let mut lines = Vec::new();
+    if total <= 4 {
+        for (i, line) in result_lines.iter().enumerate() {
+            lines.push(make_line(i, line));
+        }
+    } else {
+        // First 2 lines
+        lines.push(make_line(0, &result_lines[0]));
+        lines.push(make_line(1, &result_lines[1]));
+        // Ellipsis with hidden line count
+        let hidden = total - 4;
+        lines.push(make_line(2, &format!("… +{hidden} lines")));
+        // Last 2 lines
+        lines.push(make_line(3, &result_lines[total - 2]));
+        lines.push(make_line(4, &result_lines[total - 1]));
+    }
+    lines
 }
 
 impl Widget for ConversationWidget<'_> {
