@@ -337,6 +337,14 @@ impl TodoManager {
             .any(|t| t.status != TodoStatus::Completed)
     }
 
+    /// Whether any todo has been started (moved beyond Pending).
+    /// Returns true if at least one todo is InProgress or Completed.
+    pub fn has_work_in_progress(&self) -> bool {
+        self.todos
+            .values()
+            .any(|t| t.status != TodoStatus::Pending)
+    }
+
     /// Format the todo list sorted by status: doing -> todo -> done.
     pub fn format_status_sorted(&self) -> String {
         if self.todos.is_empty() {
@@ -551,6 +559,25 @@ mod tests {
         assert!(mgr.has_incomplete_todos());
         mgr.complete(1);
         assert!(!mgr.has_incomplete_todos());
+    }
+
+    #[test]
+    fn test_has_work_in_progress() {
+        let mut mgr = TodoManager::from_steps(&["A".into(), "B".into()]);
+        // All pending — no work started
+        assert!(!mgr.has_work_in_progress());
+
+        // Start one — work in progress
+        mgr.start(1);
+        assert!(mgr.has_work_in_progress());
+
+        // Complete one, other still pending — still has work in progress
+        mgr.complete(1);
+        assert!(mgr.has_work_in_progress());
+
+        // Complete all — still true (Completed != Pending)
+        mgr.complete(2);
+        assert!(mgr.has_work_in_progress());
     }
 
     #[test]
