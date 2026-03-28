@@ -120,9 +120,30 @@ impl UserStore {
             if let Some(parent) = self.users_file.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&self.users_file, "{}")?;
+            // Write to temp file, then rename (atomic)
+            let tmp_path = self
+                .users_file
+                .with_extension(format!("tmp.{}", Uuid::new_v4()));
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create(true).truncate(true).mode(0o600);
+                std::io::Write::write_all(&mut opts.open(&tmp_path)?, b"{}")?;
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::write(&tmp_path, "{}")?;
+            }
+
+            std::fs::rename(&tmp_path, &self.users_file)?;
             return Ok(());
         }
+
+        // Verify and tighten permissions
+        #[cfg(unix)]
+        self.check_permissions();
 
         match std::fs::read_to_string(&self.users_file) {
             Ok(content) => {
@@ -150,8 +171,45 @@ impl UserStore {
         if let Some(parent) = self.users_file.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&self.users_file, json)?;
+
+        // Write to temp file, then rename (atomic)
+        let tmp_path = self
+            .users_file
+            .with_extension(format!("tmp.{}", Uuid::new_v4()));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true).mode(0o600);
+            std::io::Write::write_all(&mut opts.open(&tmp_path)?, json.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, json)?;
+        }
+
+        std::fs::rename(&tmp_path, &self.users_file)?;
         Ok(())
+    }
+
+    /// Check and tighten file permissions on Unix.
+    #[cfg(unix)]
+    fn check_permissions(&self) {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&self.users_file) {
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                warn!(
+                    "User store file {:?} has loose permissions ({:o}). Tightening to 0600.",
+                    self.users_file, mode
+                );
+                let _ = std::fs::set_permissions(
+                    &self.users_file,
+                    std::fs::Permissions::from_mode(0o600),
+                );
+            }
+        }
     }
 }
 
