@@ -47,11 +47,13 @@ introduces or shifts to a new conversation topic.
 Respond with a JSON object containing exactly two fields:
 - \"isNewTopic\": boolean - true if the topic is new or has meaningfully changed, \
 or if there is no current title yet
-- \"title\": string or null - a concise 2-5 word lowercase title if isNewTopic is true, null otherwise
+- \"title\": string or null - a concise 2-4 word lowercase title starting with an action verb \
+if isNewTopic is true, null otherwise
 
 If no current title exists, you MUST set isNewTopic to true and provide a title.
 
-Title examples: \"auth middleware refactor\", \"debug login flow\", \"add search feature\".
+Title rules: always start with a verb. Max 4 words.
+Title examples: \"refactor auth middleware\", \"debug login flow\", \"add search feature\", \"fix test failures\".
 
 Output only the JSON object, no other text.";
 
