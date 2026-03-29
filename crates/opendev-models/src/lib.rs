@@ -8,6 +8,7 @@ pub mod api;
 pub mod config;
 pub mod datetime_compat;
 pub mod file_change;
+pub mod frontend_event;
 pub mod message;
 pub mod operation;
 pub mod session;

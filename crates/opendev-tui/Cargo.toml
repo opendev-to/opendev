@@ -25,9 +25,9 @@ thiserror = { workspace = true }
 unicode-width = { workspace = true }
 ignore = { workspace = true }
 uuid = { workspace = true }
+regex = { workspace = true }
 dirs = "6"
 arboard = "3"
-regex.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }

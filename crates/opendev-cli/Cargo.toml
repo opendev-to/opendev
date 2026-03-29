@@ -35,6 +35,8 @@ serde_json = { workspace = true }
 dirs-next = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
+async-trait = "0.1"
+uuid = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

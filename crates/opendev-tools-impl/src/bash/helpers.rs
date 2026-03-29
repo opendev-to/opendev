@@ -17,16 +17,16 @@ use super::patterns::needs_auto_confirm;
 // ---------------------------------------------------------------------------
 
 /// Idle timeout: kill when no stdout/stderr activity for this long.
-pub(super) const IDLE_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(60);
+pub(crate) const IDLE_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(60);
 
 /// Absolute max runtime (safety cap).
-pub(super) const MAX_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(600);
+pub(crate) const MAX_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(600);
 
 /// Default timeout passed by callers (overridden by dual-timeout logic).
-pub(super) const DEFAULT_TIMEOUT_SECS: u64 = 120;
+pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 // Output truncation — display limits
-pub(super) const MAX_OUTPUT_CHARS: usize = 30_000;
+pub(crate) const MAX_OUTPUT_CHARS: usize = 30_000;
 const KEEP_HEAD_CHARS: usize = 10_000;
 const KEEP_TAIL_CHARS: usize = 10_000;
 
@@ -40,7 +40,7 @@ const LLM_KEEP_TAIL_CHARS: usize = 5_000;
 // ---------------------------------------------------------------------------
 
 /// Truncate by keeping head + tail, removing the middle.
-pub(super) fn truncate_output(text: &str, for_llm: bool) -> String {
+pub(crate) fn truncate_output(text: &str, for_llm: bool) -> String {
     let (max, head, tail) = if for_llm {
         (
             MAX_LLM_METADATA_CHARS,
@@ -74,7 +74,7 @@ fn safe_slice(s: &str, start: usize, end: usize) -> &str {
 /// Tracked background process.
 #[derive(Debug)]
 #[allow(dead_code)]
-pub(super) struct BackgroundProcess {
+pub(crate) struct BackgroundProcess {
     /// Unique ID for this background process.
     pub id: u32,
     /// Original command string.
@@ -94,13 +94,13 @@ pub(super) struct BackgroundProcess {
 }
 
 /// Shared state for background processes.
-pub(super) type BackgroundStore = Arc<Mutex<HashMap<u32, BackgroundProcess>>>;
+pub(crate) type BackgroundStore = Arc<Mutex<HashMap<u32, BackgroundProcess>>>;
 
 // ---------------------------------------------------------------------------
 // LLM suffix for command failures (hidden from UI, visible to LLM)
 // ---------------------------------------------------------------------------
 
-pub(super) fn command_failure_suffix(exit_code: i32, output: &str) -> String {
+pub(crate) fn command_failure_suffix(exit_code: i32, output: &str) -> String {
     let lower = output.to_lowercase();
 
     if lower.contains("permission denied") {
@@ -144,7 +144,7 @@ pub(super) fn command_failure_suffix(exit_code: i32, output: &str) -> String {
 // Prepare command string (auto-confirm, python -u)
 // ---------------------------------------------------------------------------
 
-pub(super) fn prepare_command(command: &str) -> String {
+pub(crate) fn prepare_command(command: &str) -> String {
     let mut cmd = command.to_string();
 
     // Insert -u flag for python commands if not already present
@@ -167,7 +167,7 @@ pub(super) fn prepare_command(command: &str) -> String {
 // Kill an entire process group
 // ---------------------------------------------------------------------------
 
-pub(super) fn kill_process_group(pgid: u32) {
+pub(crate) fn kill_process_group(pgid: u32) {
     #[cfg(unix)]
     {
         unsafe {
@@ -193,87 +193,5 @@ pub(super) fn kill_process_group(pgid: u32) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ---- Output truncation ----
-
-    #[test]
-    fn test_truncate_short_output() {
-        let text = "short output";
-        assert_eq!(truncate_output(text, false), text);
-        assert_eq!(truncate_output(text, true), text);
-    }
-
-    #[test]
-    fn test_truncate_long_output_display() {
-        let text = "a".repeat(50_000);
-        let truncated = truncate_output(&text, false);
-        assert!(truncated.len() < text.len());
-        assert!(truncated.contains("[...truncated"));
-        // Head and tail preserved
-        assert!(truncated.starts_with("aaa"));
-        assert!(truncated.ends_with("aaa"));
-    }
-
-    #[test]
-    fn test_truncate_long_output_llm() {
-        let text = "b".repeat(50_000);
-        let truncated = truncate_output(&text, true);
-        assert!(truncated.len() < 20_000); // Should be within LLM limits
-        assert!(truncated.contains("[...truncated"));
-    }
-
-    // ---- Command preparation ----
-
-    #[test]
-    fn test_prepare_command_python_unbuffered() {
-        let cmd = prepare_command("python script.py");
-        assert!(cmd.contains("python -u"));
-    }
-
-    #[test]
-    fn test_prepare_command_python3_unbuffered() {
-        let cmd = prepare_command("python3 script.py");
-        assert!(cmd.contains("python3 -u"));
-    }
-
-    #[test]
-    fn test_prepare_command_already_unbuffered() {
-        let cmd = prepare_command("python -u script.py");
-        // Should not double-insert
-        assert_eq!(cmd.matches("-u").count(), 1);
-    }
-
-    #[test]
-    fn test_prepare_command_npx_auto_confirm() {
-        let cmd = prepare_command("npx create-react-app my-app");
-        assert!(cmd.starts_with("yes | "));
-    }
-
-    #[test]
-    fn test_prepare_command_no_modification() {
-        let cmd = prepare_command("echo hello");
-        assert_eq!(cmd, "echo hello");
-    }
-
-    // ---- Property-based truncation test ----
-
-    mod proptest_truncate {
-        use super::*;
-        use proptest::prelude::*;
-
-        proptest! {
-            #![proptest_config(ProptestConfig::with_cases(64))]
-            /// truncate_output must never panic and must respect length limits.
-            #[test]
-            fn fuzz_truncate_no_panic(text in "\\PC{0,10000}", for_llm in proptest::bool::ANY) {
-                let result = truncate_output(&text, for_llm);
-                // Result should never be empty if input is non-empty
-                if !text.is_empty() {
-                    prop_assert!(!result.is_empty());
-                }
-            }
-        }
-    }
-}
+#[path = "helpers_tests.rs"]
+mod tests;

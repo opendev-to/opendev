@@ -344,14 +344,54 @@ pub async fn handle_run(action: RunAction, working_dir: &std::path::Path) {
 
             let state = opendev_web::state::AppState::new(
                 session_manager,
-                config,
+                config.clone(),
                 working_dir.display().to_string(),
                 user_store,
                 model_registry,
             );
 
-            // Serve static files from the bundled web-ui build directory (if present)
-            let static_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web-ui/dist");
+            // Initialize agent runtime for executing queries
+            let runtime_session_dir = paths.project_sessions_dir(working_dir);
+            let runtime_session_manager =
+                match opendev_history::SessionManager::new(runtime_session_dir) {
+                    Ok(sm) => sm,
+                    Err(e) => {
+                        eprintln!("Failed to initialize runtime session manager: {e}");
+                        std::process::exit(1);
+                    }
+                };
+
+            let system_prompt = crate::runtime::build_system_prompt(working_dir, &config);
+
+            match crate::runtime::AgentRuntime::new(config, working_dir, runtime_session_manager) {
+                Ok(mut agent_runtime) => {
+                    agent_runtime.connect_mcp_servers().await;
+
+                    // Take channel receivers and spawn bridge tasks for
+                    // subagent events, approvals, ask-user, plan-approval
+                    if let Some(receivers) = agent_runtime.channel_receivers.take() {
+                        crate::web_executor::spawn_channel_bridges(receivers, state.clone());
+                    }
+
+                    let executor =
+                        crate::web_executor::WebAgentExecutor::new(agent_runtime, system_prompt);
+                    state
+                        .set_agent_executor(std::sync::Arc::new(executor))
+                        .await;
+                    println!("Agent executor initialized — Web UI can execute queries");
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to initialize agent runtime: {e}\n\
+                         Web UI will start but agent execution will be unavailable."
+                    );
+                }
+            }
+
+            // Serve static files from the Vite build output directory (if present)
+            // Vite outputs to opendev/web/static/ relative to project root
+            let static_dir =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../opendev/web/static");
             let static_path = if static_dir.exists() {
                 Some(static_dir)
             } else {

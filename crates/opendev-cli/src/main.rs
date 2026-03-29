@@ -11,6 +11,7 @@ mod runners;
 mod runtime;
 mod setup;
 mod tui_runner;
+mod web_executor;
 
 use clap::Parser;
 use tracing::info;
