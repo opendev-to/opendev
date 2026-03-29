@@ -77,9 +77,37 @@ impl SkillLoader {
     ///
     /// Returns a list of all discovered [`SkillMetadata`].
     pub fn discover_skills(&mut self) -> Vec<SkillMetadata> {
-        let mut skills: HashMap<String, SkillMetadata> = HashMap::new();
+        // Builtins have lowest priority, then remote URLs, then local directories.
+        let mut skills = self.discover_builtins();
+        let remote = self.discover_remote();
+        let local = self.discover_local();
 
-        // Process builtins first (lowest priority).
+        // Remote skills only fill in gaps (don't override builtins or local).
+        for (full_name, meta) in remote {
+            use std::collections::hash_map::Entry;
+            match skills.entry(full_name) {
+                Entry::Vacant(e) => {
+                    e.insert(meta);
+                }
+                Entry::Occupied(e) => {
+                    debug!(
+                        skill = e.key(),
+                        "remote skill skipped — existing version takes priority"
+                    );
+                }
+            }
+        }
+
+        // Local directory skills override everything.
+        skills.extend(local);
+
+        self.metadata_cache = skills;
+        self.metadata_cache.values().cloned().collect()
+    }
+
+    /// Discover embedded builtin skills.
+    fn discover_builtins(&self) -> HashMap<String, SkillMetadata> {
+        let mut skills = HashMap::new();
         for builtin in BUILTIN_SKILLS {
             if let Some(mut meta) = parse_frontmatter_str(builtin.content) {
                 meta.source = SkillSource::Builtin;
@@ -95,8 +123,16 @@ impl SkillLoader {
                 skills.insert(full_name, meta);
             }
         }
+        skills
+    }
 
-        // Process directories in reverse order so higher-priority dirs override.
+    /// Discover skills from local filesystem directories.
+    ///
+    /// Directories are processed in reverse order so higher-priority dirs
+    /// (listed first in `self.dirs`) override lower-priority ones.
+    fn discover_local(&self) -> HashMap<String, SkillMetadata> {
+        let mut skills: HashMap<String, SkillMetadata> = HashMap::new();
+        // Process in reverse so higher-priority dirs override.
         for skill_dir in self.dirs.iter().rev() {
             if !skill_dir.exists() {
                 continue;
@@ -124,10 +160,16 @@ impl SkillLoader {
                 }
             }
         }
+        skills
+    }
 
-        // Process URL-sourced skills (lower priority than local dirs).
-        // Download to cache and discover like local directories.
-        for url in &self.skill_urls.clone() {
+    /// Discover skills from remote URLs.
+    ///
+    /// Each URL is fetched and its skills are downloaded to a local cache.
+    /// Remote skills have lower priority than local directory skills.
+    fn discover_remote(&self) -> HashMap<String, SkillMetadata> {
+        let mut skills = HashMap::new();
+        for url in &self.skill_urls {
             match pull_url_skills(url) {
                 Ok(dirs) => {
                     for skill_dir in dirs {
@@ -137,7 +179,7 @@ impl SkillLoader {
                                     meta.path = Some(md_file);
                                     meta.source = SkillSource::Url(url.clone());
                                     let full_name = meta.full_name();
-                                    // URL skills don't override local skills
+                                    // Don't override skills already found from other URLs.
                                     use std::collections::hash_map::Entry;
                                     match skills.entry(full_name) {
                                         Entry::Vacant(e) => {
@@ -147,7 +189,7 @@ impl SkillLoader {
                                             debug!(
                                                 skill = e.key(),
                                                 url = url,
-                                                "URL skill skipped — local version takes priority"
+                                                "URL skill skipped — earlier URL takes priority"
                                             );
                                         }
                                     }
@@ -161,9 +203,7 @@ impl SkillLoader {
                 }
             }
         }
-
-        self.metadata_cache = skills;
-        self.metadata_cache.values().cloned().collect()
+        skills
     }
 
     /// Load full skill content by name.
