@@ -112,3 +112,9 @@ Or for interactive TUI testing, launch `opendev` and exercise the feature manual
 - Run `cargo clippy` and fix all warnings
 - Follow standard Rust naming conventions (snake_case functions, CamelCase types)
 - **NEVER** add `Co-Authored-By` lines (e.g. `Co-Authored-By: Claude ...`) to commit messages
+
+## Code Organization
+
+- **Tests belong in separate files.** Do not put `#[cfg(test)] mod tests` inline in source files. Place unit tests in a sibling `tests.rs` or `tests/` directory and integration tests in `tests/`.
+- **Keep source files focused.** When a module grows large, split it into submodules with a `mod.rs` or named modules. Each file should have a single clear responsibility.
+- **New code follows existing structure.** Before adding a new file, check how the surrounding crate is organized and match that pattern.

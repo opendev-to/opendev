@@ -4,6 +4,8 @@
 //! runs them through the agent pipeline, and sends events back to update
 //! the UI.
 
+pub mod remote;
+
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -21,7 +23,7 @@ use opendev_tui::app::AppState;
 use opendev_tui::{App, AppEvent};
 
 use opendev_channels::telegram::remote::{
-    RemoteCommand, RemoteCommandReceiver, RemoteEvent, RemoteEventSender,
+    RemoteCommandReceiver, RemoteEvent, RemoteEventSender,
 };
 
 use crate::runtime::AgentRuntime;
@@ -360,117 +362,13 @@ impl TuiRunner {
             remote_tx: remote_event_tx.clone(),
         };
 
-        // Spawn remote command listener (Telegram → TUI)
-        if let Some(mut remote_rx) = self.remote_command_rx.take() {
-            let remote_user_tx = user_tx.clone();
-            let remote_event_clone = event_tx.clone();
-            tokio::spawn(async move {
-                while let Some(cmd) = remote_rx.recv().await {
-                    match cmd {
-                        RemoteCommand::SendMessage(text) => {
-                            let _ = remote_user_tx.send(text);
-                        }
-                        RemoteCommand::Cancel => {
-                            let _ = remote_event_clone.send(AppEvent::Interrupt);
-                        }
-                        // Session commands — forward as TUI sentinels
-                        RemoteCommand::Compact => {
-                            let _ = remote_user_tx.send("\x00__COMPACT__".to_string());
-                        }
-                        RemoteCommand::NewSession | RemoteCommand::ResumeSession { .. } => {
-                            // Not supported in TUI+remote mode (TUI owns the session)
-                        }
-                        RemoteCommand::Cost => {}
-                        // Approval and question resolution is handled directly by the bridge
-                        RemoteCommand::ApproveToolCall { .. }
-                        | RemoteCommand::DenyToolCall { .. }
-                        | RemoteCommand::AnswerQuestion { .. } => {}
-                    }
-                }
-            });
+        // Spawn remote control bridges (Telegram → TUI)
+        if let Some(remote_rx) = self.remote_command_rx.take() {
+            remote::spawn_command_listener(remote_rx, user_tx.clone(), event_tx.clone());
         }
 
-        // Bridge tool approval requests to Telegram remote control
-        let bridge_opt = self.remote_bridge.take();
-        if let (Some(bridge), Some(rtx), Some(receivers)) = (
-            bridge_opt,
-            remote_event_tx.clone(),
-            self.runtime.channel_receivers.as_mut(),
-        ) {
-            // Replace the tool approval receiver with one that also forwards to Telegram
-            let bridge_for_approval = Arc::clone(&bridge);
-            let rtx_for_approval = rtx;
-            let approval_tx_for_tui = event_tx.clone();
-
-            // We intercept the tool approval channel: when a request comes in,
-            // we forward it to both TUI and Telegram. Whichever responds first wins.
-            let mut original_approval_rx = std::mem::replace(&mut receivers.tool_approval_rx, {
-                let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                rx
-            });
-
-            tokio::spawn(async move {
-                while let Some(req) = original_approval_rx.recv().await {
-                    let request_id = bridge_for_approval.next_id();
-
-                    // Send to Telegram
-                    let _ = rtx_for_approval.send(RemoteEvent::ToolApprovalNeeded {
-                        request_id: request_id.clone(),
-                        command: req.command.clone(),
-                        working_dir: req.working_dir.clone(),
-                    });
-
-                    // Register pending approval in bridge
-                    let remote_rx = bridge_for_approval.register_approval(&request_id).await;
-
-                    // Also send to TUI
-                    let (tui_resp_tx, tui_resp_rx) = tokio::sync::oneshot::channel();
-                    let _ = approval_tx_for_tui.send(AppEvent::ToolApprovalRequested {
-                        command: req.command.clone(),
-                        working_dir: req.working_dir.clone(),
-                        response_tx: tui_resp_tx,
-                    });
-
-                    // Race: first response wins (TUI or Telegram)
-                    let original_command = req.command;
-                    tokio::select! {
-                        tui_result = tui_resp_rx => {
-                            if let Ok(decision) = tui_result {
-                                let _ = req.response_tx.send(decision);
-                            }
-                        }
-                        remote_result = remote_rx => {
-                            if let Ok(response) = remote_result {
-                                match response {
-                                    opendev_channels::telegram::remote::ApprovalResponse::Approved { command } => {
-                                        let cmd = if command.is_empty() {
-                                            original_command
-                                        } else {
-                                            command
-                                        };
-                                        let _ = req.response_tx.send(
-                                            opendev_runtime::ToolApprovalDecision {
-                                                approved: true,
-                                                choice: "yes".to_string(),
-                                                command: cmd,
-                                            },
-                                        );
-                                    }
-                                    opendev_channels::telegram::remote::ApprovalResponse::Denied => {
-                                        let _ = req.response_tx.send(
-                                            opendev_runtime::ToolApprovalDecision {
-                                                approved: false,
-                                                choice: "no".to_string(),
-                                                command: original_command,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            });
+        if let (Some(bridge), Some(rtx)) = (self.remote_bridge.take(), remote_event_tx.clone()) {
+            remote::spawn_approval_bridge(bridge, rtx, event_tx.clone(), &mut self.runtime);
         }
 
         // Spawn the agent listener task
