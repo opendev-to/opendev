@@ -1674,6 +1674,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_home"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7f84e12ccf0a7ddc17a6c41c93326024c42920d7ee630d04950e6926645c0fe"
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3210,7 +3216,7 @@ dependencies = [
  "tokio",
  "tracing",
  "typed-builder",
- "which",
+ "which 8.0.2",
 ]
 
 [[package]]
@@ -4268,10 +4274,12 @@ version = "0.1.4"
 dependencies = [
  "async-trait",
  "axum",
+ "dirs-next",
  "microsandbox",
  "opendev-http",
  "opendev-models",
  "regex",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "tempfile",
@@ -4280,6 +4288,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "which 7.0.3",
 ]
 
 [[package]]
@@ -7593,6 +7602,18 @@ dependencies = [
 
 [[package]]
 name = "which"
+version = "7.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24d643ce3fd3e5b54854602a080f34fb10ab75e0b813ee32d00ca2b44fa74762"
+dependencies = [
+ "either",
+ "env_home",
+ "rustix",
+ "winsafe",
+]
+
+[[package]]
+name = "which"
 version = "8.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81995fafaaaf6ae47a7d0cc83c67caf92aeb7e5331650ae6ff856f7c0c60c459"
@@ -8022,6 +8043,12 @@ checksum = "a90e88e4667264a994d34e6d1ab2d26d398dcdca8b7f52bec8668957517fc7d8"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wit-bindgen"

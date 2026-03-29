@@ -12,6 +12,7 @@ pub mod errors;
 pub mod models;
 pub mod parser;
 pub mod prompts;
+pub mod runtime;
 pub mod sandbox;
 pub mod session;
 

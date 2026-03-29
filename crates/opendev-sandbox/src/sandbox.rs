@@ -16,13 +16,24 @@ pub struct MicroSandbox {
 }
 
 impl MicroSandbox {
-    /// Create a new sandbox instance. Returns `ServerUnavailable` if the
-    /// microsandbox daemon is not running.
+    /// Create a new sandbox instance.
+    ///
+    /// Automatically starts the microsandbox server if not already running.
+    /// Returns `ServerUnavailable` if the runtime is not installed or fails to start.
     pub async fn create(session_id: &str, _config: &SandboxConfig) -> Result<Self> {
+        // Check platform support first.
+        if let Some(reason) = crate::runtime::platform_availability() {
+            return Err(SandboxError::ServerUnavailable(reason));
+        }
+
+        // Ensure server is running (auto-starts if needed).
+        crate::runtime::ensure_server_running().await?;
+
         info!(session_id, "Creating sandbox");
 
         // TODO: PythonSandbox::create() call
-        // For now, return a placeholder that will be wired in Phase 4.
+        // For now, return a placeholder that will be wired when we
+        // integrate the microsandbox SDK's PythonSandbox type.
 
         Ok(Self {
             session_id: session_id.to_string(),

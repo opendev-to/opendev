@@ -17,6 +17,9 @@ regex = { workspace = true }
 axum = { workspace = true }
 async-trait = { workspace = true }
 tokio-util = { workspace = true }
+reqwest = { workspace = true }
+dirs-next = { workspace = true }
+which = "7"
 opendev-models = { workspace = true }
 opendev-http = { workspace = true }
 microsandbox = "0.3"
