@@ -190,13 +190,17 @@ impl CredentialStore {
         // Write to temp file, then rename (atomic)
         let tmp_path = self.path.with_extension("tmp");
         let json = serde_json::to_string_pretty(data)?;
-        std::fs::write(&tmp_path, &json)?;
 
-        // Set permissions before rename
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true).mode(0o600);
+            std::io::Write::write_all(&mut opts.open(&tmp_path)?, json.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, &json)?;
         }
 
         std::fs::rename(&tmp_path, &self.path)?;
