@@ -43,8 +43,6 @@ OpenDev is written in **Rust** — it starts in **3.3 ms**, uses just **9.5 MB o
 
 <sub>Measured on macOS ARM64 (Apple Silicon). Startup via <code>--help</code> with <a href="https://github.com/sharkdp/hyperfine">hyperfine</a> (20 runs). Memory via <code>/usr/bin/time -l</code> (avg of 5 runs). Multipliers show how much slower/larger vs OpenDev.</sub>
 
-Looking for the original Python version? See [opendev-py](https://github.com/opendev-to/opendev-py) (archived).
-
 <p align="center">
   <img src="figures/top.png" alt="OpenDev Compound AI Architecture" width="700"/>
 </p>
