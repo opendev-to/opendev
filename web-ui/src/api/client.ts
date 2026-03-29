@@ -104,7 +104,7 @@ class APIClient {
     return response.json();
   }
 
-  async createSession(workspace: string): Promise<{ status: string; message: string; session: any }> {
+  async createSession(workspace: string): Promise<{ id: string; status: string; message?: string }> {
     const response = await fetch(`${API_BASE}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

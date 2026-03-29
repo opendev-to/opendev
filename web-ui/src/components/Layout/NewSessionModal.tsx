@@ -83,7 +83,7 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
     try {
       const result = await apiClient.createSession(currentPath);
       bumpSessionList();
-      const sessionId = result.session?.id || (result as any).id;
+      const sessionId = result.id;
       if (sessionId) {
         await loadSession(sessionId);
       }

@@ -108,7 +108,7 @@ export function LandingPage() {
     try {
       const result = await apiClient.createSession(selectedWorkspace);
       bumpSessionList();
-      const sessionId = result.session?.id || (result as any).id;
+      const sessionId = result.id;
       await loadSession(sessionId);
       sendMessage(input.trim());
     } catch (err) {

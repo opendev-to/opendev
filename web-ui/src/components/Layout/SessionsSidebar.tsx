@@ -63,6 +63,15 @@ export function SessionsSidebar() {
     (sessionStates[currentSessionId]?.messages ?? []).length === 0
   );
 
+  // Per-workspace check: only disable "New Session" in the workspace
+  // that contains the current empty session (not globally).
+  const workspaceHasCurrentEmptySession = (workspace: WorkspaceGroup): boolean => {
+    if (currentSessionId === null) return false;
+    const isCurrentInWorkspace = workspace.sessions.some(s => s.id === currentSessionId);
+    if (!isCurrentInWorkspace) return false;
+    return (sessionStates[currentSessionId]?.messages ?? []).length === 0;
+  };
+
   useEffect(() => {
     fetchSessions();
   }, [sessionListVersion]);
@@ -187,7 +196,7 @@ export function SessionsSidebar() {
       await fetchSessions();
 
       // Load the new session
-      const sessionId = result.session?.id || (result as any).id;
+      const sessionId = result.id;
       if (sessionId) {
         await loadSession(sessionId);
       }
@@ -493,11 +502,11 @@ export function SessionsSidebar() {
                         <div className="px-4 pb-3 space-y-1.5 border-t border-gray-100 pt-2">
                           {/* Add New Session Button */}
                           <button
-                            onClick={currentSessionIsEmpty ? undefined : (e) => handleNewSessionInWorkspace(workspace.path, e)}
-                            disabled={currentSessionIsEmpty}
-                            title={currentSessionIsEmpty ? 'Send a message before starting a new session' : undefined}
+                            onClick={workspaceHasCurrentEmptySession(workspace) ? undefined : (e) => handleNewSessionInWorkspace(workspace.path, e)}
+                            disabled={workspaceHasCurrentEmptySession(workspace)}
+                            title={workspaceHasCurrentEmptySession(workspace) ? 'Send a message before starting a new session' : undefined}
                             className={`w-full px-4 py-3 rounded-lg text-left border-2 border-dashed flex items-center gap-2 ${
-                              currentSessionIsEmpty
+                              workspaceHasCurrentEmptySession(workspace)
                                 ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed'
                                 : 'cursor-pointer bg-amber-50/50 hover:bg-amber-50 border-amber-300 hover:border-amber-400 text-amber-700'
                             }`}
