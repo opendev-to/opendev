@@ -34,12 +34,12 @@ Each workflow is a modular slot you can bind to any LLM of your choice: **Normal
 
 OpenDev is written in **Rust** — it starts in **3.3 ms**, uses just **9.5 MB of memory**, and ships as a single **18 MB binary**. That makes it the **fastest and lightest coding agent** available today — up to **168x faster startup** and **30x less memory** than alternatives.
 
-| Agent | Startup | Peak Memory | Install Size | Language |
-|-------|--------:|------------:|-------------:|----------|
-| **OpenDev** 0.1.4 | **3.3 ms** | **9.5 MB** | **18 MB** | Rust |
-| Codex 0.116.0 | 36.7 ms (11x) | 43.7 MB (4.6x) | 116 MB | Node.js |
-| Claude Code 2.1.87 | 96.6 ms (29x) | 215 MB (22.6x) | 188 MB | Native |
-| OpenCode 1.2.27 | 548.2 ms (168x) | 286 MB (30x) | 90 MB | Go |
+| Agent | Startup | Peak Memory | Install Size |
+|-------|--------:|------------:|-------------:|
+| **OpenDev** 0.1.4 | **3.3 ms** | **9.5 MB** | **18 MB** |
+| Codex 0.116.0 | 36.7 ms (11x) | 43.7 MB (4.6x) | 116 MB |
+| Claude Code 2.1.87 | 96.6 ms (29x) | 215 MB (22.6x) | 188 MB |
+| OpenCode 1.2.27 | 548.2 ms (168x) | 286 MB (30x) | 90 MB |
 
 <sub>Measured on macOS ARM64 (Apple Silicon). Startup via <code>--help</code> with <a href="https://github.com/sharkdp/hyperfine">hyperfine</a> (20 runs). Memory via <code>/usr/bin/time -l</code> (avg of 5 runs). Multipliers show how much slower/larger vs OpenDev.</sub>
 
