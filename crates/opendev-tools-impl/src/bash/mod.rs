@@ -49,7 +49,6 @@ impl BashTool {
         *id += 1;
         current
     }
-
 }
 
 impl Default for BashTool {
@@ -183,8 +182,8 @@ impl BaseTool for BashTool {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::*;
     use super::helpers::kill_process_group;
+    use super::*;
 
     fn make_args(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
         pairs

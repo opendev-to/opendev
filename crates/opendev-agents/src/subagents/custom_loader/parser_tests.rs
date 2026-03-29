@@ -57,8 +57,7 @@ fn test_parse_permission_blanket_action() {
 
 #[test]
 fn test_parse_permission_with_patterns() {
-    let yaml =
-        "permission:\n  bash:\n    \"*\": ask\n    \"git *\": allow\n    \"rm -rf *\": deny";
+    let yaml = "permission:\n  bash:\n    \"*\": ask\n    \"git *\": allow\n    \"rm -rf *\": deny";
     let meta = parse_simple_yaml(yaml);
     assert_eq!(meta.permission.len(), 1);
     if let PermissionRule::Patterns(ref p) = meta.permission["bash"] {

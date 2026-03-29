@@ -80,7 +80,8 @@ fn test_parse_simple_yaml_single_quotes() {
 
 #[test]
 fn test_parse_frontmatter_with_model() {
-    let content = "---\nname: fast-review\ndescription: Quick review\nmodel: gpt-4o-mini\n---\n\n# Review\n";
+    let content =
+        "---\nname: fast-review\ndescription: Quick review\nmodel: gpt-4o-mini\n---\n\n# Review\n";
     let meta = parse_frontmatter_str(content).unwrap();
     assert_eq!(meta.name, "fast-review");
     assert_eq!(meta.model.as_deref(), Some("gpt-4o-mini"));
@@ -88,8 +89,7 @@ fn test_parse_frontmatter_with_model() {
 
 #[test]
 fn test_parse_frontmatter_with_agent() {
-    let content =
-        "---\nname: deploy\ndescription: Deploy skill\nagent: devops\n---\n\n# Deploy\n";
+    let content = "---\nname: deploy\ndescription: Deploy skill\nagent: devops\n---\n\n# Deploy\n";
     let meta = parse_frontmatter_str(content).unwrap();
     assert_eq!(meta.name, "deploy");
     assert_eq!(meta.agent.as_deref(), Some("devops"));

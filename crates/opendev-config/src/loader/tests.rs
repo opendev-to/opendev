@@ -200,10 +200,7 @@ fn test_env_override_model_provider() {
 #[test]
 fn test_env_override_model() {
     let mut config = AppConfig::default();
-    ConfigLoader::apply_env_overrides_with(
-        &mut config,
-        mock_env(&[("OPENDEV_MODEL", "gpt-4o")]),
-    );
+    ConfigLoader::apply_env_overrides_with(&mut config, mock_env(&[("OPENDEV_MODEL", "gpt-4o")]));
     assert_eq!(config.model, "gpt-4o");
 }
 
@@ -254,10 +251,7 @@ fn test_env_override_verbose() {
     let mut config = AppConfig::default();
     assert!(!config.verbose);
 
-    ConfigLoader::apply_env_overrides_with(
-        &mut config,
-        mock_env(&[("OPENDEV_VERBOSE", "true")]),
-    );
+    ConfigLoader::apply_env_overrides_with(&mut config, mock_env(&[("OPENDEV_VERBOSE", "true")]));
     assert!(config.verbose);
 
     config.verbose = false;
@@ -265,10 +259,7 @@ fn test_env_override_verbose() {
     assert!(config.verbose);
 
     config.verbose = true;
-    ConfigLoader::apply_env_overrides_with(
-        &mut config,
-        mock_env(&[("OPENDEV_VERBOSE", "false")]),
-    );
+    ConfigLoader::apply_env_overrides_with(&mut config, mock_env(&[("OPENDEV_VERBOSE", "false")]));
     assert!(!config.verbose);
 }
 

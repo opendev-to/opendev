@@ -361,7 +361,9 @@ impl App {
                 query,
                 session_id,
                 interrupt_token,
-            } => self.handle_set_background_agent_token(task_id, query, session_id, interrupt_token),
+            } => {
+                self.handle_set_background_agent_token(task_id, query, session_id, interrupt_token)
+            }
 
             // Undo/Redo/Share events
             AppEvent::SnapshotTaken { hash } => self.handle_snapshot_taken(hash),

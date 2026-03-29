@@ -71,10 +71,9 @@ impl App {
                 self.state
                     .bg_agent_manager
                     .decrement_pending_spawn(&bg_task_id);
-                self.state.bg_agent_manager.push_activity(
-                    &bg_task_id,
-                    format!("\u{25b8} {subagent_name}: {task}"),
-                );
+                self.state
+                    .bg_agent_manager
+                    .push_activity(&bg_task_id, format!("\u{25b8} {subagent_name}: {task}"));
                 // Create display entry so task watcher shows tool-level detail
                 let mut sa = crate::widgets::nested_tool::SubagentDisplayState::new(
                     subagent_id.clone(),
@@ -107,9 +106,7 @@ impl App {
             let is_bg = subagent.backgrounded;
             subagent.add_tool_call(tool_name.clone(), tool_id, args);
             // Also update bg_agent_manager for backgrounded subagents
-            if is_bg
-                && let Some(bg_task_id) =
-                    self.state.bg_subagent_map.get(&subagent_id).cloned()
+            if is_bg && let Some(bg_task_id) = self.state.bg_subagent_map.get(&subagent_id).cloned()
             {
                 let count = self
                     .state
@@ -121,9 +118,7 @@ impl App {
                     .bg_agent_manager
                     .update_progress(&bg_task_id, tool_name, count);
             }
-        } else if let Some(bg_task_id) =
-            self.state.bg_subagent_map.get(&subagent_id).cloned()
-        {
+        } else if let Some(bg_task_id) = self.state.bg_subagent_map.get(&subagent_id).cloned() {
             let count = self
                 .state
                 .bg_agent_manager
@@ -152,18 +147,14 @@ impl App {
         {
             let is_bg = subagent.backgrounded;
             subagent.complete_tool_call(&tool_id, success);
-            if is_bg
-                && let Some(bg_task_id) =
-                    self.state.bg_subagent_map.get(&subagent_id).cloned()
+            if is_bg && let Some(bg_task_id) = self.state.bg_subagent_map.get(&subagent_id).cloned()
             {
                 let icon = if success { "\u{2713}" } else { "\u{2717}" };
                 self.state
                     .bg_agent_manager
                     .push_activity(&bg_task_id, format!("  {icon} {tool_name}"));
             }
-        } else if let Some(bg_task_id) =
-            self.state.bg_subagent_map.get(&subagent_id).cloned()
-        {
+        } else if let Some(bg_task_id) = self.state.bg_subagent_map.get(&subagent_id).cloned() {
             let icon = if success { "\u{2713}" } else { "\u{2717}" };
             self.state
                 .bg_agent_manager
@@ -193,9 +184,7 @@ impl App {
                 tool_call_count,
                 shallow_warning,
             );
-            if is_bg
-                && let Some(bg_task_id) =
-                    self.state.bg_subagent_map.get(&subagent_id).cloned()
+            if is_bg && let Some(bg_task_id) = self.state.bg_subagent_map.get(&subagent_id).cloned()
             {
                 let status = if success { "completed" } else { "failed" };
                 self.state.bg_agent_manager.push_activity(
@@ -203,9 +192,7 @@ impl App {
                     format!("  Subagent {status} · {tool_call_count} tools"),
                 );
             }
-        } else if let Some(bg_task_id) =
-            self.state.bg_subagent_map.get(&subagent_id).cloned()
-        {
+        } else if let Some(bg_task_id) = self.state.bg_subagent_map.get(&subagent_id).cloned() {
             let status = if success { "completed" } else { "failed" };
             self.state.bg_agent_manager.push_activity(
                 &bg_task_id,
@@ -226,8 +213,7 @@ impl App {
                 .filter(|t| !t.hidden)
                 .count();
         if total_visible > 0 {
-            self.state.task_watcher_focus =
-                self.state.task_watcher_focus.min(total_visible - 1);
+            self.state.task_watcher_focus = self.state.task_watcher_focus.min(total_visible - 1);
         } else {
             self.state.task_watcher_focus = 0;
         }

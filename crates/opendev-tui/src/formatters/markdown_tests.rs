@@ -121,8 +121,7 @@ fn test_markdown_link() {
 #[test]
 fn test_markdown_link_url_as_text() {
     // Common pattern: [http://url](http://url)
-    let spans =
-        parse_inline_spans("running at [http://localhost:5173/](http://localhost:5173/).");
+    let spans = parse_inline_spans("running at [http://localhost:5173/](http://localhost:5173/).");
     let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
     assert_eq!(text, "running at http://localhost:5173/.");
 }

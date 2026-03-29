@@ -10,12 +10,12 @@ use tokio::time::{Duration, Instant};
 
 use opendev_tools_core::ToolResult;
 
+use super::BashTool;
 use super::helpers::{
-    command_failure_suffix, kill_process_group, prepare_command, truncate_output, IDLE_TIMEOUT,
-    MAX_OUTPUT_CHARS, MAX_TIMEOUT,
+    IDLE_TIMEOUT, MAX_OUTPUT_CHARS, MAX_TIMEOUT, command_failure_suffix, kill_process_group,
+    prepare_command, truncate_output,
 };
 use super::patterns::filtered_env;
-use super::BashTool;
 
 impl BashTool {
     pub(super) async fn run_foreground(

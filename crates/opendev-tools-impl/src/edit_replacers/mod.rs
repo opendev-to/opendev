@@ -94,4 +94,3 @@ pub fn find_occurrence_positions(haystack: &str, needle: &str) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests;
-

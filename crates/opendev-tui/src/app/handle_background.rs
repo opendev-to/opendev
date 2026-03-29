@@ -36,8 +36,7 @@ impl App {
         self.state.active_subagents.retain(|s| s.finished);
         self.state.task_progress = None;
 
-        self.state.backgrounded_task_info =
-            Some((task_id.clone(), std::time::Instant::now()));
+        self.state.backgrounded_task_info = Some((task_id.clone(), std::time::Instant::now()));
         self.state.dirty = true;
         self.state.message_generation += 1;
     }
@@ -86,8 +85,7 @@ impl App {
             total_tools,
             cost_usd,
         );
-        self.state.last_task_completion =
-            Some((task_id.clone(), std::time::Instant::now()));
+        self.state.last_task_completion = Some((task_id.clone(), std::time::Instant::now()));
 
         // When a bg task was killed, mark all its child subagents as killed too
         if was_killed {
@@ -125,9 +123,9 @@ impl App {
             self.state.bg_subagent_map.remove(sa_id);
         }
         // Remove finished backgrounded subagents belonging to this completed task
-        self.state.active_subagents.retain(|s| {
-            !(s.backgrounded && s.finished && child_sa_ids.contains(&s.subagent_id))
-        });
+        self.state
+            .active_subagents
+            .retain(|s| !(s.backgrounded && s.finished && child_sa_ids.contains(&s.subagent_id)));
 
         // Clear backgrounded_task_info if it matches this task
         if let Some((ref info_id, _)) = self.state.backgrounded_task_info

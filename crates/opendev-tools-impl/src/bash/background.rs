@@ -10,9 +10,9 @@ use tokio::time::{Duration, Instant};
 
 use opendev_tools_core::ToolResult;
 
-use super::helpers::{command_failure_suffix, prepare_command, BackgroundProcess};
-use super::patterns::filtered_env;
 use super::BashTool;
+use super::helpers::{BackgroundProcess, command_failure_suffix, prepare_command};
+use super::patterns::filtered_env;
 
 impl BashTool {
     pub(super) async fn run_background(

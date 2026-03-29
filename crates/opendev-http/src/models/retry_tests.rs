@@ -190,8 +190,7 @@ fn test_classify_body_overloaded_no_status() {
 
 #[test]
 fn test_extract_openai_error() {
-    let body =
-        serde_json::json!({"error": {"message": "Invalid API key", "type": "auth_error"}});
+    let body = serde_json::json!({"error": {"message": "Invalid API key", "type": "auth_error"}});
     assert_eq!(
         extract_error_message(&body),
         Some("Invalid API key".to_string())

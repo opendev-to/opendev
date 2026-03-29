@@ -538,9 +538,7 @@ impl App {
                 self.state.dirty = true;
             } else {
                 // Start fading the welcome panel on first user message
-                if !self.state.welcome_panel.fade_complete
-                    && !self.state.welcome_panel.is_fading
-                {
+                if !self.state.welcome_panel.fade_complete && !self.state.welcome_panel.is_fading {
                     self.state.welcome_panel.start_fade();
                 }
 
@@ -904,17 +902,31 @@ impl App {
         }
 
         // Modal delegates — consume all input when active
-        if self.handle_key_model_picker(key) { return; }
-        if self.handle_key_task_watcher(key) { return; }
-        if self.handle_key_ask_user(key) { return; }
-        if self.handle_key_plan_approval(key) { return; }
-        if self.handle_key_tool_approval(key) { return; }
+        if self.handle_key_model_picker(key) {
+            return;
+        }
+        if self.handle_key_task_watcher(key) {
+            return;
+        }
+        if self.handle_key_ask_user(key) {
+            return;
+        }
+        if self.handle_key_plan_approval(key) {
+            return;
+        }
+        if self.handle_key_tool_approval(key) {
+            return;
+        }
 
         // Leader key
-        if self.handle_key_leader(key) { return; }
+        if self.handle_key_leader(key) {
+            return;
+        }
 
         // Debug panel
-        if self.handle_key_debug_panel(key) { return; }
+        if self.handle_key_debug_panel(key) {
+            return;
+        }
 
         // Main input handling
         self.handle_key_input(key);

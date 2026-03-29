@@ -197,7 +197,8 @@ fn test_extract_file_path_with_file_path() {
 
 #[test]
 fn test_extract_file_path_with_file() {
-    let tc = serde_json::json!({"function": {"name": "edit", "arguments": "{\"file\": \"lib.rs\"}"}});
+    let tc =
+        serde_json::json!({"function": {"name": "edit", "arguments": "{\"file\": \"lib.rs\"}"}});
     assert_eq!(extract_file_path(&tc), Some("lib.rs".to_string()));
 }
 

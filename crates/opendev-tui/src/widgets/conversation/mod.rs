@@ -652,6 +652,5 @@ impl Widget for ConversationWidget<'_> {
     }
 }
 
-
 #[cfg(test)]
 mod tests;

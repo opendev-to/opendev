@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use super::event_dispatch::map_todo_items;
-use super::{App, AutonomyLevel, DisplayMessage, DisplayRole, DisplayToolCall, ToolExecution, ToolState};
+use super::{
+    App, AutonomyLevel, DisplayMessage, DisplayRole, DisplayToolCall, ToolExecution, ToolState,
+};
 
 impl App {
     pub(super) fn handle_tool_started(
@@ -104,9 +106,8 @@ impl App {
             let answer = output.strip_prefix("User answered: ").unwrap_or(&output);
             (vec![format!("· {question} → {answer}")], false)
         } else if is_todo_tool {
-            let summary = crate::formatters::todo_formatter::summarize_todo_result(
-                &tool_name, &output,
-            );
+            let summary =
+                crate::formatters::todo_formatter::summarize_todo_result(&tool_name, &output);
             (vec![summary], false)
         } else if tool_name == "present_plan" {
             // Plan content is already displayed via PlanApprovalRequested → DisplayRole::Plan.
@@ -163,8 +164,7 @@ impl App {
                 .iter()
                 .position(|s| s.parent_tool_id.as_deref() == Some(&tool_id))
                 .or_else(|| {
-                    let task_text =
-                        arguments.get("task").and_then(|v| v.as_str()).unwrap_or("");
+                    let task_text = arguments.get("task").and_then(|v| v.as_str()).unwrap_or("");
                     self.state
                         .active_subagents
                         .iter()

@@ -40,9 +40,9 @@ fn test_extra_headers_no_caching() {
     assert!(headers.iter().any(|(k, _)| k == "anthropic-version"));
     // Still has beta header for thinking
     assert!(
-        headers.iter().any(
-            |(k, v)| k == "anthropic-beta" && v.contains("interleaved-thinking-2025-05-14")
-        )
+        headers
+            .iter()
+            .any(|(k, v)| k == "anthropic-beta" && v.contains("interleaved-thinking-2025-05-14"))
     );
 }
 

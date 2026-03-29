@@ -260,8 +260,7 @@ fn test_empty_old_content() {
 
 #[test]
 fn test_multiline_exact() {
-    let original =
-        "fn main() {\n    let x = 1;\n    let y = 2;\n    println!(\"{} {}\", x, y);\n}";
+    let original = "fn main() {\n    let x = 1;\n    let y = 2;\n    println!(\"{} {}\", x, y);\n}";
     let old = "    let x = 1;\n    let y = 2;";
     let result = find_match(original, old).unwrap();
     assert_eq!(result.pass_name, "simple");

@@ -9,8 +9,8 @@
 
 // Re-export everything that was previously public from this module.
 pub use super::tool_call_format::{
-    GREEN_GRADIENT, format_tool_call_display, format_tool_call_parts,
-    format_tool_call_parts_short, format_tool_call_parts_with_wd,
+    GREEN_GRADIENT, format_tool_call_display, format_tool_call_parts, format_tool_call_parts_short,
+    format_tool_call_parts_with_wd,
 };
 pub use super::tool_categories::{
     ResultFormat, ToolCategory, ToolDisplayEntry, categorize_tool, tool_color, tool_display_parts,

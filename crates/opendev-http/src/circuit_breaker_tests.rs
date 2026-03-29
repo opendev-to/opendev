@@ -164,8 +164,7 @@ fn test_circuit_breaker_from_config() {
 
 #[test]
 fn test_circuit_breaker_config_from_json() {
-    let json =
-        r#"{"failure_threshold": 7, "reset_timeout_secs": 45, "probe_interval_secs": 10}"#;
+    let json = r#"{"failure_threshold": 7, "reset_timeout_secs": 45, "probe_interval_secs": 10}"#;
     let config: CircuitBreakerConfig = serde_json::from_str(json).unwrap();
     assert_eq!(config.failure_threshold, 7);
     assert_eq!(config.reset_timeout_secs, 45);

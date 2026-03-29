@@ -72,8 +72,7 @@ fn test_enhance_query_image_blocks() {
 #[test]
 fn test_prepare_messages_basic() {
     let (_dir, enh) = tmp_enhancer();
-    let msgs =
-        enh.prepare_messages("hello", "hello", "You are helpful.", None, &[], false, None);
+    let msgs = enh.prepare_messages("hello", "hello", "You are helpful.", None, &[], false, None);
     assert_eq!(msgs.len(), 1); // just system message
     assert_eq!(msgs[0]["role"], "system");
     assert_eq!(msgs[0]["content"], "You are helpful.");

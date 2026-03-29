@@ -497,7 +497,8 @@ fn test_pull_url_skills_simulated_cache() {
     std::fs::write(
         skill_dir.join("SKILL.md"),
         "---\nname: my-skill\ndescription: Test skill from URL\n---\n\n# My Skill\nContent here.",
-    ).unwrap();
+    )
+    .unwrap();
 
     // Use the directory as if it were a cached URL skill
     let mut loader = SkillLoader::new(vec![]);

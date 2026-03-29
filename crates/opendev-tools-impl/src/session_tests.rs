@@ -24,12 +24,7 @@ fn make_message(role_str: &str, content: &str) -> ChatMessage {
 }
 
 /// Helper: create a SessionManager in a temp dir and add a session with messages.
-fn create_test_session(
-    dir: &std::path::Path,
-    id: &str,
-    title: &str,
-    messages: Vec<(&str, &str)>,
-) {
+fn create_test_session(dir: &std::path::Path, id: &str, title: &str, messages: Vec<(&str, &str)>) {
     let mut manager = SessionManager::new(dir.to_path_buf()).unwrap();
     let session = manager.create_session();
     // Override the auto-generated ID

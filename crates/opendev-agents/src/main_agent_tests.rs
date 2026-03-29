@@ -183,8 +183,7 @@ fn test_require_http_client_err() {
 #[test]
 fn test_require_http_client_ok() {
     use reqwest::header::HeaderMap;
-    let raw =
-        opendev_http::HttpClient::new("https://example.com", HeaderMap::new(), None).unwrap();
+    let raw = opendev_http::HttpClient::new("https://example.com", HeaderMap::new(), None).unwrap();
     let http = AdaptedClient::new(raw);
     let agent = make_agent().with_http_client(Arc::new(http));
     assert!(agent.require_http_client().is_ok());

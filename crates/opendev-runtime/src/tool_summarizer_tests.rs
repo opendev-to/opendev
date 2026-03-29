@@ -52,8 +52,7 @@ fn test_search_no_matches() {
 
 #[test]
 fn test_search_with_matches() {
-    let output =
-        "src/main.rs:10: fn main()\nsrc/lib.rs:5: pub mod config\nsrc/app.rs:1: use std";
+    let output = "src/main.rs:10: fn main()\nsrc/lib.rs:5: pub mod config\nsrc/app.rs:1: use std";
     let summary = summarize_tool_result("search", Some(output), None);
     assert_eq!(summary, "Search completed (3 matches found)");
 }
@@ -165,9 +164,8 @@ fn test_background_result_no_subagent_tools() {
 fn test_background_result_budget_enforcement() {
     let content = "Short.";
     let big_output = "x".repeat(20000);
-    let messages = vec![
-        serde_json::json!({"role": "tool", "name": "spawn_subagent", "content": big_output}),
-    ];
+    let messages =
+        vec![serde_json::json!({"role": "tool", "name": "spawn_subagent", "content": big_output})];
     let result = build_background_result(content, &messages, 5000);
     assert!(result.len() <= 5100); // 5000 + "... [truncated]" suffix
     assert!(result.contains("... [truncated]"));

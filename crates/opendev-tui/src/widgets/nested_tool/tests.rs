@@ -9,8 +9,7 @@ fn test_empty_widget() {
 
 #[test]
 fn test_widget_with_active_subagent() {
-    let mut state =
-        SubagentDisplayState::new("id-1".into(), "Explore".into(), "Find TODOs".into());
+    let mut state = SubagentDisplayState::new("id-1".into(), "Explore".into(), "Find TODOs".into());
     state.add_tool_call("read_file".into(), "tc-1".into(), HashMap::new());
     let subagents = vec![state];
     let _widget = NestedToolWidget::new(&subagents);

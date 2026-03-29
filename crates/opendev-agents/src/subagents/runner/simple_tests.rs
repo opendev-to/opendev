@@ -109,8 +109,7 @@ fn test_build_exploration_observation() {
         serde_json::json!({"role": "tool", "tool_call_id": "4", "content": "matches"}),
     ];
 
-    let obs =
-        SimpleReactRunner::build_exploration_observation(&messages, "Explore the codebase");
+    let obs = SimpleReactRunner::build_exploration_observation(&messages, "Explore the codebase");
     assert!(obs.contains("**Original task**: Explore the codebase"));
     assert!(obs.contains("4 tool calls"));
     assert!(obs.contains("Files read (2)"));

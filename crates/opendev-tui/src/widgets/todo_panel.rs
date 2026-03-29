@@ -269,7 +269,6 @@ impl Widget for TodoPanelWidget<'_> {
     }
 }
 
-
 #[cfg(test)]
 #[path = "todo_panel_tests.rs"]
 mod tests;

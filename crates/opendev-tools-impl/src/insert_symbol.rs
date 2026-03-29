@@ -407,4 +407,3 @@ impl BaseTool for InsertAfterSymbolTool {
 #[cfg(test)]
 #[path = "insert_symbol_tests.rs"]
 mod tests;
-

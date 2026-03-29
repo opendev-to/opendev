@@ -526,8 +526,7 @@ fn test_config_override_multiple_agents() {
 fn test_resolve_default_agent_configured() {
     let mut mgr = SubagentManager::new();
     mgr.register(
-        SubAgentSpec::new("build", "Build", "prompt")
-            .with_mode(crate::subagents::AgentMode::All),
+        SubAgentSpec::new("build", "Build", "prompt").with_mode(crate::subagents::AgentMode::All),
     );
 
     let result = mgr.resolve_default_agent(Some("build"));
@@ -538,8 +537,7 @@ fn test_resolve_default_agent_configured() {
 fn test_resolve_default_agent_not_found_falls_back() {
     let mut mgr = SubagentManager::new();
     mgr.register(
-        SubAgentSpec::new("build", "Build", "prompt")
-            .with_mode(crate::subagents::AgentMode::All),
+        SubAgentSpec::new("build", "Build", "prompt").with_mode(crate::subagents::AgentMode::All),
     );
 
     let result = mgr.resolve_default_agent(Some("nonexistent"));
@@ -609,8 +607,7 @@ fn test_resolve_default_agent_subagent_only_falls_back() {
 fn test_resolve_default_agent_none_configured() {
     let mut mgr = SubagentManager::new();
     mgr.register(
-        SubAgentSpec::new("build", "Build", "prompt")
-            .with_mode(crate::subagents::AgentMode::All),
+        SubAgentSpec::new("build", "Build", "prompt").with_mode(crate::subagents::AgentMode::All),
     );
 
     let result = mgr.resolve_default_agent(None);

@@ -59,12 +59,8 @@ fn test_no_rule_no_truncation() {
 fn test_mcp_fallback() {
     let sanitizer = ToolResultSanitizer::new();
     let long_output = "x".repeat(10000);
-    let result = sanitizer.sanitize_with_mcp_fallback(
-        "mcp__github__list",
-        true,
-        Some(&long_output),
-        None,
-    );
+    let result =
+        sanitizer.sanitize_with_mcp_fallback("mcp__github__list", true, Some(&long_output), None);
     assert!(result.was_truncated);
 }
 

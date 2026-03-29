@@ -7,7 +7,9 @@ use tempfile::TempDir;
 use opendev_tools_core::{BaseTool, ToolContext};
 use types::{AstGrepArgs, GrepArgs, OutputMode};
 
-fn make_args(pairs: &[(&str, serde_json::Value)]) -> std::collections::HashMap<String, serde_json::Value> {
+fn make_args(
+    pairs: &[(&str, serde_json::Value)],
+) -> std::collections::HashMap<String, serde_json::Value> {
     pairs
         .iter()
         .map(|(k, v)| (k.to_string(), v.clone()))
@@ -18,8 +20,7 @@ fn make_args(pairs: &[(&str, serde_json::Value)]) -> std::collections::HashMap<S
 
 #[test]
 fn test_build_rg_command_includes_ignore_file() {
-    let args =
-        GrepArgs::from_map(&make_args(&[("pattern", serde_json::json!("hello"))])).unwrap();
+    let args = GrepArgs::from_map(&make_args(&[("pattern", serde_json::json!("hello"))])).unwrap();
     let cmd = GrepTool::build_rg_command(&args, Path::new("/tmp"));
     let cmd_args: Vec<_> = cmd
         .as_std()
@@ -234,8 +235,7 @@ fn test_pagination_offset_beyond_end() {
 
 #[test]
 fn test_build_rg_command_basic() {
-    let args =
-        GrepArgs::from_map(&make_args(&[("pattern", serde_json::json!("hello"))])).unwrap();
+    let args = GrepArgs::from_map(&make_args(&[("pattern", serde_json::json!("hello"))])).unwrap();
     let cmd = GrepTool::build_rg_command(&args, Path::new("/tmp"));
     let prog = cmd.as_std().get_program();
     assert_eq!(prog, "rg");

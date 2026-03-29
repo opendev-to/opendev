@@ -223,7 +223,8 @@ async fn test_invoke_skill_with_agent_override() {
     fs::write(
         skill_dir.join("deploy.md"),
         "---\nname: deploy\ndescription: Deploy\nagent: devops\n---\n\n# Deploy\nDeploy steps.\n",
-    ).unwrap();
+    )
+    .unwrap();
     let loader = create_test_loader(Some(&skill_dir));
     let tool = InvokeSkillTool::new(loader);
     let ctx = ToolContext::new("/tmp/test");
