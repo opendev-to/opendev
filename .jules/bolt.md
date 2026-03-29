@@ -1,0 +1,3 @@
+## 2025-01-20 - [Inline Object in React.memo Child Props]
+**Learning:** Passing inline objects like `components={{...}}` to `ReactMarkdown` within a frequently updated `React.memo` component (`MessageItem`) causes unnecessary object recreation on every render. Because `MessageItem` is rendered many times in lists, this impacts performance. `ReactMarkdown` uses this object to determine rendering components, and if it changes referentially, it could force re-evaluations or unnecessary sub-tree re-renders within the Markdown tree.
+**Action:** Extract static configuration objects (like `components` for `ReactMarkdown`) outside the functional component, so their references remain stable across renders.

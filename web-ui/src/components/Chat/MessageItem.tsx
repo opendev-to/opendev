@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import { ToolCallMessage } from './ToolCallMessage';
 import { ThinkingBlock } from './ThinkingBlock';
 
+import type { Components } from 'react-markdown';
+
 interface MessageItemProps {
   message: any; // Using any for now to simplify, ideally should import ChatMessage from types
   index: number;
@@ -12,6 +14,47 @@ interface MessageItemProps {
   isLoading: boolean;
   isLastMessage: boolean;
 }
+
+// ⚡ Bolt: Extract ReactMarkdown components to avoid recreating the object on every render.
+// This prevents unnecessary re-renders of the markdown tree within this heavily-rendered component.
+const markdownComponents: Components = {
+  pre({ children }) {
+    return (
+      <pre className="rounded-lg p-3 overflow-x-auto my-2 bg-bg-300 border border-border-300/15">
+        {children}
+      </pre>
+    );
+  },
+  code({ className, children, ...props }) {
+    const language = /language-(\w+)/.exec(className || '')?.[1];
+    if (language) {
+      return <code className="text-text-000 text-sm font-mono" data-language={language} {...props}>{children}</code>;
+    }
+    return (
+      <code className="text-sm px-1.5 py-0.5 rounded font-mono bg-bg-200 text-text-100 border border-border-300/20" {...props}>
+        {children}
+      </code>
+    );
+  },
+  p({ children }) {
+    return <p className="mb-2 last:mb-0 text-text-200 text-sm">{children}</p>;
+  },
+  ul({ children }) {
+    return <ul className="list-disc pl-5 space-y-1 mb-2 text-text-200 text-sm">{children}</ul>;
+  },
+  ol({ children }) {
+    return <ol className="list-decimal pl-5 space-y-1 mb-2 text-text-200 text-sm">{children}</ol>;
+  },
+  li({ children }) {
+    return <li className="text-text-200 text-sm">{children}</li>;
+  },
+  strong({ children }) {
+    return <strong className="font-semibold text-text-000 text-sm">{children}</strong>;
+  },
+  a({ children, href }) {
+    return <a href={href} className="link-underline text-accent-secondary-100 hover:text-accent-secondary-100/80 text-sm" target="_blank" rel="noopener noreferrer">{children}</a>;
+  },
+};
 
 export const MessageItem = React.memo(function MessageItem({
   message,
@@ -65,46 +108,7 @@ export const MessageItem = React.memo(function MessageItem({
           <div className="flex items-start gap-3">
             <span className="text-text-400 font-mono text-sm font-medium flex-shrink-0">&#10095;</span>
             <div className="flex-1 prose prose-sm max-w-none code-hover">
-              <ReactMarkdown
-                components={{
-                  pre({ children }) {
-                    return (
-                      <pre className="rounded-lg p-3 overflow-x-auto my-2 bg-bg-300 border border-border-300/15">
-                        {children}
-                      </pre>
-                    );
-                  },
-                  code({ className, children, ...props }) {
-                    const language = /language-(\w+)/.exec(className || '')?.[1];
-                    if (language) {
-                      return <code className="text-text-000 text-sm font-mono" data-language={language} {...props}>{children}</code>;
-                    }
-                    return (
-                      <code className="text-sm px-1.5 py-0.5 rounded font-mono bg-bg-200 text-text-100 border border-border-300/20" {...props}>
-                        {children}
-                      </code>
-                    );
-                  },
-                  p({ children }) {
-                    return <p className="mb-2 last:mb-0 text-text-200 text-sm">{children}</p>;
-                  },
-                  ul({ children }) {
-                    return <ul className="list-disc pl-5 space-y-1 mb-2 text-text-200 text-sm">{children}</ul>;
-                  },
-                  ol({ children }) {
-                    return <ol className="list-decimal pl-5 space-y-1 mb-2 text-text-200 text-sm">{children}</ol>;
-                  },
-                  li({ children }) {
-                    return <li className="text-text-200 text-sm">{children}</li>;
-                  },
-                  strong({ children }) {
-                    return <strong className="font-semibold text-text-000 text-sm">{children}</strong>;
-                  },
-                  a({ children, href }) {
-                    return <a href={href} className="link-underline text-accent-secondary-100 hover:text-accent-secondary-100/80 text-sm" target="_blank" rel="noopener noreferrer">{children}</a>;
-                  },
-                }}
-              >
+              <ReactMarkdown components={markdownComponents}>
                 {message.content}
               </ReactMarkdown>
             </div>
