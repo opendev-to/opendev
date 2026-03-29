@@ -102,6 +102,53 @@ pub enum Commands {
         #[command(subcommand)]
         action: SessionAction,
     },
+
+    /// Manage channel integrations (Telegram, etc.).
+    Channel {
+        #[command(subcommand)]
+        action: ChannelAction,
+    },
+
+    /// Start a headless remote session (Telegram as primary interface).
+    Remote {
+        /// Resume the most recent session instead of starting a new one.
+        #[arg(short = 'c', long = "continue")]
+        continue_session: bool,
+
+        /// Resume a specific session by ID.
+        #[arg(short = 'r', long, value_name = "SESSION_ID")]
+        resume: Option<String>,
+    },
+}
+
+/// Channel subcommands.
+#[derive(Subcommand, Debug)]
+pub enum ChannelAction {
+    /// Add Telegram bot (prompts for token if not provided).
+    Add {
+        /// Bot token (optional — will prompt interactively if not provided).
+        token: Option<String>,
+    },
+    /// Remove Telegram bot configuration.
+    Remove,
+    /// Show channel status and paired users.
+    Status,
+    /// Run Telegram bot (background by default, --foreground to keep in terminal).
+    Serve {
+        /// Run in foreground instead of background.
+        #[arg(long, short)]
+        foreground: bool,
+    },
+    /// Approve a Telegram user by ID.
+    Pair {
+        /// Telegram user ID to approve.
+        user_id: String,
+    },
+    /// Revoke a Telegram user's access.
+    Unpair {
+        /// Telegram user ID to remove.
+        user_id: String,
+    },
 }
 
 /// Config subcommands.

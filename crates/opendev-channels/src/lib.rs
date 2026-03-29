@@ -11,6 +11,7 @@
 
 pub mod error;
 pub mod router;
+pub mod telegram;
 
 pub use error::{ChannelError, ChannelResult};
 pub use router::{

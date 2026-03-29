@@ -7,6 +7,7 @@
 mod cli;
 mod commands;
 mod helpers;
+mod remote_runner;
 mod runners;
 mod runtime;
 mod setup;
@@ -59,6 +60,15 @@ async fn main() {
         }
         Some(Commands::Session { action }) => {
             commands::handle_session(action, &working_dir);
+        }
+        Some(Commands::Channel { action }) => {
+            commands::handle_channel(action, &working_dir).await;
+        }
+        Some(Commands::Remote {
+            continue_session,
+            resume,
+        }) => {
+            commands::handle_remote(&working_dir, continue_session, resume.as_deref()).await;
         }
         None => {
             // Replay mode

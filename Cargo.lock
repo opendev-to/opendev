@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-agents"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2266,22 +2266,26 @@ dependencies = [
 
 [[package]]
 name = "opendev-channels"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "chrono",
+ "libc",
  "opendev-models",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "opendev-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2289,6 +2293,7 @@ dependencies = [
  "crossterm",
  "dirs-next",
  "opendev-agents",
+ "opendev-channels",
  "opendev-config",
  "opendev-context",
  "opendev-history",
@@ -2313,7 +2318,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-config"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -2329,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-context"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "dirs-next",
@@ -2346,7 +2351,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-docker"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "dirs-next",
  "regex",
@@ -2361,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-history"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -2380,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-hooks"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "regex",
  "serde",
@@ -2393,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-http"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2416,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-mcp"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "opendev-config",
@@ -2433,7 +2438,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-memory"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "opendev-models",
@@ -2448,7 +2453,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-models"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "regex",
@@ -2464,7 +2469,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-plugins"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "dirs-next",
@@ -2481,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-repl"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "base64",
@@ -2507,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-runtime"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "dirs-next",
@@ -2528,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-tools-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
@@ -2546,7 +2551,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-tools-impl"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "base64",
@@ -2580,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-tools-lsp"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2600,7 +2605,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-tools-symbol"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "opendev-config",
@@ -2618,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-tui"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arboard",
  "chrono",
@@ -2647,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "opendev-web"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "argon2",
  "async-trait",

@@ -81,6 +81,19 @@ pub trait ChannelAdapter: Send + Sync {
 #[async_trait]
 pub trait AgentExecutor: Send + Sync {
     async fn execute(&self, session_id: &str, message_text: &str) -> ChannelResult<String>;
+
+    /// Execute with streaming — sends text chunks through the provided channel
+    /// as they arrive from the LLM. Returns the final complete response.
+    ///
+    /// Default implementation falls back to non-streaming `execute`.
+    async fn execute_streaming(
+        &self,
+        session_id: &str,
+        message_text: &str,
+        _chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> ChannelResult<String> {
+        self.execute(session_id, message_text).await
+    }
 }
 
 /// Routes inbound messages from channels to agent sessions.
@@ -213,6 +226,60 @@ impl MessageRouter {
         }
 
         Ok(())
+    }
+
+    /// Route an inbound message with streaming support.
+    ///
+    /// Like `handle_inbound` but streams text chunks through `chunk_tx` and
+    /// returns the final response text. The caller is responsible for delivering
+    /// the response to the channel (e.g., by editing a Telegram message).
+    pub async fn handle_inbound_streaming(
+        &self,
+        message: InboundMessage,
+        chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> ChannelResult<String> {
+        info!(
+            "Streaming route from {}:{} (thread={:?})",
+            message.channel, message.user_id, message.thread_id
+        );
+
+        // Resolve or create session
+        let session_id = self.resolve_session(&message).await;
+
+        // Store delivery context
+        {
+            let mut contexts = self.delivery_contexts.write().await;
+            let mut ctx = DeliveryContext::new();
+            ctx.insert(
+                "channel".to_string(),
+                serde_json::Value::String(message.channel.clone()),
+            );
+            ctx.insert(
+                "user_id".to_string(),
+                serde_json::Value::String(message.user_id.clone()),
+            );
+            if let Some(ref tid) = message.thread_id {
+                ctx.insert(
+                    "thread_id".to_string(),
+                    serde_json::Value::String(tid.clone()),
+                );
+            }
+            for (k, v) in &message.metadata {
+                ctx.insert(k.clone(), v.clone());
+            }
+            contexts.insert(session_id.clone(), ctx);
+        }
+
+        // Dispatch to agent with streaming
+        let executor = self.executor.read().await;
+        if let Some(ref exec) = *executor {
+            exec.execute_streaming(&session_id, &message.text, chunk_tx)
+                .await
+        } else {
+            Err(ChannelError::AgentError(
+                "no executor configured".to_string(),
+            ))
+        }
     }
 
     /// Resolve an existing session or create a new one.

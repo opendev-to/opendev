@@ -4,9 +4,11 @@
 //! CLI → REPL → QueryEnhancer → ReactLoop → ToolExecutor → display
 
 pub mod background;
+mod channel_executor;
 mod query;
 mod tools;
 
+pub use channel_executor::ChannelAgentExecutor;
 pub use tools::build_system_prompt;
 
 use std::path::{Path, PathBuf};

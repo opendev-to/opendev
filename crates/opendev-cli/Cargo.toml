@@ -24,7 +24,9 @@ opendev-agents = { workspace = true }
 opendev-runtime = { workspace = true }
 opendev-tui = { workspace = true }
 opendev-tools-impl = { workspace = true }
+opendev-channels = { workspace = true }
 
+async-trait = { workspace = true }
 crossterm = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
@@ -35,7 +37,6 @@ serde_json = { workspace = true }
 dirs-next = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
-async-trait = "0.1"
 uuid = { workspace = true }
 
 [dev-dependencies]

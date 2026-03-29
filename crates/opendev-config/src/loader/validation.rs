@@ -90,6 +90,7 @@ impl ConfigLoader {
             "default_agent",
             "agents",
             "formatter",
+            "channels",
             "config_version",
         ]
         .into_iter()

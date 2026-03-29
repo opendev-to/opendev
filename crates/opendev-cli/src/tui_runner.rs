@@ -20,11 +20,17 @@ use opendev_runtime::InterruptToken;
 use opendev_tui::app::AppState;
 use opendev_tui::{App, AppEvent};
 
+use opendev_channels::telegram::remote::{
+    RemoteCommand, RemoteCommandReceiver, RemoteEvent, RemoteEventSender,
+};
+
 use crate::runtime::AgentRuntime;
 
-/// Event callback that forwards agent events to the TUI via AppEvent channel.
+/// Event callback that forwards agent events to the TUI via AppEvent channel,
+/// and optionally broadcasts to a remote session (Telegram).
 struct TuiEventCallback {
     tx: mpsc::UnboundedSender<AppEvent>,
+    remote_tx: Option<RemoteEventSender>,
 }
 
 impl AgentEventCallback for TuiEventCallback {
@@ -39,6 +45,12 @@ impl AgentEventCallback for TuiEventCallback {
             tool_name: tool_name.to_string(),
             args: args.clone(),
         });
+        if let Some(ref rtx) = self.remote_tx {
+            let _ = rtx.send(RemoteEvent::ToolStarted {
+                tool_name: tool_name.to_string(),
+                args: args.clone(),
+            });
+        }
     }
 
     fn on_tool_finished(&self, tool_id: &str, success: bool) {
@@ -46,10 +58,10 @@ impl AgentEventCallback for TuiEventCallback {
             tool_id: tool_id.to_string(),
             success,
         });
+        // ToolFinished remote event is sent via on_tool_result for more info
     }
 
     fn on_tool_result(&self, tool_id: &str, tool_name: &str, output: &str, success: bool) {
-        // Args will be looked up from the stored ToolExecution in app.rs
         let _ = self.tx.send(AppEvent::ToolResult {
             tool_id: tool_id.to_string(),
             tool_name: tool_name.to_string(),
@@ -57,10 +69,20 @@ impl AgentEventCallback for TuiEventCallback {
             success,
             args: std::collections::HashMap::new(),
         });
+        if let Some(ref rtx) = self.remote_tx {
+            let _ = rtx.send(RemoteEvent::ToolResult {
+                tool_name: tool_name.to_string(),
+                output: output.to_string(),
+                success,
+            });
+        }
     }
 
     fn on_agent_chunk(&self, text: &str) {
         let _ = self.tx.send(AppEvent::AgentChunk(text.to_string()));
+        if let Some(ref rtx) = self.remote_tx {
+            let _ = rtx.send(RemoteEvent::AgentChunk(text.to_string()));
+        }
     }
 
     fn on_reasoning(&self, content: &str) {
@@ -75,6 +97,9 @@ impl AgentEventCallback for TuiEventCallback {
 
     fn on_context_usage(&self, pct: f64) {
         let _ = self.tx.send(AppEvent::ContextUsage(pct));
+        if let Some(ref rtx) = self.remote_tx {
+            let _ = rtx.send(RemoteEvent::ContextUsage(pct));
+        }
     }
 
     fn on_file_changed(&self, files: usize, additions: u64, deletions: u64) {
@@ -83,6 +108,13 @@ impl AgentEventCallback for TuiEventCallback {
             additions,
             deletions,
         });
+        if let Some(ref rtx) = self.remote_tx {
+            let _ = rtx.send(RemoteEvent::FileChangeSummary {
+                files,
+                additions,
+                deletions,
+            });
+        }
     }
 }
 
@@ -144,6 +176,12 @@ pub struct TuiRunner {
     runtime: AgentRuntime,
     system_prompt: String,
     initial_message: Option<String>,
+    /// Remote event sender for Telegram remote control.
+    remote_event_tx: Option<RemoteEventSender>,
+    /// Remote command receiver for Telegram remote control.
+    remote_command_rx: Option<RemoteCommandReceiver>,
+    /// Remote bridge for handling approval request resolution.
+    remote_bridge: Option<Arc<opendev_channels::telegram::RemoteSessionBridge>>,
 }
 
 impl TuiRunner {
@@ -153,12 +191,28 @@ impl TuiRunner {
             runtime,
             system_prompt,
             initial_message: None,
+            remote_event_tx: None,
+            remote_command_rx: None,
+            remote_bridge: None,
         }
     }
 
     /// Set an initial message to send to the agent when the TUI starts.
     pub fn with_initial_message(mut self, msg: Option<String>) -> Self {
         self.initial_message = msg;
+        self
+    }
+
+    /// Attach a Telegram remote control session.
+    pub fn with_remote_control(
+        mut self,
+        event_tx: RemoteEventSender,
+        command_rx: RemoteCommandReceiver,
+        bridge: Arc<opendev_channels::telegram::RemoteSessionBridge>,
+    ) -> Self {
+        self.remote_event_tx = Some(event_tx);
+        self.remote_command_rx = Some(command_rx);
+        self.remote_bridge = Some(bridge);
         self
     }
 
@@ -300,14 +354,130 @@ impl TuiRunner {
         }
 
         // Create the event callback for tool/agent events
+        let remote_event_tx = self.remote_event_tx.take();
         let callback = TuiEventCallback {
             tx: event_tx.clone(),
+            remote_tx: remote_event_tx.clone(),
         };
+
+        // Spawn remote command listener (Telegram → TUI)
+        if let Some(mut remote_rx) = self.remote_command_rx.take() {
+            let remote_user_tx = user_tx.clone();
+            let remote_event_clone = event_tx.clone();
+            tokio::spawn(async move {
+                while let Some(cmd) = remote_rx.recv().await {
+                    match cmd {
+                        RemoteCommand::SendMessage(text) => {
+                            let _ = remote_user_tx.send(text);
+                        }
+                        RemoteCommand::Cancel => {
+                            let _ = remote_event_clone.send(AppEvent::Interrupt);
+                        }
+                        // Session commands — forward as TUI sentinels
+                        RemoteCommand::Compact => {
+                            let _ = remote_user_tx.send("\x00__COMPACT__".to_string());
+                        }
+                        RemoteCommand::NewSession | RemoteCommand::ResumeSession { .. } => {
+                            // Not supported in TUI+remote mode (TUI owns the session)
+                        }
+                        RemoteCommand::Cost => {}
+                        // Approval and question resolution is handled directly by the bridge
+                        RemoteCommand::ApproveToolCall { .. }
+                        | RemoteCommand::DenyToolCall { .. }
+                        | RemoteCommand::AnswerQuestion { .. } => {}
+                    }
+                }
+            });
+        }
+
+        // Bridge tool approval requests to Telegram remote control
+        let bridge_opt = self.remote_bridge.take();
+        if let (Some(bridge), Some(rtx), Some(receivers)) = (
+            bridge_opt,
+            remote_event_tx.clone(),
+            self.runtime.channel_receivers.as_mut(),
+        ) {
+            // Replace the tool approval receiver with one that also forwards to Telegram
+            let bridge_for_approval = Arc::clone(&bridge);
+            let rtx_for_approval = rtx;
+            let approval_tx_for_tui = event_tx.clone();
+
+            // We intercept the tool approval channel: when a request comes in,
+            // we forward it to both TUI and Telegram. Whichever responds first wins.
+            let mut original_approval_rx = std::mem::replace(&mut receivers.tool_approval_rx, {
+                let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                rx
+            });
+
+            tokio::spawn(async move {
+                while let Some(req) = original_approval_rx.recv().await {
+                    let request_id = bridge_for_approval.next_id();
+
+                    // Send to Telegram
+                    let _ = rtx_for_approval.send(RemoteEvent::ToolApprovalNeeded {
+                        request_id: request_id.clone(),
+                        command: req.command.clone(),
+                        working_dir: req.working_dir.clone(),
+                    });
+
+                    // Register pending approval in bridge
+                    let remote_rx = bridge_for_approval.register_approval(&request_id).await;
+
+                    // Also send to TUI
+                    let (tui_resp_tx, tui_resp_rx) = tokio::sync::oneshot::channel();
+                    let _ = approval_tx_for_tui.send(AppEvent::ToolApprovalRequested {
+                        command: req.command.clone(),
+                        working_dir: req.working_dir.clone(),
+                        response_tx: tui_resp_tx,
+                    });
+
+                    // Race: first response wins (TUI or Telegram)
+                    let original_command = req.command;
+                    tokio::select! {
+                        tui_result = tui_resp_rx => {
+                            if let Ok(decision) = tui_result {
+                                let _ = req.response_tx.send(decision);
+                            }
+                        }
+                        remote_result = remote_rx => {
+                            if let Ok(response) = remote_result {
+                                match response {
+                                    opendev_channels::telegram::remote::ApprovalResponse::Approved { command } => {
+                                        let cmd = if command.is_empty() {
+                                            original_command
+                                        } else {
+                                            command
+                                        };
+                                        let _ = req.response_tx.send(
+                                            opendev_runtime::ToolApprovalDecision {
+                                                approved: true,
+                                                choice: "yes".to_string(),
+                                                command: cmd,
+                                            },
+                                        );
+                                    }
+                                    opendev_channels::telegram::remote::ApprovalResponse::Denied => {
+                                        let _ = req.response_tx.send(
+                                            opendev_runtime::ToolApprovalDecision {
+                                                approved: false,
+                                                choice: "no".to_string(),
+                                                command: original_command,
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
 
         // Spawn the agent listener task
         let system_prompt = self.system_prompt;
         let mut runtime = self.runtime;
 
+        let remote_tx_for_agent = remote_event_tx.clone();
         tokio::spawn(async move {
             while let Some(msg) = user_rx.recv().await {
                 // Handle reasoning effort change sentinel
@@ -458,6 +628,9 @@ impl TuiRunner {
                 let _ = event_tx.send(AppEvent::TaskProgressStarted {
                     description: "Thinking".to_string(),
                 });
+                if let Some(ref rtx) = remote_tx_for_agent {
+                    let _ = rtx.send(RemoteEvent::AgentStarted);
+                }
 
                 // Run the query through the agent pipeline with event callback
                 match runtime
@@ -816,18 +989,34 @@ impl TuiRunner {
 
                         if result.interrupted {
                             let _ = event_tx.send(AppEvent::AgentInterrupted);
+                            if let Some(ref rtx) = remote_tx_for_agent {
+                                let _ = rtx.send(RemoteEvent::AgentInterrupted);
+                            }
                         } else {
                             let _ = event_tx.send(AppEvent::AgentFinished);
+                            if let Some(ref rtx) = remote_tx_for_agent {
+                                let _ = rtx.send(RemoteEvent::AgentFinished);
+                            }
                             if !result.success {
                                 let _ = event_tx.send(AppEvent::AgentError(
                                     "Agent completed with errors".to_string(),
                                 ));
                             }
                         }
+
+                        // Forward session title to remote
+                        if let Some(ref rtx) = remote_tx_for_agent
+                            && let Some(title) = runtime.session_manager.get_metadata("title")
+                        {
+                            let _ = rtx.send(RemoteEvent::SessionTitleUpdated(title));
+                        }
                     }
                     Err(e) => {
                         let _ = event_tx.send(AppEvent::TaskProgressFinished);
                         let _ = event_tx.send(AppEvent::AgentError(e.to_string()));
+                        if let Some(ref rtx) = remote_tx_for_agent {
+                            let _ = rtx.send(RemoteEvent::AgentError(e.to_string()));
+                        }
                     }
                 }
             }

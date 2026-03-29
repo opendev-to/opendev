@@ -15,6 +15,10 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 opendev-models = { workspace = true }
+reqwest = { workspace = true }
+tokio-util = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = { workspace = true }
