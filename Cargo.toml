@@ -22,6 +22,7 @@ members = [
     "crates/opendev-hooks",
     "crates/opendev-plugins",
     "crates/opendev-docker",
+    "crates/opendev-sandbox",
 ]
 
 [workspace.package]
@@ -116,4 +117,5 @@ opendev-runtime = { version = "0.1.4", path = "crates/opendev-runtime" }
 opendev-hooks = { version = "0.1.4", path = "crates/opendev-hooks" }
 opendev-plugins = { version = "0.1.4", path = "crates/opendev-plugins" }
 opendev-docker = { version = "0.1.4", path = "crates/opendev-docker" }
+opendev-sandbox = { version = "0.1.4", path = "crates/opendev-sandbox" }
 url = "2"

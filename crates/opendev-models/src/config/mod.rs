@@ -3,10 +3,12 @@
 mod agent;
 mod formatter;
 mod permissions;
+mod realm;
 
 pub use agent::{AgentConfigInline, ModelVariant};
 pub use formatter::{FormatterConfig, FormatterOverride, FormatterOverrides};
 pub use permissions::{PermissionConfig, ToolPermission};
+pub use realm::SandboxConfig;
 
 use permissions::default_true;
 use serde::{Deserialize, Serialize};
@@ -290,6 +292,10 @@ pub struct AppConfig {
     #[serde(default, skip_serializing_if = "FormatterConfig::is_default")]
     pub formatter: FormatterConfig,
 
+    // Sandbox execution configuration (microsandbox microVMs)
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
+
     // Config version for migration support
     #[serde(default = "default_config_version")]
     pub config_version: u32,
@@ -373,6 +379,7 @@ impl Default for AppConfig {
             agents: HashMap::new(),
             model_variants: HashMap::new(),
             formatter: FormatterConfig::default(),
+            sandbox: SandboxConfig::default(),
             config_version: default_config_version(),
         }
     }

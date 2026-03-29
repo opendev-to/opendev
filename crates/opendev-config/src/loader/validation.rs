@@ -90,6 +90,7 @@ impl ConfigLoader {
             "default_agent",
             "agents",
             "formatter",
+            "sandbox",
             "config_version",
         ]
         .into_iter()

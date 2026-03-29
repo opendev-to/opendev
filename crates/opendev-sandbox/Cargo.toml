@@ -1,0 +1,25 @@
+[package]
+name = "opendev-sandbox"
+description = "Sandboxed code execution with microsandbox microVMs for OpenDev"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+axum = { workspace = true }
+async-trait = { workspace = true }
+tokio-util = { workspace = true }
+opendev-models = { workspace = true }
+opendev-http = { workspace = true }
+microsandbox = "0.3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
