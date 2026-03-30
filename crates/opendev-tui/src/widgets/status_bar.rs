@@ -337,14 +337,12 @@ impl Widget for StatusBarWidget<'_> {
         // Build right-side spans
         let mut right_spans: Vec<Span> = Vec::new();
 
-        // Session ID (right-aligned, dim)
+        // Session ID (right-aligned, subtle)
         if let Some(sid) = self.session_id {
             let short = &sid[..sid.len().min(8)];
             right_spans.push(Span::styled(
-                short,
-                Style::default()
-                    .fg(style_tokens::GREY)
-                    .add_modifier(Modifier::DIM),
+                format!("#{short}"),
+                Style::default().fg(style_tokens::GREY),
             ));
             right_spans.push(Span::styled(
                 "  \u{2502}  ",
