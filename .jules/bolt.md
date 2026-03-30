@@ -1,0 +1,3 @@
+## 2026-03-30 - [Extract ReactMarkdown components for performance]
+**Learning:** In React applications that render markdown, especially in list items (like chat messages), passing an inline object for the `components` prop to `ReactMarkdown` forces unnecessary re-evaluation and potential deep re-renders of the markdown tree on every render of the parent component, even if the parent is memoized.
+**Action:** Always extract static configuration objects, such as the `components` mapping for `ReactMarkdown`, outside the functional component to ensure referential stability and maximize the benefit of `React.memo`.
