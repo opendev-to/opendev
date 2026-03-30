@@ -61,7 +61,7 @@ pub use custom_commands::{CustomCommand, CustomCommandLoader};
 pub use debug_logger::SessionDebugLogger;
 pub use event_bus::{
     Event, EventBus, EventTopic, FilteredSubscriber, RuntimeEvent, TopicSubscriber,
-    group_runtime_events_by_topic,
+    create_event_bus_bridge, group_runtime_events_by_topic,
 };
 pub use file_watcher::{FileChange, FileChangeKind, FileWatcher, FileWatcherConfig};
 pub use gitignore::GitIgnoreParser;

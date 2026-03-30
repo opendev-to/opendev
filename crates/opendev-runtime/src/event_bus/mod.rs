@@ -6,6 +6,7 @@
 //!
 //! Events are broadcast via `tokio::sync::broadcast`.
 
+pub mod bridge;
 mod events;
 mod subscribers;
 mod utils;
@@ -17,6 +18,7 @@ use tokio::sync::broadcast;
 use tracing::debug;
 
 // Re-export public API so that `crate::event_bus::X` paths remain unchanged.
+pub use self::bridge::create_event_bus_bridge;
 pub use self::events::{Event, EventTopic, RuntimeEvent, now_ms};
 pub use self::subscribers::{FilteredSubscriber, TopicSubscriber};
 pub use self::utils::{group_events_by_type, group_runtime_events_by_topic};
