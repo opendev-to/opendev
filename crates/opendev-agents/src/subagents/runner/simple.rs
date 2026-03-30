@@ -24,6 +24,226 @@ fn normalize_tool_args(
     opendev_tools_core::normalizer::normalize_params(tool_name, args, Some(&wd))
 }
 
+/// Structured summary of exploration actions taken by the subagent.
+///
+/// Extracted from message history and reused for both mid-loop observation
+/// nudges and the final metadata footer appended to results.
+struct ExplorationSummary {
+    files_read: Vec<String>,
+    searches: Vec<String>,
+    dirs_listed: Vec<String>,
+    commands_run: Vec<String>,
+}
+
+impl ExplorationSummary {
+    /// Scan message history and extract exploration actions.
+    fn from_messages(messages: &[Value]) -> Self {
+        let mut files_read: Vec<String> = Vec::new();
+        let mut searches: Vec<String> = Vec::new();
+        let mut dirs_listed: Vec<String> = Vec::new();
+        let mut commands_run: Vec<String> = Vec::new();
+
+        for msg in messages {
+            if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+                continue;
+            }
+            let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) else {
+                continue;
+            };
+            for tc in tool_calls {
+                let function = tc.get("function").cloned().unwrap_or_default();
+                let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let args_str = function
+                    .get("arguments")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("{}");
+                let args: HashMap<String, Value> =
+                    serde_json::from_str(args_str).unwrap_or_default();
+
+                match name {
+                    "read_file" => {
+                        if let Some(path) = args.get("file_path").and_then(|v| v.as_str())
+                            && !files_read.contains(&path.to_string())
+                        {
+                            files_read.push(path.to_string());
+                        }
+                    }
+                    "grep" | "ast_grep" | "search" => {
+                        if let Some(pattern) = args.get("pattern").and_then(|v| v.as_str()) {
+                            let prefix = if name == "ast_grep" { "ast:" } else { "" };
+                            searches.push(format!("{prefix}{pattern}"));
+                        }
+                    }
+                    "list_files" => {
+                        if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                            dirs_listed.push(path.to_string());
+                        } else {
+                            dirs_listed.push(".".to_string());
+                        }
+                    }
+                    "run_command" => {
+                        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+                            commands_run.push(cmd.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Self {
+            files_read,
+            searches,
+            dirs_listed,
+            commands_run,
+        }
+    }
+
+    /// Total number of distinct tool calls tracked.
+    fn total(&self) -> usize {
+        self.files_read.len()
+            + self.searches.len()
+            + self.dirs_listed.len()
+            + self.commands_run.len()
+    }
+
+    /// Format as a compact metadata footer for appending to subagent results.
+    ///
+    /// Ensures the parent always has a manifest of what was explored, even if
+    /// the LLM's summary omits specific files. Caps lists at 30 entries.
+    fn as_metadata_footer(&self) -> String {
+        if self.total() == 0 {
+            return String::new();
+        }
+
+        const MAX_ENTRIES: usize = 30;
+        let mut footer = String::from("---\n## Exploration Metadata\n");
+
+        fn format_list(items: &[String], max: usize) -> String {
+            if items.len() <= max {
+                items.join(", ")
+            } else {
+                let shown: Vec<_> = items[..max].to_vec();
+                format!("{} [and {} more]", shown.join(", "), items.len() - max)
+            }
+        }
+
+        if !self.files_read.is_empty() {
+            footer.push_str(&format!(
+                "- Files read ({}): {}\n",
+                self.files_read.len(),
+                format_list(&self.files_read, MAX_ENTRIES),
+            ));
+        }
+        if !self.searches.is_empty() {
+            footer.push_str(&format!(
+                "- Searches ({}): {}\n",
+                self.searches.len(),
+                self.searches
+                    .iter()
+                    .take(MAX_ENTRIES)
+                    .map(|s| format!("`{s}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+            if self.searches.len() > MAX_ENTRIES {
+                footer.push_str(&format!(
+                    " [and {} more]",
+                    self.searches.len() - MAX_ENTRIES
+                ));
+            }
+        }
+        if !self.dirs_listed.is_empty() {
+            footer.push_str(&format!(
+                "- Directories listed ({}): {}\n",
+                self.dirs_listed.len(),
+                format_list(&self.dirs_listed, MAX_ENTRIES),
+            ));
+        }
+        if !self.commands_run.is_empty() {
+            footer.push_str(&format!(
+                "- Commands run ({}): {}\n",
+                self.commands_run.len(),
+                self.commands_run
+                    .iter()
+                    .take(MAX_ENTRIES)
+                    .map(|c| format!("`{c}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+            if self.commands_run.len() > MAX_ENTRIES {
+                footer.push_str(&format!(
+                    " [and {} more]",
+                    self.commands_run.len() - MAX_ENTRIES
+                ));
+            }
+        }
+
+        footer
+    }
+
+    /// Format as an observation nudge for mid-loop continuation.
+    fn as_observation(&self, task: &str) -> String {
+        let total = self.total();
+        let mut obs = String::new();
+        obs.push_str("## Exploration Status\n\n");
+        obs.push_str(&format!("**Original task**: {task}\n\n"));
+        obs.push_str(&format!("**Actions taken** ({total} tool calls):\n"));
+
+        if !self.files_read.is_empty() {
+            obs.push_str(&format!(
+                "- Files read ({}): {}\n",
+                self.files_read.len(),
+                self.files_read.join(", ")
+            ));
+        }
+        if !self.searches.is_empty() {
+            obs.push_str(&format!(
+                "- Searches ({}): {}\n",
+                self.searches.len(),
+                self.searches
+                    .iter()
+                    .map(|s| format!("`{s}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !self.dirs_listed.is_empty() {
+            obs.push_str(&format!(
+                "- Directories listed ({}): {}\n",
+                self.dirs_listed.len(),
+                self.dirs_listed.join(", ")
+            ));
+        }
+        if !self.commands_run.is_empty() {
+            obs.push_str(&format!(
+                "- Commands run ({}): {}\n",
+                self.commands_run.len(),
+                self.commands_run
+                    .iter()
+                    .map(|c| format!("`{c}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+
+        if total < 10 {
+            obs.push_str(
+                "\nYou have made very few tool calls. For a thorough exploration, \
+                 you should investigate more files, directories, and patterns. \
+                 Continue exploring — read key entry points, trace imports, \
+                 search for important types and interfaces.\n",
+            );
+        } else {
+            obs.push_str("\nBased on the original task and your exploration so far, decide:\n");
+            obs.push_str("- If important areas remain unexplored, continue investigating.\n");
+            obs.push_str("- If you have sufficient information, provide your final summary.\n");
+        }
+
+        obs
+    }
+}
+
 /// A clean, minimal react loop for read-only exploration subagents.
 ///
 /// Does ONLY: LLM call → parse → execute tools → repeat.
@@ -33,12 +253,17 @@ fn normalize_tool_args(
 pub struct SimpleReactRunner {
     /// Maximum number of iterations (bounded for safety).
     max_iterations: usize,
+    /// Maximum wall-clock duration for the entire run.
+    max_duration: std::time::Duration,
 }
 
 impl SimpleReactRunner {
-    /// Create a new simple runner with the given iteration limit.
-    pub fn new(max_iterations: usize) -> Self {
-        Self { max_iterations }
+    /// Create a new simple runner with the given iteration limit and wall-clock cap.
+    pub fn new(max_iterations: usize, max_duration: std::time::Duration) -> Self {
+        Self {
+            max_iterations,
+            max_duration,
+        }
     }
 
     /// Parse tool calls from an LLM response body.
@@ -108,6 +333,55 @@ impl SimpleReactRunner {
         (id, name, args)
     }
 
+    /// Make a final summary LLM call with tools stripped.
+    ///
+    /// Injects the `explorer_final_summary` reminder and forces a pure-text
+    /// response. Falls back to `fallback_content` if the call fails.
+    async fn final_summary_call(
+        ctx: &RunnerContext<'_>,
+        messages: &mut Vec<Value>,
+        fallback_content: String,
+    ) -> String {
+        let summary_nudge = crate::prompts::reminders::get_reminder("explorer_final_summary", &[]);
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": summary_nudge,
+        }));
+
+        let mut payload = ctx.caller.build_action_payload(messages, &[]);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.remove("tool_choice");
+            obj.remove("tools");
+            obj.remove("_reasoning_effort");
+        }
+
+        let noop_cb = opendev_http::streaming::FnStreamCallback(|_| {});
+        match ctx
+            .http_client
+            .post_json_streaming(&payload, ctx.cancel, &noop_cb)
+            .await
+        {
+            Ok(http_result) if http_result.success => {
+                if let Some(body) = http_result.body {
+                    if let Some(msg) = Self::parse_assistant_message(&body) {
+                        messages.push(msg);
+                    }
+                    let (input_tokens, output_tokens) = Self::parse_token_usage(&body);
+                    if let Some(cb) = ctx.event_callback {
+                        cb.on_token_usage(input_tokens, output_tokens);
+                    }
+                    Self::parse_content(&body).unwrap_or(fallback_content)
+                } else {
+                    fallback_content
+                }
+            }
+            _ => {
+                warn!("SimpleReactRunner: final summary LLM call failed, using original content");
+                fallback_content
+            }
+        }
+    }
+
     /// Build an exploration observation from message history.
     ///
     /// Scans all assistant messages for tool calls and produces a structured
@@ -115,116 +389,8 @@ impl SimpleReactRunner {
     /// context when it tries to stop, so it can self-evaluate whether the
     /// exploration is sufficient.
     fn build_exploration_observation(messages: &[Value], task: &str) -> String {
-        let mut files_read: Vec<String> = Vec::new();
-        let mut searches: Vec<String> = Vec::new();
-        let mut dirs_listed: Vec<String> = Vec::new();
-        let mut commands_run: Vec<String> = Vec::new();
-
-        for msg in messages {
-            if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
-                continue;
-            }
-            let Some(tool_calls) = msg.get("tool_calls").and_then(|t| t.as_array()) else {
-                continue;
-            };
-            for tc in tool_calls {
-                let function = tc.get("function").cloned().unwrap_or_default();
-                let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                let args_str = function
-                    .get("arguments")
-                    .and_then(|a| a.as_str())
-                    .unwrap_or("{}");
-                let args: HashMap<String, Value> =
-                    serde_json::from_str(args_str).unwrap_or_default();
-
-                match name {
-                    "read_file" => {
-                        if let Some(path) = args.get("file_path").and_then(|v| v.as_str())
-                            && !files_read.contains(&path.to_string())
-                        {
-                            files_read.push(path.to_string());
-                        }
-                    }
-                    "search" => {
-                        if let Some(pattern) = args.get("pattern").and_then(|v| v.as_str()) {
-                            searches.push(pattern.to_string());
-                        }
-                    }
-                    "list_files" => {
-                        if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
-                            dirs_listed.push(path.to_string());
-                        } else {
-                            dirs_listed.push(".".to_string());
-                        }
-                    }
-                    "run_command" => {
-                        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
-                            commands_run.push(cmd.to_string());
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let total = files_read.len() + searches.len() + dirs_listed.len() + commands_run.len();
-
-        let mut obs = String::new();
-        obs.push_str("## Exploration Status\n\n");
-        obs.push_str(&format!("**Original task**: {task}\n\n"));
-        obs.push_str(&format!("**Actions taken** ({total} tool calls):\n"));
-
-        if !files_read.is_empty() {
-            obs.push_str(&format!(
-                "- Files read ({}): {}\n",
-                files_read.len(),
-                files_read.join(", ")
-            ));
-        }
-        if !searches.is_empty() {
-            obs.push_str(&format!(
-                "- Searches ({}): {}\n",
-                searches.len(),
-                searches
-                    .iter()
-                    .map(|s| format!("`{s}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if !dirs_listed.is_empty() {
-            obs.push_str(&format!(
-                "- Directories listed ({}): {}\n",
-                dirs_listed.len(),
-                dirs_listed.join(", ")
-            ));
-        }
-        if !commands_run.is_empty() {
-            obs.push_str(&format!(
-                "- Commands run ({}): {}\n",
-                commands_run.len(),
-                commands_run
-                    .iter()
-                    .map(|c| format!("`{c}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-
-        if total < 10 {
-            obs.push_str(
-                "\nYou have made very few tool calls. For a thorough exploration, \
-                          you should investigate more files, directories, and patterns. \
-                          Continue exploring — read key entry points, trace imports, \
-                          search for important types and interfaces.\n",
-            );
-        } else {
-            obs.push_str("\nBased on the original task and your exploration so far, decide:\n");
-            obs.push_str("- If important areas remain unexplored, continue investigating.\n");
-            obs.push_str("- If you have sufficient information, provide your final summary.\n");
-        }
-
-        obs
+        let summary = ExplorationSummary::from_messages(messages);
+        summary.as_observation(task)
     }
 }
 
@@ -266,6 +432,16 @@ impl SubagentRunner for SimpleReactRunner {
                     messages: messages.clone(),
                     partial_result: None,
                 });
+            }
+
+            // Check wall-clock timeout
+            if start_time.elapsed() > self.max_duration {
+                info!(
+                    iteration,
+                    elapsed_secs = start_time.elapsed().as_secs(),
+                    "SimpleReactRunner: wall-clock timeout reached"
+                );
+                break;
             }
 
             debug!(
@@ -322,8 +498,8 @@ impl SubagentRunner for SimpleReactRunner {
                     );
                 }
 
-                // On rate limit or server error, retry (skip iteration)
-                if status == 429 || status >= 500 {
+                // Retry on transient failures (stream timeouts, rate limits, server errors)
+                if http_result.retryable || status == 429 || status >= 500 {
                     continue;
                 }
 
@@ -410,16 +586,30 @@ impl SubagentRunner for SimpleReactRunner {
                     });
                 }
 
-                let elapsed = start_time.elapsed();
+                // Final summary nudge: make one more LLM call with tools
+                // stripped to force a comprehensive text summary, then append
+                // a compact metadata footer of everything explored.
+                let exploration = ExplorationSummary::from_messages(messages);
+
                 debug!(
                     iteration,
                     tool_calls = total_tool_calls,
-                    elapsed_secs = elapsed.as_secs(),
-                    "SimpleReactRunner: completed (model confirmed done after {} observations)",
+                    elapsed_secs = start_time.elapsed().as_secs(),
+                    "SimpleReactRunner: requesting final summary (after {} observations)",
                     observation_count,
                 );
+
+                let final_content = Self::final_summary_call(ctx, messages, content).await;
+
+                let metadata = exploration.as_metadata_footer();
+                let mut result_content = final_content;
+                if !metadata.is_empty() {
+                    result_content.push_str("\n\n");
+                    result_content.push_str(&metadata);
+                }
+
                 return Ok(AgentResult {
-                    content,
+                    content: result_content,
                     success: true,
                     interrupted: false,
                     backgrounded: false,
@@ -601,13 +791,23 @@ impl SubagentRunner for SimpleReactRunner {
         }
 
         // Max iterations reached — attempt wind-down summary
-        let elapsed = start_time.elapsed();
+        let exploration = ExplorationSummary::from_messages(messages);
         info!(
             iterations = self.max_iterations,
             tool_calls = total_tool_calls,
-            elapsed_secs = elapsed.as_secs(),
+            elapsed_secs = start_time.elapsed().as_secs(),
             "SimpleReactRunner: max iterations reached — requesting wind-down"
         );
+
+        // Fallback content from last assistant message
+        let fallback = messages
+            .iter()
+            .rev()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("Max iterations reached.")
+            .to_string();
 
         // Inject summary prompt and make one final LLM call without tools
         let summary_prompt = crate::prompts::reminders::get_reminder("safety_limit_summary", &[]);
@@ -624,47 +824,43 @@ impl SubagentRunner for SimpleReactRunner {
         }
 
         let noop_cb = opendev_http::streaming::FnStreamCallback(|_| {});
-        match ctx
+        let wind_down_content = match ctx
             .http_client
             .post_json_streaming(&payload, ctx.cancel, &noop_cb)
             .await
         {
             Ok(http_result) if http_result.success => {
-                if let Some(body) = http_result.body
-                    && let Some(content) = Self::parse_content(&body)
-                {
-                    let wind_down = format!(
-                        "[Max iterations ({}) reached — summary below]\n\n{}",
-                        self.max_iterations, content
-                    );
-                    return Ok(AgentResult {
-                        content: wind_down,
-                        success: true,
-                        interrupted: false,
-                        backgrounded: false,
-                        completion_status: None,
-                        messages: messages.clone(),
-                        partial_result: None,
-                    });
+                if let Some(body) = http_result.body {
+                    if let Some(msg) = Self::parse_assistant_message(&body) {
+                        messages.push(msg);
+                    }
+                    let (input_tokens, output_tokens) = Self::parse_token_usage(&body);
+                    if let Some(cb) = ctx.event_callback {
+                        cb.on_token_usage(input_tokens, output_tokens);
+                    }
+                    Self::parse_content(&body).unwrap_or(fallback)
+                } else {
+                    fallback
                 }
             }
-            Ok(_) | Err(_) => {
+            _ => {
                 warn!("SimpleReactRunner: wind-down LLM call failed, using last content");
+                fallback
             }
+        };
+
+        let metadata = exploration.as_metadata_footer();
+        let mut result_content = format!(
+            "[Max iterations ({}) reached — summary below]\n\n{}",
+            self.max_iterations, wind_down_content
+        );
+        if !metadata.is_empty() {
+            result_content.push_str("\n\n");
+            result_content.push_str(&metadata);
         }
 
-        // Fallback: use last assistant content
-        let last_content = messages
-            .iter()
-            .rev()
-            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("Max iterations reached.")
-            .to_string();
-
         Ok(AgentResult {
-            content: last_content,
+            content: result_content,
             success: true,
             interrupted: false,
             backgrounded: false,

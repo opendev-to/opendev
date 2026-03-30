@@ -103,7 +103,7 @@ fn test_build_exploration_observation() {
             "role": "assistant",
             "content": null,
             "tool_calls": [
-                {"id": "4", "function": {"name": "search", "arguments": "{\"pattern\": \"fn main\"}"}}
+                {"id": "4", "function": {"name": "grep", "arguments": "{\"pattern\": \"fn main\"}"}}
             ]
         }),
         serde_json::json!({"role": "tool", "tool_call_id": "4", "content": "matches"}),
@@ -134,6 +134,77 @@ fn test_build_exploration_observation_deduplicates_files() {
     })];
     let obs = SimpleReactRunner::build_exploration_observation(&messages, "test");
     assert!(obs.contains("Files read (1)"));
+}
+
+#[test]
+fn test_exploration_summary_tracks_grep_and_ast_grep() {
+    let messages = vec![serde_json::json!({
+        "role": "assistant",
+        "tool_calls": [
+            {"id": "1", "function": {"name": "grep", "arguments": "{\"pattern\": \"TODO\"}"}},
+            {"id": "2", "function": {"name": "ast_grep", "arguments": "{\"pattern\": \"pub fn $NAME\"}"}},
+            {"id": "3", "function": {"name": "search", "arguments": "{\"pattern\": \"legacy\"}"}}
+        ]
+    })];
+    let summary = ExplorationSummary::from_messages(&messages);
+    assert_eq!(summary.searches.len(), 3);
+    assert!(summary.searches.contains(&"TODO".to_string()));
+    assert!(summary.searches.contains(&"ast:pub fn $NAME".to_string()));
+    assert!(summary.searches.contains(&"legacy".to_string()));
+    assert_eq!(summary.total(), 3);
+}
+
+#[test]
+fn test_exploration_summary_metadata_footer_empty() {
+    let summary = ExplorationSummary::from_messages(&[]);
+    assert!(summary.as_metadata_footer().is_empty());
+}
+
+#[test]
+fn test_exploration_summary_metadata_footer_format() {
+    let messages = vec![serde_json::json!({
+        "role": "assistant",
+        "tool_calls": [
+            {"id": "1", "function": {"name": "read_file", "arguments": "{\"file_path\": \"/src/a.rs\"}"}},
+            {"id": "2", "function": {"name": "read_file", "arguments": "{\"file_path\": \"/src/b.rs\"}"}},
+            {"id": "3", "function": {"name": "grep", "arguments": "{\"pattern\": \"TODO\"}"}},
+            {"id": "4", "function": {"name": "list_files", "arguments": "{\"path\": \"src\"}"}},
+            {"id": "5", "function": {"name": "run_command", "arguments": "{\"command\": \"git log\"}"}}
+        ]
+    })];
+    let summary = ExplorationSummary::from_messages(&messages);
+    let footer = summary.as_metadata_footer();
+    assert!(footer.contains("## Exploration Metadata"));
+    assert!(footer.contains("Files read (2)"));
+    assert!(footer.contains("/src/a.rs"));
+    assert!(footer.contains("/src/b.rs"));
+    assert!(footer.contains("Searches (1)"));
+    assert!(footer.contains("`TODO`"));
+    assert!(footer.contains("Directories listed (1)"));
+    assert!(footer.contains("Commands run (1)"));
+    assert!(footer.contains("`git log`"));
+}
+
+#[test]
+fn test_exploration_summary_metadata_footer_caps_at_30() {
+    let mut tool_calls = Vec::new();
+    for i in 0..35 {
+        tool_calls.push(serde_json::json!({
+            "id": format!("tc-{i}"),
+            "function": {
+                "name": "read_file",
+                "arguments": format!("{{\"file_path\": \"/src/file{i}.rs\"}}")
+            }
+        }));
+    }
+    let messages = vec![serde_json::json!({
+        "role": "assistant",
+        "tool_calls": tool_calls,
+    })];
+    let summary = ExplorationSummary::from_messages(&messages);
+    assert_eq!(summary.files_read.len(), 35);
+    let footer = summary.as_metadata_footer();
+    assert!(footer.contains("[and 5 more]"));
 }
 
 #[test]

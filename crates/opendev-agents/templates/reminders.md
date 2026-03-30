@@ -73,6 +73,23 @@ Provide a structured summary:
 
 Be specific about file paths and changes made.
 
+--- explorer_final_summary ---
+Your exploration is complete. Now write your FINAL SUMMARY.
+
+IMPORTANT: This response is the ONLY thing the parent agent receives. It cannot see
+any of your tool call results, file contents, or search output. Everything you discovered
+must be in this message.
+
+Write a structured, detailed report:
+1. **Architecture overview**: How is the codebase organized? Key modules, entry points, data flow.
+2. **Key findings**: Direct answers to the original question with evidence.
+3. **File references**: Important files with absolute paths and line numbers.
+4. **Code snippets**: Critical code excerpts (function signatures, type definitions, key logic).
+5. **Patterns & issues**: Notable design patterns, conventions, or potential problems.
+6. **Unknowns**: What remains unexplored.
+
+Be thorough and specific — file paths, line numbers, code. Do NOT be brief.
+
 --- thinking_on_instruction ---
 **CRITICAL REQUIREMENT - THINKING MODE IS ON:** You MUST call the `think` tool FIRST before calling ANY other tool. This is mandatory - do NOT skip this step. Do NOT call write_file, read_file, bash, or any other tool before calling `think`. In your thinking, explain step-by-step: what you understand about the task, your approach, and your planned actions. Aim for 100-300 words. Only after calling `think` may you proceed with other tools.
 
