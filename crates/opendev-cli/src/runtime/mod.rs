@@ -111,6 +111,9 @@ impl AgentRuntime {
             tool_registry.register(Arc::new(tool));
         }
 
+        // Compute git root once — shared by skill scanning and subagent manager below.
+        let git_root = opendev_agents::git_root(working_dir);
+
         // Register invoke_skill tool with project-local and user-global skill dirs.
         // Scans .opendev/skills at each level from working_dir up to git root,
         // then global dir, then config-specified skill_paths (lowest priority).
@@ -119,17 +122,6 @@ impl AgentRuntime {
         // Walk from working_dir up to git root, scanning for skill directories
         // at each level. This supports monorepos where subdirectories can have
         // their own skill overrides.
-        let git_root = std::process::Command::new("git")
-            .args(["rev-parse", "--show-toplevel"])
-            .current_dir(working_dir)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| PathBuf::from(s.trim()))
-            });
         let stop_dir = git_root.as_deref().unwrap_or(working_dir);
 
         {
@@ -364,7 +356,10 @@ impl AgentRuntime {
         // Register SpawnSubagentTool now that we have Arc<ToolRegistry> and Arc<HttpClient>
         let session_dir = session_manager.session_dir().to_path_buf();
         let mut subagent_manager =
-            opendev_agents::SubagentManager::with_builtins_and_custom(working_dir);
+            opendev_agents::SubagentManager::with_builtins_and_custom_git_root(
+                working_dir,
+                git_root.as_deref(),
+            );
         // Apply inline agent config overrides from opendev.json
         if !config.agents.is_empty() {
             subagent_manager.apply_config_overrides(&config.agents);

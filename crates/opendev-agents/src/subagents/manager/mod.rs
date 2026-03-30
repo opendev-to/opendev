@@ -70,23 +70,29 @@ impl SubagentManager {
     ///    at each level (monorepo support)
     ///
     /// Custom agents override built-ins with the same name.
+    /// Pass a pre-computed `git_root` to avoid a redundant `git rev-parse` call.
     pub fn with_builtins_and_custom(working_dir: &std::path::Path) -> Self {
+        let git_root = crate::git_root(working_dir);
+        Self::with_builtins_and_custom_inner(working_dir, git_root.as_deref())
+    }
+
+    /// Like [`with_builtins_and_custom`] but accepts a pre-resolved git root
+    /// to avoid spawning a redundant `git rev-parse --show-toplevel` process.
+    pub fn with_builtins_and_custom_git_root(
+        working_dir: &std::path::Path,
+        git_root: Option<&std::path::Path>,
+    ) -> Self {
+        Self::with_builtins_and_custom_inner(working_dir, git_root)
+    }
+
+    fn with_builtins_and_custom_inner(
+        working_dir: &std::path::Path,
+        git_root: Option<&std::path::Path>,
+    ) -> Self {
         let mut mgr = Self::with_builtins();
         let home = dirs::home_dir().unwrap_or_default();
 
-        // Determine git root for monorepo walking
-        let git_root = std::process::Command::new("git")
-            .args(["rev-parse", "--show-toplevel"])
-            .current_dir(working_dir)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| std::path::PathBuf::from(s.trim()))
-            });
-        let stop_dir = git_root.as_deref().unwrap_or(working_dir);
+        let stop_dir = git_root.unwrap_or(working_dir);
 
         // Order: lowest priority first (later register() calls override earlier).
         let mut dirs = Vec::new();

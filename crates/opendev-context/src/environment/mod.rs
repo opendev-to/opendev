@@ -55,20 +55,39 @@ pub struct EnvironmentContext {
 
 impl EnvironmentContext {
     /// Collect environment context from the working directory.
+    ///
+    /// Git commands and directory scanning run in parallel to minimize startup latency.
     pub fn collect(working_dir: &Path) -> Self {
         let is_git = working_dir.join(".git").exists();
 
-        let (git_branch, git_default_branch, git_status, git_recent_commits, git_remote_url) =
+        // Run all git commands and directory scanning in parallel using scoped threads.
+        // Each git command spawns a subprocess, so parallelizing them avoids
+        // sequential process-spawn overhead (significant on large repos).
+        let (git_branch, git_default_branch, git_status, git_recent_commits, git_remote_url, directory_tree, instruction_files) =
             if is_git {
-                (
-                    project::git_cmd(working_dir, &["rev-parse", "--abbrev-ref", "HEAD"]),
-                    project::detect_default_branch(working_dir),
-                    project::git_cmd(working_dir, &["status", "--short"]),
-                    project::git_cmd(working_dir, &["log", "--oneline", "-5"]),
-                    project::git_cmd(working_dir, &["remote", "get-url", "origin"]),
-                )
+                std::thread::scope(|s| {
+                    let h_branch = s.spawn(|| project::git_cmd(working_dir, &["rev-parse", "--abbrev-ref", "HEAD"]));
+                    let h_default = s.spawn(|| project::detect_default_branch(working_dir));
+                    let h_status = s.spawn(|| project::git_cmd(working_dir, &["status", "--short"]));
+                    let h_log = s.spawn(|| project::git_cmd(working_dir, &["log", "--oneline", "-5"]));
+                    let h_remote = s.spawn(|| project::git_cmd(working_dir, &["remote", "get-url", "origin"]));
+                    let h_tree = s.spawn(|| project::build_directory_tree(working_dir, 2));
+                    let h_instr = s.spawn(|| instructions::discover_instruction_files(working_dir));
+
+                    (
+                        h_branch.join().unwrap_or(None),
+                        h_default.join().unwrap_or(None),
+                        h_status.join().unwrap_or(None),
+                        h_log.join().unwrap_or(None),
+                        h_remote.join().unwrap_or(None),
+                        h_tree.join().unwrap_or(None),
+                        h_instr.join().unwrap_or_default(),
+                    )
+                })
             } else {
-                (None, None, None, None, None)
+                let directory_tree = project::build_directory_tree(working_dir, 2);
+                let instruction_files = instructions::discover_instruction_files(working_dir);
+                (None, None, None, None, None, directory_tree, instruction_files)
             };
 
         let platform = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
@@ -77,8 +96,6 @@ impl EnvironmentContext {
 
         let project_config_files = project::detect_config_files(working_dir);
         let tech_stack = project::infer_tech_stack(&project_config_files);
-        let directory_tree = project::build_directory_tree(working_dir, 2);
-        let instruction_files = instructions::discover_instruction_files(working_dir);
 
         Self {
             working_dir: working_dir.display().to_string(),
