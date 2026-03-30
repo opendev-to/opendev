@@ -51,10 +51,12 @@ impl App {
             self.state.welcome_panel.tick(w, h);
         }
 
-        // Advance spinner animation
+        // Advance spinner animation (only count unfinished subagents so
+        // the spinner stops promptly instead of persisting through the
+        // finished-subagent grace period)
         if self.state.agent_active
             || !self.state.active_tools.is_empty()
-            || !self.state.active_subagents.is_empty()
+            || self.state.active_subagents.iter().any(|s| !s.finished)
             || self.state.background_task_count > 0
         {
             self.state.spinner.tick();
@@ -250,6 +252,15 @@ impl App {
                 }
             }
             self.state.dirty = true;
+        }
+
+        // Expire Ctrl+C pending after 2 seconds
+        if self
+            .state
+            .ctrl_c_pending
+            .is_some_and(|t| t.elapsed() >= Duration::from_secs(2))
+        {
+            self.state.ctrl_c_pending = None;
         }
 
         // Auto-scroll if user hasn't manually scrolled up

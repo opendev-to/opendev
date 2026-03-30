@@ -66,11 +66,9 @@ pub fn apply_profile(config: &mut AppConfig, profile_name: &str) -> bool {
         }
         Profile::Prod => {
             config.verbose = false;
-            config.debug_logging = false;
         }
         Profile::Fast => {
             config.verbose = false;
-            config.debug_logging = false;
             // Reduce token limits for faster responses
             if config.max_tokens > 4096 {
                 config.max_tokens = 4096;

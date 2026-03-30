@@ -266,8 +266,13 @@ fn test_env_override_verbose() {
 #[test]
 fn test_env_override_debug() {
     let mut config = AppConfig::default();
+    assert!(config.debug_logging); // default is now true
+
+    // Env override can still toggle it off
+    ConfigLoader::apply_env_overrides_with(&mut config, mock_env(&[("OPENDEV_DEBUG", "0")]));
     assert!(!config.debug_logging);
 
+    // And back on
     ConfigLoader::apply_env_overrides_with(&mut config, mock_env(&[("OPENDEV_DEBUG", "TRUE")]));
     assert!(config.debug_logging);
 }

@@ -179,6 +179,9 @@ pub struct AppState {
     /// Timestamp of last user-interactive event (key, mouse, scroll).
     /// Used to detect tab-switch return via timing gap.
     pub last_event_time: Option<Instant>,
+    /// Timestamp of first Ctrl+C press for two-stage exit confirmation.
+    /// When set, a second Ctrl+C within 2 seconds will exit the app.
+    pub ctrl_c_pending: Option<Instant>,
 }
 
 impl Default for AppState {
@@ -266,6 +269,7 @@ impl Default for AppState {
             selection: SelectionState::default(),
             force_clear: false,
             last_event_time: None,
+            ctrl_c_pending: None,
         }
     }
 }

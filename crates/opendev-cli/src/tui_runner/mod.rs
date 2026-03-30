@@ -875,12 +875,20 @@ impl TuiRunner {
                     Ok(result) => {
                         let _ = event_tx.send(AppEvent::TaskProgressFinished);
 
-                        // Emit snapshot for undo stack after successful query
-                        if !result.interrupted
-                            && let Ok(mut mgr) = runtime.snapshot_manager.lock()
-                            && let Some(hash) = mgr.track()
-                        {
-                            let _ = event_tx.send(AppEvent::SnapshotTaken { hash });
+                        // Emit snapshot for undo stack after successful query.
+                        // Run on the blocking thread pool so the synchronous git
+                        // operations (git add --all, git write-tree) don't starve
+                        // the tokio runtime and freeze the TUI spinner.
+                        if !result.interrupted {
+                            let snap_mgr = runtime.snapshot_manager.clone();
+                            let snap_tx = event_tx.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(mut mgr) = snap_mgr.lock()
+                                    && let Some(hash) = mgr.track()
+                                {
+                                    let _ = snap_tx.send(AppEvent::SnapshotTaken { hash });
+                                }
+                            });
                         }
 
                         // Surface session title to TUI
@@ -930,6 +938,12 @@ impl TuiRunner {
                         }
                     }
                 }
+            }
+
+            // Save session on graceful exit (idempotent if run_query already saved)
+            info!("TUI backend: saving session on exit");
+            if let Err(e) = runtime.session_manager.save_current() {
+                warn!("Failed to save session on exit: {e}");
             }
         });
 

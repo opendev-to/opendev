@@ -480,10 +480,25 @@ impl App {
         false
     }
 
-    /// Handle Ctrl+C: quit, interrupt agent, or clear input.
+    /// Handle Ctrl+C: two-stage quit, interrupt agent, or clear input.
     fn handle_key_ctrl_c(&mut self) {
         if self.state.input_buffer.is_empty() && !self.state.agent_active {
-            self.state.running = false;
+            // Two-stage exit: first Ctrl+C shows warning, second exits
+            if self
+                .state
+                .ctrl_c_pending
+                .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2))
+            {
+                self.state.running = false;
+            } else {
+                self.state.ctrl_c_pending = Some(std::time::Instant::now());
+                use crate::widgets::toast::{Toast, ToastLevel};
+                self.state.toasts.push(
+                    Toast::new("Press Ctrl+C again to exit", ToastLevel::Warning)
+                        .with_duration(std::time::Duration::from_secs(2)),
+                );
+                self.state.dirty = true;
+            }
         } else if self.state.agent_active {
             // Interrupt agent
             let _ = self.event_tx.send(AppEvent::Interrupt);

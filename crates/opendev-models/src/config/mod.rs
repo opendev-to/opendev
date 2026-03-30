@@ -362,7 +362,7 @@ impl Default for AppConfig {
             auto_save_interval: 5,
             max_context_tokens: 100_000,
             verbose: false,
-            debug_logging: false,
+            debug_logging: true,
             color_scheme: "monokai".to_string(),
             show_token_count: true,
             enable_sound: true,

@@ -37,12 +37,12 @@ fn test_apply_dev_profile() {
 fn test_apply_prod_profile() {
     let mut config = AppConfig::default();
     config.verbose = true;
-    config.debug_logging = true;
 
     let applied = apply_profile(&mut config, "prod");
     assert!(applied);
     assert!(!config.verbose);
-    assert!(!config.debug_logging);
+    // debug_logging stays on (always-on by default)
+    assert!(config.debug_logging);
 }
 
 #[test]
