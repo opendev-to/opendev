@@ -339,7 +339,7 @@ impl Widget for StatusBarWidget<'_> {
 
         // Session ID (right-aligned, dim)
         if let Some(sid) = self.session_id {
-            let short: String = sid.chars().filter(|c| *c != '-').take(8).collect();
+            let short = &sid[..sid.len().min(8)];
             right_spans.push(Span::styled(
                 short,
                 Style::default()

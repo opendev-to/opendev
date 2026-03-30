@@ -54,7 +54,7 @@ fn default_channel() -> String {
 }
 
 fn generate_session_id() -> String {
-    Uuid::new_v4().to_string()[..12].to_string()
+    Uuid::new_v4().simple().to_string()[..12].to_string()
 }
 
 /// Represents a conversation session.
