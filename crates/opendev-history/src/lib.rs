@@ -14,6 +14,7 @@ pub mod file_locks;
 pub mod index;
 pub mod listing;
 pub mod message_convert;
+pub mod projector;
 pub mod session_manager;
 pub mod sharing;
 pub mod snapshot;
