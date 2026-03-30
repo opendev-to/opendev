@@ -370,10 +370,10 @@ async fn state_ws_broadcast() {
     let (_tmp, state) = make_test_state();
     let mut rx = state.ws_subscribe();
 
-    state.broadcast(opendev_web::state::WsBroadcast {
-        msg_type: "test_event".to_string(),
-        data: serde_json::json!({"key": "value"}),
-    });
+    state.broadcast(opendev_web::state::WsBroadcast::new(
+        "test_event",
+        serde_json::json!({"key": "value"}),
+    ));
 
     let msg = rx.recv().await.unwrap();
     assert_eq!(msg.msg_type, "test_event");

@@ -10,6 +10,7 @@ mod bridge;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot};
 
 use opendev_config::ModelRegistry;
@@ -24,6 +25,22 @@ pub struct WsBroadcast {
     pub msg_type: String,
     #[serde(default)]
     pub data: serde_json::Value,
+    /// Monotonically increasing sequence number for ordering and gap detection.
+    /// Defaults to 0 for backward compatibility with old frontends.
+    #[serde(default)]
+    pub seq: u64,
+}
+
+impl WsBroadcast {
+    /// Create a new broadcast message. The `seq` field starts at 0 and is
+    /// overwritten by [`AppState::broadcast`] before sending.
+    pub fn new(msg_type: impl Into<String>, data: serde_json::Value) -> Self {
+        Self {
+            msg_type: msg_type.into(),
+            data,
+            seq: 0,
+        }
+    }
 }
 
 /// Shared application state wrapped in Arc for use with Axum.
@@ -65,6 +82,8 @@ pub(super) struct AppStateInner {
     pub(super) model_registry: RwLock<ModelRegistry>,
     /// Bridge mode state.
     pub(super) bridge: RwLock<BridgeState>,
+    /// Monotonically increasing broadcast sequence counter.
+    pub(super) broadcast_seq: AtomicU64,
 }
 
 /// Bridge mode state: when the TUI owns agent execution and
@@ -198,6 +217,7 @@ impl AppState {
                 user_store: Arc::new(user_store),
                 model_registry: RwLock::new(model_registry),
                 bridge: RwLock::new(BridgeState::default()),
+                broadcast_seq: AtomicU64::new(1),
             }),
         }
     }
@@ -271,9 +291,17 @@ impl AppState {
     }
 
     /// Broadcast a message to all WebSocket subscribers.
-    pub fn broadcast(&self, msg: WsBroadcast) {
+    ///
+    /// Assigns a monotonically increasing sequence number before sending.
+    pub fn broadcast(&self, mut msg: WsBroadcast) {
+        msg.seq = self.inner.broadcast_seq.fetch_add(1, Ordering::Relaxed);
         // Ignore send errors (no subscribers is fine).
         let _ = self.inner.ws_tx.send(msg);
+    }
+
+    /// Get the current broadcast sequence number (next to be assigned).
+    pub fn current_broadcast_seq(&self) -> u64 {
+        self.inner.broadcast_seq.load(Ordering::Relaxed)
     }
 
     // --- Mode / settings ---

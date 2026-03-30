@@ -31,10 +31,7 @@ impl WebEventCallback {
     }
 
     fn broadcast(&self, msg_type: &str, data: serde_json::Value) {
-        self.state.broadcast(WsBroadcast {
-            msg_type: msg_type.to_string(),
-            data,
-        });
+        self.state.broadcast(WsBroadcast::new(msg_type, data));
     }
 }
 
@@ -267,10 +264,7 @@ pub fn spawn_channel_bridges(receivers: crate::runtime::ToolChannelReceivers, st
                         }),
                     ),
                 };
-                st.broadcast(WsBroadcast {
-                    msg_type: msg_type.to_string(),
-                    data,
-                });
+                st.broadcast(WsBroadcast::new(msg_type, data));
             }
         });
     }
@@ -282,15 +276,15 @@ pub fn spawn_channel_bridges(receivers: crate::runtime::ToolChannelReceivers, st
         tokio::spawn(async move {
             while let Some(req) = ask_rx.recv().await {
                 let request_id = Uuid::new_v4().to_string();
-                st.broadcast(WsBroadcast {
-                    msg_type: "ask_user_required".to_string(),
-                    data: serde_json::json!({
+                st.broadcast(WsBroadcast::new(
+                    "ask_user_required",
+                    serde_json::json!({
                         "request_id": request_id,
                         "question": req.question,
                         "options": req.options,
                         "default": req.default,
                     }),
-                });
+                ));
 
                 // Register pending ask-user so WebSocket response can resolve it
                 let rx = st
@@ -331,16 +325,16 @@ pub fn spawn_channel_bridges(receivers: crate::runtime::ToolChannelReceivers, st
         tokio::spawn(async move {
             while let Some(req) = tool_rx.recv().await {
                 let approval_id = Uuid::new_v4().to_string();
-                st.broadcast(WsBroadcast {
-                    msg_type: "approval_required".to_string(),
-                    data: serde_json::json!({
+                st.broadcast(WsBroadcast::new(
+                    "approval_required",
+                    serde_json::json!({
                         "id": approval_id,
                         "tool_name": "bash",
                         "command": req.command,
                         "working_dir": req.working_dir,
                         "description": format!("Run: {}", req.command),
                     }),
-                });
+                ));
 
                 let rx = st
                     .add_pending_approval(
@@ -389,13 +383,13 @@ pub fn spawn_channel_bridges(receivers: crate::runtime::ToolChannelReceivers, st
         tokio::spawn(async move {
             while let Some(req) = plan_rx.recv().await {
                 let request_id = Uuid::new_v4().to_string();
-                st.broadcast(WsBroadcast {
-                    msg_type: "plan_approval_required".to_string(),
-                    data: serde_json::json!({
+                st.broadcast(WsBroadcast::new(
+                    "plan_approval_required",
+                    serde_json::json!({
                         "request_id": request_id,
                         "plan_content": req.plan_content,
                     }),
-                });
+                ));
 
                 let rx = st
                     .add_pending_plan_approval(
@@ -475,22 +469,22 @@ impl opendev_web::state::AgentExecutor for WebAgentExecutor {
         }
 
         // Broadcast message_start
-        state.broadcast(WsBroadcast {
-            msg_type: "message_start".to_string(),
-            data: serde_json::json!({ "session_id": session_id }),
-        });
+        state.broadcast(WsBroadcast::new(
+            "message_start",
+            serde_json::json!({ "session_id": session_id }),
+        ));
 
         // Mark session as running
         state.set_session_running(session_id.clone()).await;
 
         // Broadcast session activity
-        state.broadcast(WsBroadcast {
-            msg_type: "session_activity".to_string(),
-            data: serde_json::json!({
+        state.broadcast(WsBroadcast::new(
+            "session_activity",
+            serde_json::json!({
                 "session_id": session_id,
                 "running": true,
             }),
-        });
+        ));
 
         // Create interrupt token
         let interrupt_token = opendev_runtime::InterruptToken::new();
@@ -515,26 +509,26 @@ impl opendev_web::state::AgentExecutor for WebAgentExecutor {
         match &result {
             Ok(query_result) => {
                 if !query_result.content.is_empty() {
-                    state.broadcast(WsBroadcast {
-                        msg_type: "message_complete".to_string(),
-                        data: serde_json::json!({
+                    state.broadcast(WsBroadcast::new(
+                        "message_complete",
+                        serde_json::json!({
                             "session_id": session_id,
                             "message": {
                                 "role": "assistant",
                                 "content": query_result.content,
                             },
                         }),
-                    });
+                    ));
                 }
             }
             Err(e) => {
-                state.broadcast(WsBroadcast {
-                    msg_type: "error".to_string(),
-                    data: serde_json::json!({
+                state.broadcast(WsBroadcast::new(
+                    "error",
+                    serde_json::json!({
                         "session_id": session_id,
                         "message": e.to_string(),
                     }),
-                });
+                ));
             }
         }
 
@@ -559,13 +553,13 @@ impl opendev_web::state::AgentExecutor for WebAgentExecutor {
         state.set_session_idle(&session_id).await;
 
         // Broadcast session activity
-        state.broadcast(WsBroadcast {
-            msg_type: "session_activity".to_string(),
-            data: serde_json::json!({
+        state.broadcast(WsBroadcast::new(
+            "session_activity",
+            serde_json::json!({
                 "session_id": session_id,
                 "running": false,
             }),
-        });
+        ));
 
         result
             .map(|_| ())

@@ -331,10 +331,57 @@ async fn test_broadcast() {
     state.broadcast(WsBroadcast {
         msg_type: "test".to_string(),
         data: serde_json::json!({"hello": "world"}),
+        seq: 0,
     });
 
     let msg = rx.recv().await.unwrap();
     assert_eq!(msg.msg_type, "test");
+}
+
+#[tokio::test]
+async fn test_broadcast_seq_starts_at_1() {
+    let state = make_state();
+    let mut rx = state.ws_subscribe();
+
+    state.broadcast(WsBroadcast {
+        msg_type: "first".to_string(),
+        data: serde_json::Value::Null,
+        seq: 0,
+    });
+
+    let msg = rx.recv().await.unwrap();
+    assert_eq!(msg.seq, 1, "first broadcast should get seq=1");
+}
+
+#[tokio::test]
+async fn test_broadcast_assigns_seq() {
+    let state = make_state();
+    let mut rx = state.ws_subscribe();
+
+    for _ in 0..3 {
+        state.broadcast(WsBroadcast {
+            msg_type: "evt".to_string(),
+            data: serde_json::Value::Null,
+            seq: 0,
+        });
+    }
+
+    let m1 = rx.recv().await.unwrap();
+    let m2 = rx.recv().await.unwrap();
+    let m3 = rx.recv().await.unwrap();
+
+    assert_eq!(m1.seq, 1);
+    assert_eq!(m2.seq, 2);
+    assert_eq!(m3.seq, 3);
+}
+
+#[test]
+fn test_wsbroadcast_serde_default_seq() {
+    // Deserializing JSON without a `seq` field should default to 0.
+    let json = r#"{"type":"hello","data":null}"#;
+    let msg: WsBroadcast = serde_json::from_str(json).unwrap();
+    assert_eq!(msg.seq, 0);
+    assert_eq!(msg.msg_type, "hello");
 }
 
 #[tokio::test]

@@ -149,13 +149,13 @@ async fn set_mode(
 
     state.set_mode(mode).await;
 
-    state.broadcast(WsBroadcast {
-        msg_type: WsMessageType::StatusUpdate.as_str().to_string(),
-        data: serde_json::json!({
-            "mode": mode.to_string(),
-            "autonomy_level": state.autonomy_level().await,
+    state.broadcast(WsBroadcast::new(
+        WsMessageType::StatusUpdate.as_str().to_string(),
+        serde_json::json!({
+        "mode": mode.to_string(),
+        "autonomy_level": state.autonomy_level().await,
         }),
-    });
+    ));
 
     Ok(Json(serde_json::json!({
         "status": "success",
@@ -178,13 +178,13 @@ async fn set_autonomy(
 
     state.set_autonomy_level(update.level.clone()).await;
 
-    state.broadcast(WsBroadcast {
-        msg_type: WsMessageType::StatusUpdate.as_str().to_string(),
-        data: serde_json::json!({
-            "mode": state.mode().await.to_string(),
-            "autonomy_level": update.level,
+    state.broadcast(WsBroadcast::new(
+        WsMessageType::StatusUpdate.as_str().to_string(),
+        serde_json::json!({
+        "mode": state.mode().await.to_string(),
+        "autonomy_level": update.level,
         }),
-    });
+    ));
 
     Ok(Json(serde_json::json!({
         "status": "success",

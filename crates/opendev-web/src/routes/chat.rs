@@ -119,15 +119,15 @@ async fn send_query(
         match state.try_inject_message(&session_id, message.clone()).await {
             Ok(()) => {
                 // Broadcast the injected user message.
-                state.broadcast(WsBroadcast {
-                    msg_type: "user_message".to_string(),
-                    data: serde_json::json!({
-                        "role": "user",
-                        "content": message,
-                        "session_id": session_id,
-                        "injected": true,
+                state.broadcast(WsBroadcast::new(
+                    "user_message".to_string(),
+                    serde_json::json!({
+                    "role": "user",
+                    "content": message,
+                    "session_id": session_id,
+                    "injected": true,
                     }),
-                });
+                ));
                 return Ok(Json(serde_json::json!({
                     "status": "accepted",
                     "session_id": session_id,
@@ -160,14 +160,14 @@ async fn send_query(
     }
 
     // Broadcast user message to WebSocket clients.
-    state.broadcast(WsBroadcast {
-        msg_type: "user_message".to_string(),
-        data: serde_json::json!({
-            "role": "user",
-            "content": message,
-            "session_id": session_id,
+    state.broadcast(WsBroadcast::new(
+        "user_message".to_string(),
+        serde_json::json!({
+        "role": "user",
+        "content": message,
+        "session_id": session_id,
         }),
-    });
+    ));
 
     // Fire the agent executor as a background task.
     if let Some(executor) = state.agent_executor().await {
@@ -202,10 +202,10 @@ async fn interrupt(
 ) -> Json<serde_json::Value> {
     state.request_interrupt().await;
 
-    state.broadcast(WsBroadcast {
-        msg_type: "interrupt".to_string(),
-        data: serde_json::json!({"status": "requested"}),
-    });
+    state.broadcast(WsBroadcast::new(
+        "interrupt".to_string(),
+        serde_json::json!({"status": "requested"}),
+    ));
 
     Json(serde_json::json!({
         "status": "interrupt_requested",

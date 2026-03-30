@@ -115,13 +115,13 @@ async fn create_server(
 
     save_server_to_config(&payload.name, &config, &global_config_path())?;
 
-    state.broadcast(WsBroadcast {
-        msg_type: "mcp_servers_updated".to_string(),
-        data: serde_json::json!({
-            "action": "added",
-            "server_name": payload.name,
+    state.broadcast(WsBroadcast::new(
+        "mcp_servers_updated".to_string(),
+        serde_json::json!({
+        "action": "added",
+        "server_name": payload.name,
         }),
-    });
+    ));
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -150,13 +150,13 @@ async fn update_server(
 
     save_server_to_config(&name, &config, &global_config_path())?;
 
-    state.broadcast(WsBroadcast {
-        msg_type: "mcp_servers_updated".to_string(),
-        data: serde_json::json!({
-            "action": "updated",
-            "server_name": name,
+    state.broadcast(WsBroadcast::new(
+        "mcp_servers_updated".to_string(),
+        serde_json::json!({
+        "action": "updated",
+        "server_name": name,
         }),
-    });
+    ));
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -186,13 +186,13 @@ async fn delete_server(
         )));
     }
 
-    state.broadcast(WsBroadcast {
-        msg_type: "mcp_servers_updated".to_string(),
-        data: serde_json::json!({
-            "action": "removed",
-            "server_name": name,
+    state.broadcast(WsBroadcast::new(
+        "mcp_servers_updated".to_string(),
+        serde_json::json!({
+        "action": "removed",
+        "server_name": name,
         }),
-    });
+    ));
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -244,14 +244,14 @@ async fn connect_server(
     // reports the tool count.
     let _ = manager.disconnect_server(&name).await;
 
-    state.broadcast(WsBroadcast {
-        msg_type: "mcp_servers_updated".to_string(),
-        data: serde_json::json!({
-            "action": "connected",
-            "server_name": &name,
-            "tools_count": tools_count,
+    state.broadcast(WsBroadcast::new(
+        "mcp_servers_updated".to_string(),
+        serde_json::json!({
+        "action": "connected",
+        "server_name": &name,
+        "tools_count": tools_count,
         }),
-    });
+    ));
 
     Ok(Json(serde_json::json!({
         "success": true,
