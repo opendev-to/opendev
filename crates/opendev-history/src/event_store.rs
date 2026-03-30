@@ -172,6 +172,39 @@ impl EventStore {
         &self.sessions_dir
     }
 
+    /// Validate events against current session state, then append.
+    ///
+    /// For each event, calls `session.validate_transition(&event)` to ensure
+    /// the transition is valid. If all pass, appends to the event log.
+    /// Returns the created envelopes on success.
+    pub fn append_validated(
+        &self,
+        session: &Session,
+        aggregate_id: &str,
+        events: Vec<SessionEvent>,
+    ) -> Result<Vec<EventEnvelope>, String> {
+        if events.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Clone the session so we can track state changes across the batch.
+        let mut state = session.clone();
+
+        for event in &events {
+            state
+                .validate_transition(event)
+                .map_err(|e| format!("validation failed: {e}"))?;
+
+            // Apply the event so subsequent validations see updated state.
+            let temp_envelope = EventEnvelope::new(aggregate_id, 0, event);
+            crate::projector::SessionProjector::apply_event(&mut state, &temp_envelope)
+                .map_err(|e| format!("apply failed during validation: {e}"))?;
+        }
+
+        // All events validated — persist them.
+        self.append(aggregate_id, events)
+    }
+
     /// Returns the path to the event log file for a given aggregate.
     pub fn event_log_path(&self, aggregate_id: &str) -> PathBuf {
         self.sessions_dir

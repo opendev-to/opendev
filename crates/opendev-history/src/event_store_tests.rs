@@ -401,3 +401,104 @@ fn test_event_store_concurrent_safety() {
         assert_eq!(env.seq, (i + 1) as u64);
     }
 }
+
+// ---------------------------------------------------------------------------
+// append_validated tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_append_validated_success() {
+    let (_dir, store) = make_temp_store();
+    let session = make_session(false, 0);
+
+    let events = vec![
+        SessionEvent::TitleChanged {
+            title: "New title".into(),
+        },
+        SessionEvent::SessionArchived {
+            time_archived: Utc::now(),
+        },
+    ];
+
+    let envelopes = store.append_validated(&session, "sess-v1", events).unwrap();
+    assert_eq!(envelopes.len(), 2);
+    assert_eq!(envelopes[0].event_type, "TitleChanged");
+    assert_eq!(envelopes[1].event_type, "SessionArchived");
+
+    let loaded = store.load("sess-v1").unwrap();
+    assert_eq!(loaded.len(), 2);
+}
+
+#[test]
+fn test_append_validated_rejects_invalid() {
+    let (_dir, store) = make_temp_store();
+    let session = make_session(true, 0); // already archived
+
+    let events = vec![SessionEvent::SessionArchived {
+        time_archived: Utc::now(),
+    }];
+
+    let err = store
+        .append_validated(&session, "sess-v2", events)
+        .unwrap_err();
+    assert!(err.contains("already archived"));
+}
+
+#[test]
+fn test_append_validated_sequential_validation() {
+    let (_dir, store) = make_temp_store();
+    let session = make_session(false, 0);
+
+    // archive + unarchive in sequence should pass
+    let events = vec![
+        SessionEvent::SessionArchived {
+            time_archived: Utc::now(),
+        },
+        SessionEvent::SessionUnarchived,
+    ];
+    let envelopes = store.append_validated(&session, "sess-v3", events).unwrap();
+    assert_eq!(envelopes.len(), 2);
+
+    // archive + archive should fail on second event
+    let session2 = make_session(false, 0);
+    let events = vec![
+        SessionEvent::SessionArchived {
+            time_archived: Utc::now(),
+        },
+        SessionEvent::SessionArchived {
+            time_archived: Utc::now(),
+        },
+    ];
+    let err = store
+        .append_validated(&session2, "sess-v4", events)
+        .unwrap_err();
+    assert!(err.contains("already archived"));
+}
+
+#[test]
+fn test_append_validated_no_persist_on_failure() {
+    let (_dir, store) = make_temp_store();
+    let session = make_session(false, 0);
+
+    // First event valid, second invalid — nothing should be persisted.
+    let events = vec![
+        SessionEvent::TitleChanged {
+            title: "Good title".into(),
+        },
+        SessionEvent::SessionArchived {
+            time_archived: Utc::now(),
+        },
+        SessionEvent::SessionArchived {
+            time_archived: Utc::now(),
+        },
+    ];
+
+    let err = store
+        .append_validated(&session, "sess-v5", events)
+        .unwrap_err();
+    assert!(err.contains("already archived"));
+
+    // Verify nothing was persisted.
+    let loaded = store.load("sess-v5").unwrap();
+    assert!(loaded.is_empty());
+}

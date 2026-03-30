@@ -87,8 +87,12 @@ fn test_post_append_callback_invoked() {
     let store = EventStore::new(dir.path().to_path_buf()).with_post_append(callback);
 
     let events = vec![
-        SessionEvent::TitleChanged { title: "Test1".into() },
-        SessionEvent::TitleChanged { title: "Test2".into() },
+        SessionEvent::TitleChanged {
+            title: "Test1".into(),
+        },
+        SessionEvent::TitleChanged {
+            title: "Test2".into(),
+        },
     ];
 
     store.append("session-1", events).unwrap();
