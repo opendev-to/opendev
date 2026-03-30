@@ -172,13 +172,13 @@ impl Theme {
             phase_critique: Color::Rgb(255, 179, 71),
             phase_refinement: Color::Rgb(0, 191, 255),
 
-            heading_1: Color::Rgb(255, 215, 0),     // Gold — max prominence
-            heading_2: Color::Rgb(130, 160, 255),   // Accent blue
-            heading_3: Color::Rgb(0, 191, 255),     // Cyan
+            heading_1: Color::Rgb(208, 212, 220),
+            heading_2: Color::Rgb(208, 212, 220),
+            heading_3: Color::Rgb(208, 212, 220),
             code_fg: Color::Rgb(120, 190, 180),
             code_bg: Color::Rgb(30, 30, 30),
-            bullet: Color::Rgb(130, 160, 255),      // Accent blue
-            bold_fg: Color::Rgb(235, 238, 245),     // Bright white
+            bullet: Color::Rgb(208, 212, 220),
+            bold_fg: Color::Rgb(208, 212, 220),
         }
     }
 
@@ -213,13 +213,13 @@ impl Theme {
             phase_critique: Color::Rgb(180, 120, 0),
             phase_refinement: Color::Rgb(0, 140, 200),
 
-            heading_1: Color::Rgb(60, 90, 200),     // Accent blue
-            heading_2: Color::Rgb(0, 140, 200),     // Cyan
-            heading_3: Color::Rgb(180, 120, 0),     // Warm brown
+            heading_1: Color::Rgb(30, 30, 30),
+            heading_2: Color::Rgb(30, 30, 30),
+            heading_3: Color::Rgb(30, 30, 30),
             code_fg: Color::Rgb(50, 130, 120),
             code_bg: Color::Rgb(240, 240, 240),
-            bullet: Color::Rgb(60, 90, 200),        // Accent blue
-            bold_fg: Color::Rgb(0, 0, 0),           // Pure black
+            bullet: Color::Rgb(30, 30, 30),
+            bold_fg: Color::Rgb(30, 30, 30),
         }
     }
 
@@ -254,13 +254,13 @@ impl Theme {
             phase_critique: Color::Rgb(255, 184, 108), // Orange
             phase_refinement: Color::Rgb(139, 233, 253), // Cyan
 
-            heading_1: Color::Rgb(255, 121, 198), // Dracula pink
-            heading_2: Color::Rgb(189, 147, 249), // Dracula purple
-            heading_3: Color::Rgb(139, 233, 253), // Dracula cyan
-            code_fg: Color::Rgb(150, 170, 220),   // Soft steel blue
-            code_bg: Color::Rgb(40, 42, 54),      // Background
-            bullet: Color::Rgb(189, 147, 249),    // Dracula purple
-            bold_fg: Color::Rgb(241, 250, 140),   // Dracula yellow
+            heading_1: Color::Rgb(248, 248, 242),
+            heading_2: Color::Rgb(248, 248, 242),
+            heading_3: Color::Rgb(248, 248, 242),
+            code_fg: Color::Rgb(150, 170, 220),
+            code_bg: Color::Rgb(40, 42, 54),
+            bullet: Color::Rgb(248, 248, 242),
+            bold_fg: Color::Rgb(248, 248, 242),
         }
     }
 }
@@ -310,13 +310,13 @@ pub const DIFF_ADD_BG: Color = Color::Rgb(0, 40, 0);
 pub const DIFF_DEL_BG: Color = Color::Rgb(40, 0, 0);
 
 // Markdown heading colors
-pub const HEADING_1: Color = Color::Rgb(255, 215, 0);
-pub const HEADING_2: Color = Color::Rgb(130, 160, 255);
-pub const HEADING_3: Color = Color::Rgb(0, 191, 255);
+pub const HEADING_1: Color = Color::Rgb(208, 212, 220);
+pub const HEADING_2: Color = Color::Rgb(208, 212, 220);
+pub const HEADING_3: Color = Color::Rgb(208, 212, 220);
 pub const CODE_FG: Color = Color::Rgb(120, 190, 180);
 pub const CODE_BG: Color = Color::Rgb(30, 30, 30);
-pub const BULLET: Color = Color::Rgb(130, 160, 255);
-pub const BOLD_FG: Color = Color::Rgb(235, 238, 245);
+pub const BULLET: Color = Color::Rgb(208, 212, 220);
+pub const BOLD_FG: Color = Color::Rgb(208, 212, 220);
 
 // Icons
 pub const THINKING_ICON: &str = "\u{27e1}"; // ⟡
