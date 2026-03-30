@@ -373,6 +373,11 @@ impl App {
             AppEvent::FileChanged { paths } => self.handle_file_changed(paths),
             AppEvent::SessionTitleUpdated(title) => self.handle_session_title_updated(title),
 
+            AppEvent::CostUpdate(cost) => {
+                self.state.session_cost = cost;
+                self.state.dirty = true;
+            }
+
             AppEvent::Quit => {
                 self.state.running = false;
                 self.state.dirty = true;

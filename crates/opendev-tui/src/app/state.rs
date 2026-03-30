@@ -166,6 +166,8 @@ pub struct AppState {
     pub debug_panel_open: bool,
     /// Session title (set by the agent).
     pub session_title: Option<String>,
+    /// Session ID for display in status bar and exit message.
+    pub session_id: Option<String>,
     /// Maps background subagent IDs to their parent background task IDs.
     pub bg_subagent_map: HashMap<String, String>,
     /// Per-subagent cancellation tokens for individual kill support.
@@ -258,6 +260,7 @@ impl Default for AppState {
             redo_stack: Vec::new(),
             debug_panel_open: false,
             session_title: None,
+            session_id: None,
             bg_subagent_map: HashMap::new(),
             subagent_cancel_tokens: HashMap::new(),
             selection: SelectionState::default(),

@@ -214,6 +214,7 @@ impl App {
         .reasoning_level(self.state.reasoning_level)
         .context_usage_pct(self.state.context_usage_pct)
         .session_cost(self.state.session_cost)
+        .session_id(self.state.session_id.as_deref())
         .mcp_status(self.state.mcp_status, self.state.mcp_has_errors)
         .background_tasks(self.state.background_task_count)
         .file_changes(self.state.file_changes)

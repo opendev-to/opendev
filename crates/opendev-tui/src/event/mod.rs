@@ -241,6 +241,9 @@ pub enum AppEvent {
     /// Session title was auto-detected by the topic detector.
     SessionTitleUpdated(String),
 
+    /// Session cost updated (cumulative USD from cost tracker).
+    CostUpdate(f64),
+
     /// Quit the application.
     Quit,
 }

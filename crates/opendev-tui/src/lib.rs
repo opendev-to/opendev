@@ -18,7 +18,7 @@ pub mod managers;
 pub mod selection;
 pub mod widgets;
 
-pub use app::{App, AppState, AutonomyLevel, OperationMode};
+pub use app::{App, AppState, AutonomyLevel, ExitInfo, OperationMode};
 pub use controllers::{
     ApprovalController, BUILTIN_COMMANDS, SlashCommand, find_matching_commands, is_command,
 };

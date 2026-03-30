@@ -307,6 +307,9 @@ impl RecordedEvent {
                 "FileChanged".to_string(),
                 serde_json::json!({"paths": paths}),
             ),
+            AppEvent::CostUpdate(cost) => {
+                ("CostUpdate".to_string(), serde_json::json!({"cost": cost}))
+            }
             AppEvent::Quit => ("Quit".to_string(), serde_json::Value::Null),
             AppEvent::SessionTitleUpdated(title) => (
                 "SessionTitleUpdated".to_string(),

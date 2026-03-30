@@ -40,6 +40,7 @@ pub struct StatusBarWidget<'a> {
     reasoning_level: Option<ReasoningLevel>,
     spinner_char: Option<char>,
     last_completion: Option<String>,
+    session_id: Option<&'a str>,
 }
 
 impl<'a> StatusBarWidget<'a> {
@@ -68,6 +69,7 @@ impl<'a> StatusBarWidget<'a> {
             reasoning_level: None,
             spinner_char: None,
             last_completion: None,
+            session_id: None,
         }
     }
 
@@ -117,6 +119,11 @@ impl<'a> StatusBarWidget<'a> {
         self
     }
 
+    pub fn session_id(mut self, id: Option<&'a str>) -> Self {
+        self.session_id = id;
+        self
+    }
+
     #[allow(dead_code)]
     fn format_tokens(n: u64) -> String {
         if n >= 1_000_000 {
@@ -144,6 +151,16 @@ impl Widget for StatusBarWidget<'_> {
                 .fg(style_tokens::CYAN)
                 .add_modifier(Modifier::BOLD),
         ));
+
+        // Session ID (short form, after model)
+        if let Some(sid) = self.session_id {
+            let short: String = sid.chars().filter(|c| *c != '-').take(8).collect();
+            spans.push(Span::styled(
+                format!(" [{short}]"),
+                Style::default().fg(style_tokens::GREY),
+            ));
+        }
+
         spans.push(Span::styled(
             "  \u{2502}  ",
             Style::default().fg(style_tokens::GREY),

@@ -20,7 +20,7 @@ use opendev_history::SessionManager;
 use opendev_models::message::{ChatMessage, Role};
 use opendev_runtime::InterruptToken;
 use opendev_tui::app::AppState;
-use opendev_tui::{App, AppEvent};
+use opendev_tui::{App, AppEvent, ExitInfo};
 
 use opendev_channels::telegram::remote::{
     RemoteCommandReceiver, RemoteEvent, RemoteEventSender,
@@ -222,7 +222,7 @@ impl TuiRunner {
     ///
     /// Sets up message forwarding between the TUI and the AgentRuntime,
     /// then runs the TUI event loop.
-    pub async fn run(mut self, mut state: AppState) -> io::Result<()> {
+    pub async fn run(mut self, mut state: AppState) -> io::Result<ExitInfo> {
         // Channel for forwarding user messages from TUI to agent task
         let (user_tx, mut user_rx) = mpsc::unbounded_channel::<String>();
 
@@ -866,6 +866,11 @@ impl TuiRunner {
                             ));
                         }
 
+                        // Update session cost in TUI
+                        if let Ok(tracker) = runtime.cost_tracker.lock() {
+                            let _ = event_tx.send(AppEvent::CostUpdate(tracker.total_cost_usd));
+                        }
+
                         // Free the foreground
                         let _ = event_tx.send(AppEvent::AgentFinished);
                     }
@@ -908,12 +913,22 @@ impl TuiRunner {
                         {
                             let _ = rtx.send(RemoteEvent::SessionTitleUpdated(title));
                         }
+
+                        // Update session cost in TUI
+                        if let Ok(tracker) = runtime.cost_tracker.lock() {
+                            let _ = event_tx.send(AppEvent::CostUpdate(tracker.total_cost_usd));
+                        }
                     }
                     Err(e) => {
                         let _ = event_tx.send(AppEvent::TaskProgressFinished);
                         let _ = event_tx.send(AppEvent::AgentError(e.to_string()));
                         if let Some(ref rtx) = remote_tx_for_agent {
                             let _ = rtx.send(RemoteEvent::AgentError(e.to_string()));
+                        }
+
+                        // Update session cost in TUI even on error
+                        if let Ok(tracker) = runtime.cost_tracker.lock() {
+                            let _ = event_tx.send(AppEvent::CostUpdate(tracker.total_cost_usd));
                         }
                     }
                 }

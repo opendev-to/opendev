@@ -30,6 +30,13 @@ mod types;
 
 pub use enums::{AutonomyLevel, OperationMode, ReasoningLevel};
 pub use state::AppState;
+
+/// Information collected for the exit message after TUI shutdown.
+#[derive(Debug, Clone, Default)]
+pub struct ExitInfo {
+    pub session_id: Option<String>,
+    pub session_cost: f64,
+}
 pub use types::{
     DisplayMessage, DisplayRole, DisplayToolCall, PendingItem, RoleStyle, ToolExecution, ToolState,
 };
@@ -153,7 +160,7 @@ impl App {
     ///
     /// Sets up the terminal, enters the event loop, and restores the
     /// terminal on exit or panic.
-    pub async fn run(&mut self) -> io::Result<()> {
+    pub async fn run(&mut self) -> io::Result<ExitInfo> {
         // Terminal setup
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -204,7 +211,11 @@ impl App {
         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
-        result
+        result?;
+        Ok(ExitInfo {
+            session_id: self.state.session_id.clone(),
+            session_cost: self.state.session_cost,
+        })
     }
 
     /// The core event loop: render -> wait for event -> drain queued events -> repeat.

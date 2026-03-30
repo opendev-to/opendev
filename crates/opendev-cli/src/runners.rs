@@ -36,6 +36,11 @@ pub async fn run_non_interactive(
         config
     };
 
+    // Apply profile overrides (from OPENDEV_PROFILE env var)
+    if let Ok(profile) = std::env::var("OPENDEV_PROFILE") {
+        opendev_config::apply_profile(&mut config, &profile);
+    }
+
     // Build system prompt before config is moved
     let system_prompt = runtime::build_system_prompt(working_dir, &config);
 
@@ -284,6 +289,12 @@ pub async fn run_interactive(
         .and_then(opendev_tui::ThemeName::from_str_loose)
         .unwrap_or_else(opendev_tui::auto_detect_theme);
 
+    // Extract session ID for TUI display
+    let session_id = agent_runtime
+        .session_manager
+        .current_session()
+        .map(|s| s.id.clone());
+
     // Populate initial TUI state from config
     let wd_str = working_dir.display().to_string();
     let mut app_state = opendev_tui::AppState {
@@ -295,6 +306,7 @@ pub async fn run_interactive(
         theme: resolved_theme.theme(),
         theme_name: resolved_theme,
         reasoning_level: opendev_tui::app::ReasoningLevel::from_str_loose(&config.reasoning_effort),
+        session_id,
         ..opendev_tui::AppState::default()
     };
 
@@ -427,10 +439,39 @@ pub async fn run_interactive(
 
     let tui_runner = tui_runner;
 
-    if let Err(e) = tui_runner.run(app_state).await {
-        eprintln!("TUI error: {e}");
-        std::process::exit(1);
+    match tui_runner.run(app_state).await {
+        Ok(exit_info) => {
+            print_exit_message(&exit_info);
+        }
+        Err(e) => {
+            eprintln!("TUI error: {e}");
+            std::process::exit(1);
+        }
     }
+}
+
+/// Print a clean goodbye message after the TUI exits.
+fn print_exit_message(exit_info: &opendev_tui::ExitInfo) {
+    let Some(ref session_id) = exit_info.session_id else {
+        return;
+    };
+
+    let short_id: String = session_id.chars().filter(|c| *c != '-').take(8).collect();
+    let cost_str = if exit_info.session_cost > 0.0 {
+        if exit_info.session_cost < 0.01 {
+            format!(" | Cost ${:.4}", exit_info.session_cost)
+        } else {
+            format!(" | Cost ${:.2}", exit_info.session_cost)
+        }
+    } else {
+        String::new()
+    };
+
+    eprintln!();
+    eprintln!("Session {short_id}{cost_str}");
+    eprintln!(
+        "Resume this session: opendev --resume {session_id}"
+    );
 }
 
 /// Replay recorded events from a JSONL file for debugging.
