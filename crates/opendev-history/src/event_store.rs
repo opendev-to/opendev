@@ -121,35 +121,6 @@ impl EventEnvelope {
 }
 
 // ---------------------------------------------------------------------------
-// SQL schema constants
-// ---------------------------------------------------------------------------
-
-/// SQL to create the sequence-tracking table for optimistic concurrency.
-pub const CREATE_EVENT_SEQUENCES_TABLE: &str = r#"
-CREATE TABLE IF NOT EXISTS event_sequences (
-    aggregate_id TEXT PRIMARY KEY,
-    latest_seq   INTEGER NOT NULL DEFAULT 0
-)
-"#;
-
-/// SQL to create the events table.
-pub const CREATE_EVENTS_TABLE: &str = r#"
-CREATE TABLE IF NOT EXISTS events (
-    id            TEXT PRIMARY KEY,
-    aggregate_id  TEXT NOT NULL,
-    seq           INTEGER NOT NULL,
-    event_type    TEXT NOT NULL,
-    data          TEXT NOT NULL,
-    timestamp     TEXT NOT NULL,
-    UNIQUE(aggregate_id, seq)
-)
-"#;
-
-/// Indexes for fast aggregate replay.
-pub const CREATE_EVENT_INDEXES: &[&str] =
-    &["CREATE INDEX IF NOT EXISTS idx_events_aggregate ON events(aggregate_id, seq)"];
-
-// ---------------------------------------------------------------------------
 // ValidateTransition impl
 // ---------------------------------------------------------------------------
 
