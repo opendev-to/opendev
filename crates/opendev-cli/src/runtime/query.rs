@@ -17,57 +17,66 @@ use opendev_tools_impl::*;
 use super::AgentRuntime;
 
 impl AgentRuntime {
-    /// Connect to configured MCP servers and register their tools.
+    /// Start MCP server connections in the background.
     ///
     /// Loads MCP config from global (`~/.opendev/mcp.json`) and project
-    /// (`.mcp.json`) files, connects to all enabled servers, discovers
-    /// tools, and registers them as `McpBridgeTool` instances.
+    /// (`.mcp.json`) files, then spawns a background task that connects
+    /// to all enabled servers, discovers tools, and registers them as
+    /// `McpBridgeTool` instances. Returns immediately so startup is
+    /// never blocked by slow or failing MCP servers.
     ///
     /// Failures are logged but do not prevent the runtime from starting —
     /// MCP is optional and best-effort.
-    pub async fn connect_mcp_servers(&mut self) {
+    pub fn start_mcp_connections(&mut self) {
         let manager = Arc::new(McpManager::new(Some(self.working_dir.clone())));
 
-        // Load configuration from disk
-        if let Err(e) = manager.load_configuration().await {
-            debug!(error = %e, "No MCP config loaded (this is normal if no MCP servers are configured)");
-            return;
-        }
+        // Store the manager immediately so BackgroundRuntime can reference it,
+        // even before connections are established.
+        self.mcp_manager = Some(Arc::clone(&manager));
 
-        // Connect all configured servers
-        if let Err(e) = manager.connect_all().await {
-            warn!(error = %e, "Failed to connect MCP servers");
-        }
+        // Clone Arcs for the background task.
+        let tool_registry = Arc::clone(&self.tool_registry);
+        let skill_loader = Arc::clone(&self.skill_loader);
 
-        // Discover tool schemas from connected servers
-        let schemas = manager.get_all_tool_schemas().await;
-        if schemas.is_empty() {
-            debug!("No MCP tools discovered");
-            return;
-        }
+        tokio::spawn(async move {
+            // Load configuration from disk
+            if let Err(e) = manager.load_configuration().await {
+                debug!(error = %e, "No MCP config loaded (this is normal if no MCP servers are configured)");
+                return;
+            }
 
-        // Register each MCP tool as a BaseTool in the registry
-        let mut registered = 0;
-        for schema in &schemas {
-            let bridge = McpBridgeTool::from_schema(schema, Arc::clone(&manager));
-            self.tool_registry.register(Arc::new(bridge));
-            registered += 1;
-        }
+            // Connect all configured servers (in parallel)
+            if let Err(e) = manager.connect_all().await {
+                warn!(error = %e, "Failed to connect MCP servers");
+            }
 
-        info!(
-            mcp_tools = registered,
-            total_tools = self.tool_registry.tool_names().len(),
-            "Registered MCP tools"
-        );
+            // Discover tool schemas from connected servers
+            let schemas = manager.get_all_tool_schemas().await;
+            if schemas.is_empty() {
+                debug!("No MCP tools discovered");
+                return;
+            }
 
-        // Re-register invoke_skill with MCP prompt support.
-        self.tool_registry
-            .register(Arc::new(InvokeSkillTool::with_mcp(
-                Arc::clone(&self.skill_loader),
+            // Register each MCP tool as a BaseTool in the registry
+            let mut registered = 0;
+            for schema in &schemas {
+                let bridge = McpBridgeTool::from_schema(schema, Arc::clone(&manager));
+                tool_registry.register(Arc::new(bridge));
+                registered += 1;
+            }
+
+            info!(
+                mcp_tools = registered,
+                total_tools = tool_registry.tool_names().len(),
+                "Registered MCP tools (background)"
+            );
+
+            // Re-register invoke_skill with MCP prompt support.
+            tool_registry.register(Arc::new(InvokeSkillTool::with_mcp(
+                skill_loader,
                 Arc::clone(&manager),
             )));
-
-        self.mcp_manager = Some(manager);
+        });
     }
 
     /// Run a single query through the full pipeline.

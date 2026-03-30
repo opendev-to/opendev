@@ -143,18 +143,28 @@ impl McpManager {
         }
     }
 
-    /// Connect to all enabled auto-start servers.
+    /// Connect to all enabled auto-start servers in parallel.
+    ///
+    /// All servers connect concurrently so the total wait time is
+    /// bounded by the slowest server, not the sum of all timeouts.
     pub async fn connect_all(&self) -> McpResult<Vec<String>> {
         let config = self.get_config().await?;
-        let mut connected = Vec::new();
+        let servers: Vec<String> = config
+            .mcp_servers
+            .iter()
+            .filter(|(_, sc)| sc.enabled && sc.auto_start)
+            .map(|(name, _)| name.clone())
+            .collect();
 
-        for (name, server_config) in &config.mcp_servers {
-            if server_config.enabled && server_config.auto_start {
-                match self.connect_server(name).await {
-                    Ok(()) => connected.push(name.clone()),
-                    Err(e) => {
-                        error!("Failed to connect to MCP server '{}': {}", name, e);
-                    }
+        let results =
+            futures::future::join_all(servers.iter().map(|name| self.connect_server(name))).await;
+
+        let mut connected = Vec::new();
+        for (name, result) in servers.into_iter().zip(results) {
+            match result {
+                Ok(()) => connected.push(name),
+                Err(e) => {
+                    error!("Failed to connect to MCP server '{}': {}", name, e);
                 }
             }
         }

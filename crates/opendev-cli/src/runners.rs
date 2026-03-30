@@ -41,8 +41,12 @@ pub async fn run_non_interactive(
         opendev_config::apply_profile(&mut config, &profile);
     }
 
-    // Build system prompt before config is moved
-    let system_prompt = runtime::build_system_prompt(working_dir, &config);
+    // Build system prompt in a background thread while we set up the session
+    // and agent runtime — these are independent and can overlap.
+    let prompt_config = config.clone();
+    let prompt_wd = working_dir.to_path_buf();
+    let system_prompt_handle =
+        tokio::task::spawn_blocking(move || runtime::build_system_prompt(&prompt_wd, &prompt_config));
 
     let mut session_manager = match SessionManager::new(session_dir.clone()) {
         Ok(sm) => sm,
@@ -96,7 +100,12 @@ pub async fn run_non_interactive(
     };
 
     // Connect MCP servers (best-effort, failures are logged)
-    agent_runtime.connect_mcp_servers().await;
+    agent_runtime.start_mcp_connections();
+
+    // Await system prompt (should already be done by now)
+    let system_prompt = system_prompt_handle
+        .await
+        .expect("system prompt thread panicked");
 
     match agent_runtime
         .run_query(prompt, &system_prompt, None, None, false)
@@ -267,10 +276,14 @@ pub async fn run_interactive(
 
     let _ = dangerously_skip_permissions; // Will be wired to approval system
 
-    // Build system prompt from embedded templates
-    let system_prompt = runtime::build_system_prompt(working_dir, &config);
+    // Build system prompt in a background thread while we set up the agent runtime
+    // — these are independent and can overlap.
+    let prompt_config = config.clone();
+    let prompt_wd = working_dir.to_path_buf();
+    let system_prompt_handle =
+        tokio::task::spawn_blocking(move || runtime::build_system_prompt(&prompt_wd, &prompt_config));
 
-    // Create agent runtime
+    // Create agent runtime (overlaps with system prompt building)
     let mut agent_runtime =
         match runtime::AgentRuntime::new(config.clone(), working_dir, session_manager) {
             Ok(rt) => rt,
@@ -281,7 +294,12 @@ pub async fn run_interactive(
         };
 
     // Connect MCP servers (best-effort, failures are logged)
-    agent_runtime.connect_mcp_servers().await;
+    agent_runtime.start_mcp_connections();
+
+    // Await system prompt (should already be done by now)
+    let system_prompt = system_prompt_handle
+        .await
+        .expect("system prompt thread panicked");
 
     // Resolve theme: CLI flag > auto-detect from terminal background
     let resolved_theme = theme_name

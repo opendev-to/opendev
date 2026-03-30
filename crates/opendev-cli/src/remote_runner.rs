@@ -78,7 +78,7 @@ pub async fn run_remote(
     bridge: Arc<RemoteSessionBridge>,
 ) {
     // Connect MCP servers
-    runtime.connect_mcp_servers().await;
+    runtime.start_mcp_connections();
 
     let callback = RemoteEventCallback {
         tx: event_tx.clone(),
