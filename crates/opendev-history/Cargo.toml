@@ -18,6 +18,7 @@ reqwest = { workspace = true }
 regex = { workspace = true }
 fd-lock = "4"
 dirs = "6"
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

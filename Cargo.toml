@@ -117,3 +117,4 @@ opendev-hooks = { version = "0.1.5", path = "crates/opendev-hooks" }
 opendev-plugins = { version = "0.1.5", path = "crates/opendev-plugins" }
 opendev-sandbox = { version = "0.1.5", path = "crates/opendev-sandbox" }
 url = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
