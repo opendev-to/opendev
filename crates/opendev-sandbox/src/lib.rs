@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! # opendev-sandbox
 //!
 //! Sandboxed Python code execution for context analysis with recursive LLM sub-calls.

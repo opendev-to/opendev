@@ -22,6 +22,8 @@ dirs-next = { workspace = true }
 which = "7"
 opendev-models = { workspace = true }
 opendev-http = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 microsandbox = "0.3"
 
 [dev-dependencies]
