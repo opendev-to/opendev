@@ -4092,21 +4092,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opendev-docker"
-version = "0.1.4"
-dependencies = [
- "dirs-next",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "opendev-history"
 version = "0.1.4"
 dependencies = [
@@ -4166,6 +4151,7 @@ name = "opendev-mcp"
 version = "0.1.4"
 dependencies = [
  "async-trait",
+ "futures",
  "opendev-config",
  "opendev-models",
  "regex",
