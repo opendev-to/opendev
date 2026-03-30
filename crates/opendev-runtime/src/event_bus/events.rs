@@ -114,6 +114,16 @@ pub enum RuntimeEvent {
         status: SessionStatus,
         timestamp_ms: u64,
     },
+    /// A session state mutation was persisted to the event log.
+    ///
+    /// Published after events are written to disk, enabling real-time
+    /// notification of session changes to WebSocket clients and other subscribers.
+    SessionMutation {
+        session_id: String,
+        event_type: String,
+        seq: u64,
+        timestamp_ms: u64,
+    },
 
     // -- Cost events --
     /// Token usage was recorded.
@@ -163,7 +173,8 @@ impl RuntimeEvent {
             }
             Self::SessionStart { .. }
             | Self::SessionEnd { .. }
-            | Self::SessionStatusChanged { .. } => EventTopic::Session,
+            | Self::SessionStatusChanged { .. }
+            | Self::SessionMutation { .. } => EventTopic::Session,
             Self::TokenUsage { .. } | Self::BudgetExhausted { .. } => EventTopic::Cost,
             Self::ConfigReloaded { .. } | Self::ShutdownRequested { .. } => EventTopic::System,
             Self::Custom { .. } => EventTopic::Custom,
@@ -183,6 +194,7 @@ impl RuntimeEvent {
             | Self::SessionStart { timestamp_ms, .. }
             | Self::SessionEnd { timestamp_ms, .. }
             | Self::SessionStatusChanged { timestamp_ms, .. }
+            | Self::SessionMutation { timestamp_ms, .. }
             | Self::TokenUsage { timestamp_ms, .. }
             | Self::BudgetExhausted { timestamp_ms, .. }
             | Self::ConfigReloaded { timestamp_ms, .. }

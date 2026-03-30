@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -126,17 +127,26 @@ impl EventEnvelope {
 }
 
 // ---------------------------------------------------------------------------
-// EventStore
+// PostAppendCallback + EventStore
 // ---------------------------------------------------------------------------
+
+/// Callback invoked after events are persisted to disk.
+/// Receives the aggregate_id and the list of persisted envelopes.
+pub type PostAppendCallback = Arc<dyn Fn(&str, &[EventEnvelope]) + Send + Sync>;
 
 /// JSONL-file-backed event store.
 ///
 /// Each aggregate (session) gets its own event log file at
 /// `{sessions_dir}/{aggregate_id}.events.jsonl`. Events are append-only
 /// JSONL lines, each containing a serialized `EventEnvelope`.
+///
+/// The optional [`PostAppendCallback`] is invoked after events are
+/// successfully written, enabling integration with an event bus.
 pub struct EventStore {
     /// Base directory where event log files are stored.
     sessions_dir: PathBuf,
+    /// Optional callback invoked after a successful append.
+    post_append: Option<PostAppendCallback>,
 }
 
 /// Default timeout for file lock acquisition.
@@ -145,7 +155,21 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 impl EventStore {
     /// Create a new event store rooted at `sessions_dir`.
     pub fn new(sessions_dir: PathBuf) -> Self {
-        Self { sessions_dir }
+        Self {
+            sessions_dir,
+            post_append: None,
+        }
+    }
+
+    /// Builder method: attach a callback invoked after each successful append.
+    pub fn with_post_append(mut self, callback: PostAppendCallback) -> Self {
+        self.post_append = Some(callback);
+        self
+    }
+
+    /// Return the base directory for session event files.
+    pub fn sessions_dir(&self) -> &std::path::Path {
+        &self.sessions_dir
     }
 
     /// Returns the path to the event log file for a given aggregate.
@@ -158,6 +182,7 @@ impl EventStore {
     ///
     /// Acquires an exclusive file lock, reads the current max sequence number,
     /// then appends each event as a JSON line with an incrementing seq.
+    /// Invokes the post-append callback after successful persistence.
     pub fn append(
         &self,
         aggregate_id: &str,
@@ -193,6 +218,11 @@ impl EventStore {
 
         file.flush().map_err(|e| format!("flush failed: {e}"))?;
         // _lock drops here, releasing the file lock.
+
+        // Notify listeners after successful persistence.
+        if let Some(cb) = &self.post_append {
+            cb(aggregate_id, &envelopes);
+        }
 
         Ok(envelopes)
     }
