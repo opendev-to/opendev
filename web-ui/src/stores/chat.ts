@@ -761,6 +761,19 @@ wsClient.on('task_completed', (message) => {
   console.log('[Frontend] Task completed:', message.data.summary);
 });
 
+// ─── Full Sync (gap too large, reload from REST) ────────────────────────────
+
+wsClient.on('full_sync', () => {
+  const sessionId = useChatStore.getState().currentSessionId;
+  if (!sessionId) return;
+  console.log('[Frontend] Received full_sync, reloading session from REST');
+  // Clear cached messages so loadSession fetches fresh data from the server
+  useChatStore.setState(state => ({
+    ...patchSession(state, sessionId, { messages: [] }),
+  }));
+  useChatStore.getState().loadSession(sessionId);
+});
+
 // ─── Progress Events ─────────────────────────────────────────────────────────
 
 wsClient.on('progress', (message) => {

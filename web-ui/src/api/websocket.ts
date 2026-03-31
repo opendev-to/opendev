@@ -12,6 +12,8 @@ class WebSocketClient {
   private intentionalClose = false;
   private pingInterval: number | null = null;
   private visibilityListenerAdded = false;
+  private lastSeq: number = 0;
+  private seenSeqs: Set<number> = new Set();
 
   connect() {
     // Prevent multiple connections
@@ -42,11 +44,40 @@ class WebSocketClient {
         this.reconnectAttempts = 0;
         this.emit({ type: 'connected', data: {} });
         this.startHeartbeat();
+
+        // Request catch-up for messages missed during disconnection
+        if (this.lastSeq > 0) {
+          console.log(`Requesting catch-up from seq ${this.lastSeq}`);
+          this.send({ type: 'sync', data: { last_seq: this.lastSeq } });
+        }
       };
 
       this.ws.onmessage = (event) => {
         try {
           const message: WSMessage = JSON.parse(event.data);
+
+          // Track sequence numbers for catch-up on reconnect
+          const seq = (message as any).seq;
+          if (typeof seq === 'number') {
+            // Deduplicate: skip messages we have already processed
+            if (this.seenSeqs.has(seq)) {
+              return;
+            }
+            this.seenSeqs.add(seq);
+            if (seq > this.lastSeq) {
+              this.lastSeq = seq;
+            }
+            // Prune old entries to avoid unbounded growth
+            if (this.seenSeqs.size > 5000) {
+              const cutoff = this.lastSeq - 2500;
+              const pruned = new Set<number>();
+              for (const s of this.seenSeqs) {
+                if (s >= cutoff) pruned.add(s);
+              }
+              this.seenSeqs = pruned;
+            }
+          }
+
           this.emit(message);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
