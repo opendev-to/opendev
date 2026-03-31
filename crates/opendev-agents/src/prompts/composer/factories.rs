@@ -157,6 +157,13 @@ pub fn create_default_composer(templates_dir: impl AsRef<Path>) -> PromptCompose
         true,
     );
     composer.register_section(
+        "auto_memory",
+        "system/main/main-auto-memory.md",
+        None,
+        86,
+        true,
+    );
+    composer.register_section(
         "scratchpad",
         "system/main/main-scratchpad.md",
         Some(ctx_present("session_id")),

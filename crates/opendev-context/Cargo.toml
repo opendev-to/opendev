@@ -6,6 +6,7 @@ license.workspace = true
 description = "Context engineering: compaction, validation, and context picking for OpenDev"
 
 [dependencies]
+opendev-config = { workspace = true }
 opendev-models = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

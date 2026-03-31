@@ -19,18 +19,6 @@ fn test_config_roundtrip() {
 }
 
 #[test]
-fn test_scoring_weights_validation() {
-    let valid = PlaybookScoringWeights::default();
-    assert!(valid.validate().is_ok());
-
-    let invalid = PlaybookScoringWeights {
-        effectiveness: 1.5,
-        ..Default::default()
-    };
-    assert!(invalid.validate().is_err());
-}
-
-#[test]
 fn test_partial_config_deserialization() {
     // Should fill in defaults for missing fields
     let json = r#"{"model_provider": "openai", "model": "gpt-4"}"#;

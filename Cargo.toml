@@ -6,7 +6,6 @@ members = [
     "crates/opendev-http",
     "crates/opendev-context",
     "crates/opendev-history",
-    "crates/opendev-memory",
     "crates/opendev-tools-core",
     "crates/opendev-tools-impl",
     "crates/opendev-tools-lsp",
@@ -100,7 +99,6 @@ opendev-config = { version = "0.1.6", path = "crates/opendev-config" }
 opendev-http = { version = "0.1.6", path = "crates/opendev-http" }
 opendev-context = { version = "0.1.6", path = "crates/opendev-context" }
 opendev-history = { version = "0.1.6", path = "crates/opendev-history" }
-opendev-memory = { version = "0.1.6", path = "crates/opendev-memory" }
 opendev-tools-core = { version = "0.1.6", path = "crates/opendev-tools-core" }
 opendev-tools-impl = { version = "0.1.6", path = "crates/opendev-tools-impl" }
 opendev-tools-lsp = { version = "0.1.6", path = "crates/opendev-tools-lsp" }

@@ -95,6 +95,47 @@ impl ArtifactIndex {
     pub fn from_json(value: &serde_json::Value) -> Option<Self> {
         serde_json::from_value(value.clone()).ok()
     }
+
+    /// Save the artifact index to a file as JSON (atomic write).
+    pub fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &json)?;
+        std::fs::rename(&tmp, path)
+    }
+
+    /// Load an artifact index from a JSON file.
+    pub fn load_from_file(path: &std::path::Path) -> Option<Self> {
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
+    /// Merge another index into this one. Newer entries win per-path; caps at 500.
+    pub fn merge(&mut self, other: &ArtifactIndex) {
+        const MAX_FILE_HISTORY_ENTRIES: usize = 500;
+
+        for (path, entry) in &other.entries {
+            match self.entries.get_mut(path) {
+                Some(existing) if entry.updated_at > existing.updated_at => {
+                    *existing = entry.clone();
+                }
+                None => {
+                    self.entries.insert(path.clone(), entry.clone());
+                }
+                _ => {}
+            }
+        }
+        // Evict oldest if over cap
+        if self.entries.len() > MAX_FILE_HISTORY_ENTRIES {
+            let mut v: Vec<_> = self.entries.drain().collect();
+            v.sort_by(|a, b| b.1.updated_at.cmp(&a.1.updated_at));
+            v.truncate(MAX_FILE_HISTORY_ENTRIES);
+            self.entries = v.into_iter().collect();
+        }
+    }
 }
 
 #[cfg(test)]

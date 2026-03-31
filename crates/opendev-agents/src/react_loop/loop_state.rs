@@ -7,8 +7,8 @@ use std::sync::atomic::AtomicBool;
 
 use crate::attachments::CollectorRunner;
 use crate::attachments::collectors::{
-    CompactionCollector, DateChangeCollector, GitStatusCollector, PlanModeCollector,
-    TodoStateCollector,
+    CompactionCollector, DateChangeCollector, GitStatusCollector, MemoryCollector,
+    PlanModeCollector, TodoStateCollector,
 };
 use crate::doom_loop::DoomLoopDetector;
 use crate::prompts::reminders::{
@@ -69,6 +69,7 @@ impl LoopState {
             Box::new(DateChangeCollector::new()),
             Box::new(GitStatusCollector::new(5)),
             Box::new(CompactionCollector::new(Arc::clone(&compaction_flag))),
+            Box::new(MemoryCollector::new(20)),
         ];
 
         Self {
@@ -88,14 +89,12 @@ impl LoopState {
             compaction_flag,
             // Note: todo reminders are handled by TodoStateCollector (live data).
             // Only task_proactive_reminder remains here as a static template nudge.
-            proactive_reminders: ProactiveReminderScheduler::new(vec![
-                ProactiveReminderConfig {
-                    name: "task_proactive_reminder",
-                    turns_since_reset: 10,
-                    turns_between: 10,
-                    class: MessageClass::Nudge,
-                },
-            ]),
+            proactive_reminders: ProactiveReminderScheduler::new(vec![ProactiveReminderConfig {
+                name: "task_proactive_reminder",
+                turns_since_reset: 10,
+                turns_between: 10,
+                class: MessageClass::Nudge,
+            }]),
         }
     }
 }

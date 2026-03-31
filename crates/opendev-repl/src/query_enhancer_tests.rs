@@ -72,7 +72,7 @@ fn test_enhance_query_image_blocks() {
 #[test]
 fn test_prepare_messages_basic() {
     let (_dir, enh) = tmp_enhancer();
-    let msgs = enh.prepare_messages("hello", "hello", "You are helpful.", None, &[], false, None);
+    let msgs = enh.prepare_messages("hello", "hello", "You are helpful.", None, &[], false);
     assert_eq!(msgs.len(), 1); // just system message
     assert_eq!(msgs[0]["role"], "system");
     assert_eq!(msgs[0]["content"], "You are helpful.");
@@ -85,15 +85,7 @@ fn test_prepare_messages_with_session() {
         json!({"role": "user", "content": "hi"}),
         json!({"role": "assistant", "content": "hello"}),
     ];
-    let msgs = enh.prepare_messages(
-        "hi",
-        "hi",
-        "system prompt",
-        Some(&session),
-        &[],
-        false,
-        None,
-    );
+    let msgs = enh.prepare_messages("hi", "hi", "system prompt", Some(&session), &[], false);
     // system + user + assistant
     assert_eq!(msgs.len(), 3);
     assert_eq!(msgs[0]["role"], "system");
@@ -112,7 +104,6 @@ fn test_prepare_messages_replaces_enhanced_content() {
         Some(&session),
         &[],
         false,
-        None,
     );
     // Last user message content should be the enhanced version
     let user_msg = &msgs[1];
@@ -130,15 +121,7 @@ fn test_prepare_messages_thinking_placeholder() {
     let (_dir, enh) = tmp_enhancer();
 
     // thinking visible
-    let msgs = enh.prepare_messages(
-        "q",
-        "q",
-        "Do this: {thinking_instruction}",
-        None,
-        &[],
-        true,
-        None,
-    );
+    let msgs = enh.prepare_messages("q", "q", "Do this: {thinking_instruction}", None, &[], true);
     let content = msgs[0]["content"].as_str().unwrap();
     assert!(content.contains("reasoning"));
     assert!(!content.contains("{thinking_instruction}"));
@@ -151,28 +134,10 @@ fn test_prepare_messages_thinking_placeholder() {
         None,
         &[],
         false,
-        None,
     );
     let content = msgs[0]["content"].as_str().unwrap();
     assert!(content.contains("directly"));
     assert!(!content.contains("{thinking_instruction}"));
-}
-
-#[test]
-fn test_prepare_messages_playbook_context() {
-    let (_dir, enh) = tmp_enhancer();
-    let msgs = enh.prepare_messages(
-        "q",
-        "q",
-        "base prompt",
-        None,
-        &[],
-        false,
-        Some("- Always run tests before committing"),
-    );
-    let content = msgs[0]["content"].as_str().unwrap();
-    assert!(content.contains("## Learned Strategies"));
-    assert!(content.contains("Always run tests before committing"));
 }
 
 #[test]
@@ -190,7 +155,6 @@ fn test_prepare_messages_multimodal_images() {
         Some(&session),
         &images,
         false,
-        None,
     );
     // Last user message should be multimodal (array of content blocks)
     let user_content = &msgs[1]["content"];

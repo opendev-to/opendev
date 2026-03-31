@@ -74,9 +74,6 @@ pub struct Session {
     pub working_directory: Option<String>,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
-    /// Serialized ACE Playbook.
-    #[serde(default)]
-    pub playbook: Option<HashMap<String, serde_json::Value>>,
     /// Track file changes in this session.
     #[serde(default)]
     pub file_changes: Vec<FileChange>,
@@ -133,7 +130,6 @@ impl Session {
             context_files: Vec::new(),
             working_directory: None,
             metadata: HashMap::new(),
-            playbook: Some(HashMap::new()),
             file_changes: Vec::new(),
             channel: "cli".to_string(),
             chat_type: "direct".to_string(),

@@ -58,3 +58,92 @@ fn test_memory_list() {
     assert!(out.contains("a.md"));
     assert!(out.contains("b.md"));
 }
+
+#[test]
+fn test_resolve_memory_dir_project() {
+    let dir = resolve_memory_dir("project", Path::new("/tmp/test-project"));
+    assert!(dir.is_some());
+    let path = dir.unwrap();
+    assert!(path.to_string_lossy().contains("projects"));
+    assert!(path.to_string_lossy().contains("memory"));
+}
+
+#[test]
+fn test_resolve_memory_dir_global() {
+    let dir = resolve_memory_dir("global", Path::new("/tmp/test-project"));
+    assert!(dir.is_some());
+    let path = dir.unwrap();
+    assert!(path.to_string_lossy().ends_with(".opendev/memory"));
+}
+
+#[test]
+fn test_update_memory_index_generates_index() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("patterns.md"), "Use snake_case everywhere").unwrap();
+    std::fs::write(
+        tmp.path().join("decisions.md"),
+        "# Decisions\nWe chose Rust",
+    )
+    .unwrap();
+
+    update_memory_index(tmp.path()).unwrap();
+
+    let index = std::fs::read_to_string(tmp.path().join("MEMORY.md")).unwrap();
+    assert!(index.starts_with("# Memory Index"));
+    assert!(index.contains("[decisions.md]"));
+    assert!(index.contains("[patterns.md]"));
+    assert!(index.contains("Use snake_case everywhere"));
+}
+
+#[test]
+fn test_update_memory_index_skips_memory_md() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("MEMORY.md"), "old index").unwrap();
+    std::fs::write(tmp.path().join("notes.md"), "some notes").unwrap();
+
+    update_memory_index(tmp.path()).unwrap();
+
+    let index = std::fs::read_to_string(tmp.path().join("MEMORY.md")).unwrap();
+    assert!(index.contains("[notes.md]"));
+    assert!(!index.contains("[MEMORY.md]"));
+}
+
+#[test]
+fn test_update_memory_index_empty_dir() {
+    let tmp = TempDir::new().unwrap();
+    update_memory_index(tmp.path()).unwrap();
+
+    let index = std::fs::read_to_string(tmp.path().join("MEMORY.md")).unwrap();
+    assert_eq!(index, "# Memory Index");
+}
+
+#[test]
+fn test_extract_description_frontmatter() {
+    let content = "---\nname: test\ndescription: My description\n---\n# Content";
+    assert_eq!(extract_description(content), "My description");
+}
+
+#[test]
+fn test_extract_description_first_line() {
+    let content = "# Heading\nFirst real content line\nSecond line";
+    assert_eq!(extract_description(content), "First real content line");
+}
+
+#[test]
+fn test_extract_description_empty() {
+    assert_eq!(extract_description(""), String::new());
+    assert_eq!(extract_description("# Only heading"), String::new());
+}
+
+#[test]
+fn test_update_memory_index_skips_non_md_files() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("notes.md"), "some notes").unwrap();
+    std::fs::write(tmp.path().join("data.json"), r#"{"key": "value"}"#).unwrap();
+
+    update_memory_index(tmp.path()).unwrap();
+
+    let index = std::fs::read_to_string(tmp.path().join("MEMORY.md")).unwrap();
+    assert!(index.contains("[notes.md]"));
+    assert!(!index.contains("data.json"));
+}

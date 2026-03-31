@@ -16,14 +16,6 @@ pub const GENERATORS_GENERATOR_AGENT: &str =
 pub const GENERATORS_GENERATOR_SKILL: &str =
     include_str!("../../templates/generators/generator-skill.md");
 
-// memory/
-pub const MEMORY_MEMORY_SENTIMENT_ANALYSIS: &str =
-    include_str!("../../templates/memory/memory-sentiment-analysis.md");
-pub const MEMORY_MEMORY_TOPIC_DETECTION: &str =
-    include_str!("../../templates/memory/memory-topic-detection.md");
-pub const MEMORY_MEMORY_UPDATE_INSTRUCTIONS: &str =
-    include_str!("../../templates/memory/memory-update-instructions.md");
-
 // top-level
 pub const REMINDERS: &str = include_str!("../../templates/reminders.md");
 
@@ -45,6 +37,8 @@ pub const SYSTEM_MAIN: &str = include_str!("../../templates/system/main.md");
 // system/main/
 pub const SYSTEM_MAIN_MAIN_ACTION_SAFETY: &str =
     include_str!("../../templates/system/main/main-action-safety.md");
+pub const SYSTEM_MAIN_MAIN_AUTO_MEMORY: &str =
+    include_str!("../../templates/system/main/main-auto-memory.md");
 pub const SYSTEM_MAIN_MAIN_CODE_QUALITY: &str =
     include_str!("../../templates/system/main/main-code-quality.md");
 pub const SYSTEM_MAIN_MAIN_CODE_REFERENCES: &str =
@@ -159,7 +153,7 @@ pub const TOOLS_TOOL_WRITE_TODOS: &str = include_str!("../../templates/tools/too
 // ---------------------------------------------------------------------------
 
 /// Total number of embedded templates.
-pub const TEMPLATE_COUNT: usize = 78;
+pub const TEMPLATE_COUNT: usize = 76;
 
 /// All embedded templates indexed by their relative path.
 ///
@@ -171,20 +165,6 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     // generators
     m.insert("generators/generator-agent.md", GENERATORS_GENERATOR_AGENT);
     m.insert("generators/generator-skill.md", GENERATORS_GENERATOR_SKILL);
-
-    // memory
-    m.insert(
-        "memory/memory-sentiment-analysis.md",
-        MEMORY_MEMORY_SENTIMENT_ANALYSIS,
-    );
-    m.insert(
-        "memory/memory-topic-detection.md",
-        MEMORY_MEMORY_TOPIC_DETECTION,
-    );
-    m.insert(
-        "memory/memory-update-instructions.md",
-        MEMORY_MEMORY_UPDATE_INSTRUCTIONS,
-    );
 
     // top-level
     m.insert("reminders.md", REMINDERS);
@@ -213,6 +193,10 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     m.insert(
         "system/main/main-action-safety.md",
         SYSTEM_MAIN_MAIN_ACTION_SAFETY,
+    );
+    m.insert(
+        "system/main/main-auto-memory.md",
+        SYSTEM_MAIN_MAIN_AUTO_MEMORY,
     );
     m.insert(
         "system/main/main-code-quality.md",
@@ -403,15 +387,6 @@ pub fn subagent_templates() -> Vec<(&'static str, &'static str)> {
     TEMPLATES
         .iter()
         .filter(|(k, _)| k.starts_with("subagents/"))
-        .map(|(&k, &v)| (k, v))
-        .collect()
-}
-
-/// Get all embedded templates in the `memory/` category.
-pub fn memory_templates() -> Vec<(&'static str, &'static str)> {
-    TEMPLATES
-        .iter()
-        .filter(|(k, _)| k.starts_with("memory/"))
         .map(|(&k, &v)| (k, v))
         .collect()
 }

@@ -86,6 +86,7 @@ fn test_environment_context_format_prompt_block() {
         directory_tree: Some("project/\n├── src/\n└── Cargo.toml".to_string()),
         instruction_files: vec![],
         model_name: Some("gpt-4o".to_string()),
+        memory_content: None,
     };
 
     let block = ctx.format_prompt_block();

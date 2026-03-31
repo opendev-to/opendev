@@ -53,6 +53,7 @@ pub const SKILL: &str = "Skill";
 pub const TOOL_SEARCH: &str = "ToolSearch";
 pub const ASK_USER_QUESTION: &str = "AskUserQuestion";
 pub const LSP: &str = "LSP";
+pub const MEMORY: &str = "memory";
 
 /// Old-to-new name mappings for backward compatibility.
 /// Used by the alias system during migration.

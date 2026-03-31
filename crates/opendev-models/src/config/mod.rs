@@ -88,100 +88,6 @@ impl Default for OperationConfig {
     }
 }
 
-// ── PlaybookConfig ──
-
-/// Scoring weights for ACE playbook bullet selection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaybookScoringWeights {
-    #[serde(default = "default_effectiveness")]
-    pub effectiveness: f64,
-    #[serde(default = "default_recency")]
-    pub recency: f64,
-    #[serde(default = "default_semantic")]
-    pub semantic: f64,
-}
-
-fn default_effectiveness() -> f64 {
-    0.5
-}
-fn default_recency() -> f64 {
-    0.3
-}
-fn default_semantic() -> f64 {
-    0.2
-}
-
-impl Default for PlaybookScoringWeights {
-    fn default() -> Self {
-        Self {
-            effectiveness: 0.5,
-            recency: 0.3,
-            semantic: 0.2,
-        }
-    }
-}
-
-impl PlaybookScoringWeights {
-    /// Validate that all weights are between 0.0 and 1.0.
-    pub fn validate(&self) -> Result<(), String> {
-        for (name, value) in [
-            ("effectiveness", self.effectiveness),
-            ("recency", self.recency),
-            ("semantic", self.semantic),
-        ] {
-            if !(0.0..=1.0).contains(&value) {
-                return Err(format!(
-                    "{name} weight must be between 0.0 and 1.0, got {value}"
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-/// ACE playbook configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaybookConfig {
-    #[serde(default = "default_max_strategies")]
-    pub max_strategies: u32,
-    #[serde(default = "default_true")]
-    pub use_selection: bool,
-    #[serde(default = "default_embedding_model")]
-    pub embedding_model: String,
-    #[serde(default = "default_embedding_provider")]
-    pub embedding_provider: String,
-    #[serde(default)]
-    pub scoring_weights: PlaybookScoringWeights,
-    #[serde(default = "default_true")]
-    pub cache_embeddings: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_file: Option<String>,
-}
-
-fn default_max_strategies() -> u32 {
-    30
-}
-fn default_embedding_model() -> String {
-    "text-embedding-3-small".to_string()
-}
-fn default_embedding_provider() -> String {
-    "openai".to_string()
-}
-
-impl Default for PlaybookConfig {
-    fn default() -> Self {
-        Self {
-            max_strategies: 30,
-            use_selection: true,
-            embedding_model: "text-embedding-3-small".to_string(),
-            embedding_provider: "openai".to_string(),
-            scoring_weights: PlaybookScoringWeights::default(),
-            cache_embeddings: true,
-            cache_file: None,
-        }
-    }
-}
-
 // ── AppConfig ──
 
 /// Application configuration.
@@ -249,10 +155,6 @@ pub struct AppConfig {
     // Session intelligence
     #[serde(default = "default_true")]
     pub topic_detection: bool,
-
-    // ACE Playbook settings
-    #[serde(default)]
-    pub playbook: PlaybookConfig,
 
     // Plan mode configuration
     #[serde(default = "default_plan_mode_workflow")]
@@ -373,7 +275,6 @@ impl Default for AppConfig {
             operation: OperationConfig::default(),
             max_undo_history: 50,
             topic_detection: true,
-            playbook: PlaybookConfig::default(),
             plan_mode_workflow: "5-phase".to_string(),
             plan_mode_explore_agent_count: 3,
             plan_mode_plan_agent_count: 1,

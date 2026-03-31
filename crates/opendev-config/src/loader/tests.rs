@@ -408,36 +408,6 @@ fn test_cross_field_default_config_no_warnings() {
         warnings
     );
 }
-
-#[test]
-fn test_cross_field_playbook_weights_sum() {
-    let mut config = AppConfig::default();
-    config.playbook.scoring_weights.effectiveness = 0.9;
-    config.playbook.scoring_weights.recency = 0.9;
-    config.playbook.scoring_weights.semantic = 0.9;
-    let warnings = ConfigLoader::validate_cross_field(&config);
-    assert!(
-        warnings.iter().any(|w| w.contains("scoring weights sum")),
-        "Should warn about weights summing to 2.7: {:?}",
-        warnings
-    );
-}
-
-#[test]
-fn test_cross_field_playbook_weights_near_one_ok() {
-    let mut config = AppConfig::default();
-    // Default weights sum to exactly 1.0
-    config.playbook.scoring_weights.effectiveness = 0.5;
-    config.playbook.scoring_weights.recency = 0.3;
-    config.playbook.scoring_weights.semantic = 0.2;
-    let warnings = ConfigLoader::validate_cross_field(&config);
-    assert!(
-        !warnings.iter().any(|w| w.contains("scoring weights")),
-        "Weights summing to 1.0 should not warn: {:?}",
-        warnings
-    );
-}
-
 #[test]
 fn test_cross_field_zero_explore_agents() {
     let mut config = AppConfig::default();

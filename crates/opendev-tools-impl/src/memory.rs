@@ -10,13 +10,29 @@ use opendev_tools_core::{BaseTool, ToolContext, ToolDisplayMeta, ToolResult};
 pub struct MemoryTool;
 
 impl MemoryTool {
-    /// Default memory directory under the user's home.
-    fn memory_dir() -> Option<PathBuf> {
-        dirs::home_dir().map(|h| h.join(".opendev").join("memory"))
-    }
-
     /// Maximum file size to read (256 KB).
     const MAX_READ_SIZE: u64 = 256 * 1024;
+    /// Maximum lines in MEMORY.md index.
+    const MAX_INDEX_LINES: usize = 200;
+    /// Maximum bytes in MEMORY.md index.
+    const MAX_INDEX_BYTES: usize = 25 * 1024;
+}
+
+/// Resolve the memory directory based on scope and working directory.
+fn resolve_memory_dir(scope: &str, working_dir: &Path) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    match scope {
+        "global" => Some(home.join(".opendev").join("memory")),
+        _ => {
+            let encoded = opendev_config::paths::encode_project_path(working_dir);
+            Some(
+                home.join(".opendev")
+                    .join("projects")
+                    .join(encoded)
+                    .join("memory"),
+            )
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -26,7 +42,10 @@ impl BaseTool for MemoryTool {
     }
 
     fn description(&self) -> &str {
-        "Read, write, or search persistent memory files stored in ~/.opendev/memory/."
+        "Read, write, search, or list persistent memory files. \
+         Use 'scope' to target project-specific or global storage. \
+         Project scope (default) stores at ~/.opendev/projects/<id>/memory/. \
+         Global scope stores at ~/.opendev/memory/."
     }
 
     fn parameter_schema(&self) -> serde_json::Value {
@@ -49,6 +68,11 @@ impl BaseTool for MemoryTool {
                 "query": {
                     "type": "string",
                     "description": "Search query (for search action)"
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["project", "global"],
+                    "description": "Memory scope: 'project' (default) or 'global'"
                 }
             },
             "required": ["action"]
@@ -58,16 +82,21 @@ impl BaseTool for MemoryTool {
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> ToolResult {
         let action = match args.get("action").and_then(|v| v.as_str()) {
             Some(a) => a,
             None => return ToolResult::fail("action is required"),
         };
 
-        let memory_dir = match Self::memory_dir() {
+        let scope = args
+            .get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("project");
+
+        let memory_dir = match resolve_memory_dir(scope, &ctx.working_dir) {
             Some(d) => d,
-            None => return ToolResult::fail("Cannot determine home directory"),
+            None => return ToolResult::fail("Cannot determine memory directory"),
         };
 
         match action {
@@ -87,7 +116,11 @@ impl BaseTool for MemoryTool {
                     Some(c) => c,
                     None => return ToolResult::fail("content is required for write"),
                 };
-                memory_write(&memory_dir, file, content)
+                let result = memory_write(&memory_dir, file, content);
+                if result.success {
+                    let _ = update_memory_index(&memory_dir);
+                }
+                result
             }
             "search" => {
                 let query = match args.get("query").and_then(|v| v.as_str()) {
@@ -272,6 +305,99 @@ fn memory_list(dir: &Path) -> ToolResult {
     }
 
     ToolResult::ok(output)
+}
+
+/// Regenerate the MEMORY.md index from all `.md` files in the directory.
+fn update_memory_index(dir: &Path) -> std::io::Result<()> {
+    let entries = std::fs::read_dir(dir)?;
+
+    let mut files: Vec<(String, String)> = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Skip MEMORY.md itself and non-markdown files
+        if name == "MEMORY.md" || !name.ends_with(".md") {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let description = extract_description(&content);
+        files.push((name, description));
+    }
+
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut index = String::from("# Memory Index\n");
+    for (name, desc) in &files {
+        let line = if desc.is_empty() {
+            format!("- [{name}]({name})\n")
+        } else {
+            format!("- [{name}]({name}) — {desc}\n")
+        };
+        index.push_str(&line);
+    }
+
+    // Cap at limits
+    let truncated: String = index
+        .lines()
+        .take(MemoryTool::MAX_INDEX_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let final_content = if truncated.len() > MemoryTool::MAX_INDEX_BYTES {
+        &truncated[..MemoryTool::MAX_INDEX_BYTES]
+    } else {
+        &truncated
+    };
+
+    // Atomic write
+    let index_path = dir.join("MEMORY.md");
+    let tmp_path = dir.join("MEMORY.md.tmp");
+    std::fs::write(&tmp_path, final_content)?;
+    std::fs::rename(&tmp_path, &index_path)?;
+
+    Ok(())
+}
+
+/// Extract a description from file content.
+///
+/// If the file has YAML frontmatter with a `description:` field, use that.
+/// Otherwise, use the first non-empty content line.
+fn extract_description(content: &str) -> String {
+    let trimmed = content.trim();
+
+    // Check for YAML frontmatter
+    if let Some(rest) = trimmed.strip_prefix("---")
+        && let Some(end) = rest.find("---")
+    {
+        let frontmatter = &rest[..end];
+        for line in frontmatter.lines() {
+            let line = line.trim();
+            if let Some(desc) = line.strip_prefix("description:") {
+                let desc = desc.trim().trim_matches('"').trim_matches('\'');
+                if !desc.is_empty() {
+                    return desc.to_string();
+                }
+            }
+        }
+    }
+
+    // Fall back to first non-empty, non-heading line
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if !line.is_empty() && !line.starts_with('#') && !line.starts_with("---") {
+            return line.to_string();
+        }
+    }
+
+    String::new()
 }
 
 #[cfg(test)]

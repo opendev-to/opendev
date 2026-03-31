@@ -3993,7 +3993,6 @@ dependencies = [
  "opendev-config",
  "opendev-context",
  "opendev-http",
- "opendev-memory",
  "opendev-models",
  "opendev-runtime",
  "opendev-tools-core",
@@ -4083,6 +4082,7 @@ dependencies = [
  "chrono",
  "dirs-next",
  "glob",
+ "opendev-config",
  "opendev-models",
  "regex",
  "serde",
@@ -4165,21 +4165,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "opendev-memory"
-version = "0.1.6"
-dependencies = [
- "chrono",
- "opendev-models",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
 ]
 
 [[package]]

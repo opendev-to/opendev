@@ -134,7 +134,6 @@ impl AgentRuntime {
             Some(&session_messages),
             &image_blocks,
             false, // thinking_visible
-            None,  // playbook_context
         );
 
         // Step 4: Get tool schemas for the LLM
@@ -315,6 +314,20 @@ impl AgentRuntime {
             warn!("Failed to save session: {e}");
         }
 
+        // Step 8b: Persist file history (best-effort)
+        if let Ok(idx) = self.artifact_index.lock()
+            && !idx.is_empty()
+        {
+            let paths = opendev_config::paths::Paths::new(Some(self.working_dir.clone()));
+            let fh_path = paths.project_file_history();
+            let mut global =
+                opendev_context::ArtifactIndex::load_from_file(&fh_path).unwrap_or_default();
+            global.merge(&idx);
+            if let Err(e) = global.save_to_file(&fh_path) {
+                warn!("Failed to save file history: {e}");
+            }
+        }
+
         // Step 9: Auto-detect session title (1st message + every 5th user message)
         if self.topic_detector.is_enabled() {
             let (should_detect, current_title) = self
@@ -492,7 +505,6 @@ impl AgentRuntime {
             Some(&session_messages),
             &[],
             false,
-            None,
         );
 
         // 4. Run the react loop

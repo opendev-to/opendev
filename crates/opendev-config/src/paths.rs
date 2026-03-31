@@ -27,6 +27,7 @@ pub const HISTORY_FILE_NAME: &str = "history.txt";
 pub const KNOWN_MARKETPLACES_FILE_NAME: &str = "known_marketplaces.json";
 pub const INSTALLED_PLUGINS_FILE_NAME: &str = "installed_plugins.json";
 pub const BUNDLES_FILE_NAME: &str = "bundles.json";
+pub const MEMORY_DIR_NAME: &str = "memory";
 
 // Environment variable names for overrides
 pub const ENV_OPENDEV_DIR: &str = "OPENDEV_DIR";
@@ -166,6 +167,36 @@ impl Paths {
     /// Get global command history file path.
     pub fn global_history_file(&self) -> PathBuf {
         self.global_dir().join(HISTORY_FILE_NAME)
+    }
+
+    // ========================================================================
+    // Memory Paths
+    // ========================================================================
+
+    /// Get global memory directory (`~/.opendev/memory/`).
+    pub fn global_memory_dir(&self) -> PathBuf {
+        self.global_dir().join(MEMORY_DIR_NAME)
+    }
+
+    /// Get the project-scoped memory directory (`~/.opendev/projects/{encoded}/memory/`).
+    pub fn project_memory_dir(&self) -> PathBuf {
+        let encoded = encode_project_path(&self.working_dir);
+        self.global_projects_dir()
+            .join(encoded)
+            .join(MEMORY_DIR_NAME)
+    }
+
+    /// Get the project MEMORY.md index file path.
+    pub fn project_memory_index(&self) -> PathBuf {
+        self.project_memory_dir().join("MEMORY.md")
+    }
+
+    /// Get the project-scoped file history path.
+    pub fn project_file_history(&self) -> PathBuf {
+        let encoded = encode_project_path(&self.working_dir);
+        self.global_projects_dir()
+            .join(encoded)
+            .join("file-history.json")
     }
 
     // ========================================================================

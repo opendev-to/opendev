@@ -121,7 +121,6 @@ fn test_python_session_compat() {
         "context_files": ["src/main.py"],
         "working_directory": "/home/user/project",
         "metadata": {"title": "Test session", "tags": ["rust", "python"]},
-        "playbook": {"strategy": "default"},
         "file_changes": [
             {
                 "id": "fc-001",

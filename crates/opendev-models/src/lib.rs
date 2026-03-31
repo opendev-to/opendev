@@ -19,8 +19,7 @@ pub mod validator;
 // Re-export commonly used types at crate root
 pub use config::{
     AgentConfigInline, AppConfig, AutoModeConfig, ChannelsConfig, DmPolicy, ModelVariant,
-    OperationConfig, PermissionConfig, PlaybookConfig, PlaybookScoringWeights,
-    TelegramChannelConfig, ToolPermission,
+    OperationConfig, PermissionConfig, TelegramChannelConfig, ToolPermission,
 };
 pub use file_change::{FileChange, FileChangeType};
 pub use message::{ChatMessage, InputProvenance, ProvenanceKind, Role, ToolCall};

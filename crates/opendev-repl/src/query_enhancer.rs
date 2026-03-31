@@ -91,12 +91,10 @@ impl QueryEnhancer {
     /// * `session_messages` - Existing conversation messages (if any)
     /// * `image_blocks` - Multimodal image blocks from enhancement
     /// * `thinking_visible` - Whether thinking mode is visible to the user
-    /// * `playbook_context` - Optional learned-strategies text to append
     ///
     /// # Returns
     ///
     /// A `Vec<Value>` of message objects ready for the LLM API.
-    #[allow(clippy::too_many_arguments)]
     pub fn prepare_messages(
         &self,
         query: &str,
@@ -105,7 +103,6 @@ impl QueryEnhancer {
         session_messages: Option<&[Value]>,
         image_blocks: &[ImageBlock],
         thinking_visible: bool,
-        playbook_context: Option<&str>,
     ) -> Vec<Value> {
         // Start with session messages or empty vec
         let mut messages: Vec<Value> = match session_messages {
@@ -134,17 +131,6 @@ impl QueryEnhancer {
                 THINKING_OFF_INSTRUCTION
             };
             system_content = system_content.replace("{thinking_instruction}", thinking_text);
-        }
-
-        // Append playbook context if present
-        if let Some(playbook) = playbook_context
-            && !playbook.is_empty()
-        {
-            system_content = format!(
-                "{}\n\n## Learned Strategies\n{}",
-                system_content.trim_end(),
-                playbook
-            );
         }
 
         // Insert or update system message at position 0

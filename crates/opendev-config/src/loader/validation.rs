@@ -78,7 +78,6 @@ impl ConfigLoader {
             "operation",
             "max_undo_history",
             "topic_detection",
-            "playbook",
             "plan_mode_workflow",
             "plan_mode_explore_agent_count",
             "plan_mode_plan_agent_count",
@@ -203,18 +202,7 @@ impl ConfigLoader {
             }
         }
 
-        // 2. Playbook scoring weights should roughly sum to 1.0
-        let weights = &config.playbook.scoring_weights;
-        let sum = weights.effectiveness + weights.recency + weights.semantic;
-        if (sum - 1.0).abs() > 0.1 {
-            warnings.push(format!(
-                "playbook scoring weights sum to {sum:.2} (expected ~1.0): \
-                 effectiveness={}, recency={}, semantic={}",
-                weights.effectiveness, weights.recency, weights.semantic
-            ));
-        }
-
-        // 3. Plan mode agent counts
+        // 2. Plan mode agent counts
         if config.plan_mode_explore_agent_count == 0 {
             warnings.push(
                 "plan_mode_explore_agent_count is 0 — plan mode exploration will be skipped"

@@ -22,6 +22,11 @@ pub struct InstructionFile {
     pub content: String,
 }
 
+/// Maximum memory content size to inject (25 KB).
+const MAX_MEMORY_BYTES: usize = 25 * 1024;
+/// Maximum lines for MEMORY.md injection.
+const MAX_MEMORY_LINES: usize = 200;
+
 /// Collected environment context for system prompt injection.
 #[derive(Debug, Clone, Default)]
 pub struct EnvironmentContext {
@@ -53,6 +58,8 @@ pub struct EnvironmentContext {
     pub instruction_files: Vec<InstructionFile>,
     /// Model name (set by CLI after collection).
     pub model_name: Option<String>,
+    /// Project memory content (MEMORY.md), loaded at startup.
+    pub memory_content: Option<String>,
 }
 
 impl EnvironmentContext {
@@ -73,6 +80,7 @@ impl EnvironmentContext {
             git_remote_url,
             directory_tree,
             instruction_files,
+            memory_content,
         ) = if is_git {
             std::thread::scope(|s| {
                 let h_branch = s.spawn(|| {
@@ -85,6 +93,7 @@ impl EnvironmentContext {
                     s.spawn(|| project::git_cmd(working_dir, &["remote", "get-url", "origin"]));
                 let h_tree = s.spawn(|| project::build_directory_tree(working_dir, 2));
                 let h_instr = s.spawn(|| instructions::discover_instruction_files(working_dir));
+                let h_memory = s.spawn(|| load_project_memory(working_dir));
 
                 (
                     h_branch.join().unwrap_or(None),
@@ -94,11 +103,13 @@ impl EnvironmentContext {
                     h_remote.join().unwrap_or(None),
                     h_tree.join().unwrap_or(None),
                     h_instr.join().unwrap_or_default(),
+                    h_memory.join().unwrap_or(None),
                 )
             })
         } else {
             let directory_tree = project::build_directory_tree(working_dir, 2);
             let instruction_files = instructions::discover_instruction_files(working_dir);
+            let memory_content = load_project_memory(working_dir);
             (
                 None,
                 None,
@@ -107,6 +118,7 @@ impl EnvironmentContext {
                 None,
                 directory_tree,
                 instruction_files,
+                memory_content,
             )
         };
 
@@ -132,6 +144,7 @@ impl EnvironmentContext {
             directory_tree,
             instruction_files,
             model_name: None,
+            memory_content,
         }
     }
 
@@ -231,7 +244,35 @@ impl EnvironmentContext {
             sections.push(instr_lines.join("\n"));
         }
 
+        // Project memory section
+        if let Some(ref memory) = self.memory_content {
+            sections.push(format!(
+                "# Project Memory\n\
+                 Your persistent memory for this project (from MEMORY.md). \
+                 Use the `memory` tool to update.\n\n{memory}"
+            ));
+        }
+
         sections.join("\n\n")
+    }
+}
+
+/// Load project-scoped MEMORY.md for system prompt injection.
+fn load_project_memory(working_dir: &Path) -> Option<String> {
+    let paths = opendev_config::paths::Paths::new(Some(working_dir.to_path_buf()));
+    let content = std::fs::read_to_string(paths.project_memory_index()).ok()?;
+    if content.trim().is_empty() {
+        return None;
+    }
+    let truncated: String = content
+        .lines()
+        .take(MAX_MEMORY_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if truncated.len() > MAX_MEMORY_BYTES {
+        Some(truncated[..MAX_MEMORY_BYTES].to_string())
+    } else {
+        Some(truncated)
     }
 }
 
