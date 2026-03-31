@@ -86,10 +86,37 @@ impl App {
                     ..
                 }) = self.state.pending_queue.pop_front()
                 {
-                    // Inject as a tool-result pair (not a user message) so the LLM
-                    // sees it as the outcome of its own spawn_subagent call rather
-                    // than user-provided text.  Serialize as JSON sentinel for the
-                    // tui_runner to parse and handle.
+                    // Push a display-layer tool call boundary so that
+                    // handle_agent_chunk sees tool_call.is_some() on the last
+                    // message and creates a NEW assistant message for the LLM's
+                    // synthesized response — matching the foreground subagent flow.
+                    let mut arguments = std::collections::HashMap::new();
+                    arguments.insert(
+                        "task_id".to_string(),
+                        serde_json::json!(&task_id),
+                    );
+                    self.state.messages.push(super::DisplayMessage {
+                        role: super::DisplayRole::Assistant,
+                        content: String::new(),
+                        tool_call: Some(super::DisplayToolCall {
+                            name: "get_background_result".to_string(),
+                            arguments,
+                            summary: None,
+                            success: true,
+                            collapsed: false,
+                            result_lines: vec![format!(
+                                "Background task [{task_id}] completed ({tool_call_count} tools) for: {query}"
+                            )],
+                            nested_calls: Vec::new(),
+                            error_text: None,
+                        }),
+                        collapsed: false,
+                        thinking_started_at: None,
+                        thinking_duration_secs: None,
+                    });
+
+                    // Send to the tui_runner as a tool-result injection (not a
+                    // user message) so the LLM sees it as a tool call outcome.
                     let payload = serde_json::json!({
                         "task_id": task_id,
                         "query": query,
