@@ -25,6 +25,7 @@ pub mod file_watcher;
 pub mod gitignore;
 pub mod interrupt;
 pub mod lazy_init;
+pub mod mailbox;
 pub mod permissions;
 pub mod plan_approval;
 pub mod plan_index;
@@ -69,6 +70,7 @@ pub use gitignore::GitIgnoreParser;
 pub use lazy_init::{
     LazyEmbeddings, LazyLsp, LazyMcp, LazySubsystem, SyncLazy, create_lazy_subsystems,
 };
+pub use mailbox::{Mailbox, MailboxMessage, MessageType};
 pub use permissions::{PermissionAction, PermissionRule, PermissionRuleSet, is_sensitive_file};
 pub use plan_approval::{
     PlanApprovalReceiver, PlanApprovalRequest, PlanApprovalSender, PlanDecision,
