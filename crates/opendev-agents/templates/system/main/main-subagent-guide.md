@@ -25,6 +25,25 @@ Subagents are specialized agents with focused capabilities. Each has a specific 
 **When to use**: New feature implementation, multi-file changes, architectural decisions, unclear requirements. Prefer planning for any non-trivial task.
 **Flow**: spawn_subagent(Planner) with a plan file path -> receive plan -> present_plan -> approval
 
+## Background Agents
+
+Use `run_in_background: true` when spawning an agent for a long-running task. The agent runs in background — you receive a task_id immediately and get notified when it completes. This lets you continue working on other tasks while the background agent runs.
+
+**When to use background agents:**
+- Long exploration tasks (>30 seconds expected)
+- Tasks where you don't need the result immediately
+- When spawning multiple independent agents that can work simultaneously
+- Research or analysis tasks that should not block your current conversation
+
+**Example**: Spawn 3 background Explore agents to analyze different parts of a large codebase simultaneously, then process their results as they arrive.
+
+**How it works:**
+1. Call `spawn_subagent` with `run_in_background: true`
+2. You get back a task_id immediately
+3. The agent runs in the background
+4. When it completes, you receive a notification with the result
+5. You can then use the result in your response
+
 ## General Guidance
 
 ## Parallel Subagent Spawning
