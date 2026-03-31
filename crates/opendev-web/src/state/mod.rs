@@ -17,7 +17,6 @@ use opendev_config::ModelRegistry;
 use opendev_history::SessionManager;
 use opendev_http::UserStore;
 use opendev_models::AppConfig;
-use opendev_runtime::directory_context::DirectoryRegistry;
 
 /// WebSocket broadcast message.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -87,8 +86,6 @@ pub(super) struct AppStateInner {
     pub(super) broadcast_seq: AtomicU64,
     /// Ring buffer of recent broadcasts for client catch-up on reconnect.
     pub(super) recent_broadcasts: Mutex<VecDeque<WsBroadcast>>,
-    /// Per-directory isolation registry (optional).
-    pub(super) directory_registry: Option<Arc<DirectoryRegistry>>,
 }
 
 /// Bridge mode state: when the TUI owns agent execution and
@@ -206,26 +203,6 @@ impl AppState {
         user_store: UserStore,
         model_registry: ModelRegistry,
     ) -> Self {
-        Self::with_directory_registry(
-            session_manager,
-            config,
-            working_dir,
-            user_store,
-            model_registry,
-            None,
-        )
-    }
-
-    /// Create a new AppState with an optional [`DirectoryRegistry`] for
-    /// per-directory isolation.
-    pub fn with_directory_registry(
-        session_manager: SessionManager,
-        config: AppConfig,
-        working_dir: String,
-        user_store: UserStore,
-        model_registry: ModelRegistry,
-        directory_registry: Option<Arc<DirectoryRegistry>>,
-    ) -> Self {
         let (ws_tx, _) = broadcast::channel(256);
         Self {
             inner: Arc::new(AppStateInner {
@@ -247,7 +224,6 @@ impl AppState {
                 bridge: RwLock::new(BridgeState::default()),
                 broadcast_seq: AtomicU64::new(1),
                 recent_broadcasts: Mutex::new(VecDeque::with_capacity(RING_BUFFER_CAPACITY)),
-                directory_registry,
             }),
         }
     }
@@ -287,28 +263,6 @@ impl AppState {
     /// Get the working directory.
     pub fn working_dir(&self) -> &str {
         &self.inner.working_dir
-    }
-
-    /// Get the directory registry (if per-directory isolation is enabled).
-    pub fn directory_registry(&self) -> Option<&Arc<DirectoryRegistry>> {
-        self.inner.directory_registry.as_ref()
-    }
-
-    /// Resolve the effective working directory from a request.
-    ///
-    /// Checks the following sources in order:
-    /// 1. The provided `query_param` (from `?directory=...`)
-    /// 2. The provided `header_value` (from `X-OpenDev-Directory` header)
-    /// 3. Falls back to [`Self::working_dir`]
-    pub fn resolve_working_dir<'a>(
-        &'a self,
-        query_param: Option<&'a str>,
-        header_value: Option<&'a str>,
-    ) -> &'a str {
-        query_param
-            .filter(|s| !s.is_empty())
-            .or_else(|| header_value.filter(|s| !s.is_empty()))
-            .unwrap_or(self.working_dir())
     }
 
     // --- User store ---

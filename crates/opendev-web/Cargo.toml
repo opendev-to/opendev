@@ -29,7 +29,6 @@ opendev-config = { workspace = true }
 opendev-history = { workspace = true }
 opendev-http = { workspace = true }
 opendev-mcp = { workspace = true }
-opendev-runtime = { workspace = true }
 
 # Futures for WebSocket streams
 futures = "0.3"

@@ -17,7 +17,6 @@ pub mod constants;
 pub mod cost_tracker;
 pub mod custom_commands;
 pub mod debug_logger;
-pub mod directory_context;
 pub mod error_handler;
 pub mod errors;
 pub mod event_bus;

@@ -1,10 +1,5 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-
 use super::RING_BUFFER_CAPACITY;
 use super::*;
-use opendev_runtime::directory_context::DirectoryRegistry;
 use tempfile::TempDir;
 
 fn make_state() -> AppState {
@@ -481,91 +476,4 @@ async fn test_catch_up_since_empty_buffer() {
     // No broadcasts yet -- should return empty vec, not None.
     let msgs = state.catch_up_since(0).await.unwrap();
     assert!(msgs.is_empty());
-}
-
-// ---------------------------------------------------------------------------
-// DirectoryRegistry integration tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_directory_registry_none_by_default() {
-    let state = make_state();
-    assert!(
-        state.directory_registry().is_none(),
-        "registry should be None when not explicitly set"
-    );
-}
-
-#[tokio::test]
-async fn test_default_session_manager_works_without_registry() {
-    // Without a registry, the default session manager is always accessible.
-    let state = make_state();
-    assert!(state.directory_registry().is_none());
-    let _sm = state.session_manager().await;
-}
-
-#[tokio::test]
-async fn test_app_state_with_registry() {
-    let tmp = TempDir::new().unwrap();
-    let tmp_path = tmp.into_path();
-    let session_manager = SessionManager::new(tmp_path.clone()).unwrap();
-    let config = AppConfig::default();
-    let user_store = UserStore::new(tmp_path.clone()).unwrap();
-    let model_registry = ModelRegistry::new();
-
-    let registry = Arc::new(DirectoryRegistry::new(
-        PathBuf::from("/tmp/sessions"),
-        Duration::from_secs(1800),
-    ));
-
-    let state = AppState::with_directory_registry(
-        session_manager,
-        config,
-        "/tmp/test".to_string(),
-        user_store,
-        model_registry,
-        Some(Arc::clone(&registry)),
-    );
-
-    assert!(state.directory_registry().is_some());
-    assert!(Arc::ptr_eq(state.directory_registry().unwrap(), &registry,));
-}
-
-#[test]
-fn test_resolve_working_dir_query_param() {
-    let state = make_state();
-    assert_eq!(
-        state.resolve_working_dir(Some("/projects/foo"), None),
-        "/projects/foo",
-    );
-}
-
-#[test]
-fn test_resolve_working_dir_header() {
-    let state = make_state();
-    assert_eq!(
-        state.resolve_working_dir(None, Some("/projects/bar")),
-        "/projects/bar",
-    );
-}
-
-#[test]
-fn test_resolve_working_dir_query_takes_precedence() {
-    let state = make_state();
-    assert_eq!(
-        state.resolve_working_dir(Some("/from/query"), Some("/from/header")),
-        "/from/query",
-    );
-}
-
-#[test]
-fn test_resolve_working_dir_falls_back_to_default() {
-    let state = make_state();
-    assert_eq!(state.resolve_working_dir(None, None), "/tmp/test");
-}
-
-#[test]
-fn test_resolve_working_dir_ignores_empty_strings() {
-    let state = make_state();
-    assert_eq!(state.resolve_working_dir(Some(""), Some("")), "/tmp/test",);
 }

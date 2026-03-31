@@ -8,7 +8,6 @@
 
 pub mod bridge;
 mod events;
-pub mod global;
 mod subscribers;
 mod utils;
 
@@ -21,7 +20,6 @@ use tracing::debug;
 // Re-export public API so that `crate::event_bus::X` paths remain unchanged.
 pub use self::bridge::create_event_bus_bridge;
 pub use self::events::{Event, EventTopic, RuntimeEvent, now_ms};
-pub use self::global::GlobalEventBus;
 pub use self::subscribers::{FilteredSubscriber, TopicSubscriber};
 pub use self::utils::{group_events_by_type, group_runtime_events_by_topic};
 
@@ -112,7 +110,5 @@ impl std::fmt::Debug for EventBus {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
-mod global_tests;
 #[cfg(test)]
 mod tests;
