@@ -511,11 +511,13 @@ impl TuiRunner {
                         let tool_call_count =
                             payload["tool_call_count"].as_u64().unwrap_or(0) as usize;
 
-                        info!(task_id, tool_call_count, "Injecting background result as tool pair");
+                        info!(
+                            task_id,
+                            tool_call_count, "Injecting background result as tool pair"
+                        );
 
                         let interrupt_token = InterruptToken::new();
-                        let _ =
-                            event_tx.send(AppEvent::SetInterruptToken(interrupt_token.clone()));
+                        let _ = event_tx.send(AppEvent::SetInterruptToken(interrupt_token.clone()));
                         let _ = event_tx.send(AppEvent::AgentStarted);
                         let _ = event_tx.send(AppEvent::TaskProgressStarted {
                             description: "Thinking".to_string(),
