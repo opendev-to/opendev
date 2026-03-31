@@ -70,7 +70,7 @@ export interface Provider {
 
 // WebSocket event types
 export interface WSMessage {
-  type: 'user_message' | 'message_start' | 'message_chunk' | 'message_complete' | 'tool_call' | 'tool_result' | 'approval_required' | 'approval_resolved' | 'error' | 'pong' | 'mcp_status_update' | 'mcp_servers_update' | 'connected' | 'disconnected' | 'thinking_block' | 'status_update' | 'ask_user_required' | 'ask_user_resolved' | 'session_activity' | 'plan_approval_required' | 'plan_approval_resolved' | 'plan_content' | 'subagent_start' | 'subagent_complete' | 'parallel_agents_start' | 'parallel_agents_done' | 'task_completed' | 'progress' | 'nested_tool_call' | 'nested_tool_result';
+  type: 'user_message' | 'message_start' | 'message_chunk' | 'message_complete' | 'tool_call' | 'tool_result' | 'approval_required' | 'approval_resolved' | 'error' | 'pong' | 'mcp_status_update' | 'mcp_servers_update' | 'connected' | 'disconnected' | 'thinking_block' | 'status_update' | 'ask_user_required' | 'ask_user_resolved' | 'session_activity' | 'plan_approval_required' | 'plan_approval_resolved' | 'plan_content' | 'subagent_start' | 'subagent_complete' | 'parallel_agents_start' | 'parallel_agents_done' | 'task_completed' | 'progress' | 'nested_tool_call' | 'nested_tool_result' | 'full_sync';
   data: any;
 }
 
