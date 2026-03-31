@@ -9,6 +9,7 @@
 //! - [`session_model`] — Per-session model configuration overlay
 //! - [`error_handler`] — Error classification, retry logic, user-facing recovery
 //! - [`errors`] — Structured error types with provider pattern matching
+//! - [`task_manager`] — Agent task lifecycle manager (background agents, teams)
 
 pub mod action_summarizer;
 pub mod approval;
@@ -35,6 +36,7 @@ pub mod session_status;
 pub mod snapshot;
 pub mod sound;
 pub mod state_snapshot;
+pub mod task_manager;
 pub mod task_scheduler;
 pub mod todo;
 pub mod tool_approval_channel;
@@ -78,6 +80,10 @@ pub use session_status::{SessionStatus, SessionStatusTracker};
 pub use snapshot::SnapshotManager;
 pub use sound::play_finish_sound;
 pub use state_snapshot::{AppStateSnapshot, SnapshotPersistence, ToolResultEntry};
+pub use task_manager::{
+    EVICT_GRACE_MS, MAX_ACTIVITY_LOG, MAX_RECENT_ACTIVITIES, PendingMessage, TaskInfo, TaskManager,
+    TaskManagerEvent, TaskState, ToolActivity,
+};
 pub use task_scheduler::TaskScheduler;
 pub use tool_approval_channel::{
     ToolApprovalDecision, ToolApprovalReceiver, ToolApprovalRequest, ToolApprovalSender,
