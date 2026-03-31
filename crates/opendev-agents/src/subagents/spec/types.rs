@@ -82,6 +82,53 @@ pub struct SubAgentSpec {
     /// Whether this agent is disabled (not available for use).
     #[serde(default)]
     pub disable: bool,
+
+    /// Permission mode override for this agent.
+    /// - `Inherit` (default): uses parent agent's permission rules
+    /// - `Autonomous`: auto-approve all tools
+    /// - `Manual`: always ask for approval
+    #[serde(default)]
+    pub permission_mode: AgentPermissionMode,
+
+    /// Isolation strategy for this agent.
+    /// - `None` (default): shares parent's working directory
+    /// - `Worktree`: runs in an isolated git worktree
+    #[serde(default)]
+    pub isolation: IsolationMode,
+
+    /// When true, this agent is spawned as a background task by default
+    /// (equivalent to `run_in_background: true`).
+    #[serde(default)]
+    pub background: bool,
+
+    /// When true, project instruction files (CLAUDE.md, AGENTS.md) are
+    /// omitted from this agent's system prompt.
+    #[serde(default)]
+    pub omit_instructions: bool,
+}
+
+/// Permission mode for an agent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentPermissionMode {
+    /// Inherit parent's permission rules (default).
+    #[default]
+    Inherit,
+    /// Auto-approve all tools without asking.
+    Autonomous,
+    /// Always ask for user approval.
+    Manual,
+}
+
+/// Isolation strategy for an agent.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IsolationMode {
+    /// No isolation — shares parent's working directory.
+    #[default]
+    None,
+    /// Runs in an isolated git worktree.
+    Worktree,
 }
 
 #[cfg(test)]

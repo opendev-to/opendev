@@ -11,4 +11,4 @@ mod types;
 pub use mode::AgentMode;
 pub use permissions::{PermissionAction, PermissionRule};
 pub(crate) use permissions::{glob_match, pattern_specificity};
-pub use types::SubAgentSpec;
+pub use types::{AgentPermissionMode, IsolationMode, SubAgentSpec};

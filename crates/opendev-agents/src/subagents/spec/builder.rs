@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::mode::AgentMode;
 use super::permissions::{PermissionAction, PermissionRule, glob_match, pattern_specificity};
-use super::types::SubAgentSpec;
+use super::types::{AgentPermissionMode, IsolationMode, SubAgentSpec};
 
 impl SubAgentSpec {
     /// Create a new subagent spec.
@@ -26,6 +26,10 @@ impl SubAgentSpec {
             color: None,
             permission: HashMap::new(),
             disable: false,
+            permission_mode: Default::default(),
+            isolation: Default::default(),
+            background: false,
+            omit_instructions: false,
         }
     }
 
@@ -92,6 +96,30 @@ impl SubAgentSpec {
     /// Mark this agent as disabled.
     pub fn with_disable(mut self, disable: bool) -> Self {
         self.disable = disable;
+        self
+    }
+
+    /// Set the permission mode override.
+    pub fn with_permission_mode(mut self, mode: AgentPermissionMode) -> Self {
+        self.permission_mode = mode;
+        self
+    }
+
+    /// Set the isolation strategy.
+    pub fn with_isolation(mut self, isolation: IsolationMode) -> Self {
+        self.isolation = isolation;
+        self
+    }
+
+    /// Auto-background this agent when spawned.
+    pub fn with_background(mut self, background: bool) -> Self {
+        self.background = background;
+        self
+    }
+
+    /// Omit project instructions from system prompt.
+    pub fn with_omit_instructions(mut self, omit: bool) -> Self {
+        self.omit_instructions = omit;
         self
     }
 

@@ -84,5 +84,9 @@ fn test_permission_serde_roundtrip() {
 fn test_permission_skipped_when_empty() {
     let spec = SubAgentSpec::new("test", "desc", "prompt");
     let json = serde_json::to_string(&spec).unwrap();
-    assert!(!json.contains("permission"));
+    // The "permission" map field (not "permission_mode") should be omitted when empty
+    assert!(
+        !json.contains("\"permission\":{") && !json.contains("\"permission\":{}"),
+        "Empty permission map should be skipped in serialization, got: {json}"
+    );
 }
