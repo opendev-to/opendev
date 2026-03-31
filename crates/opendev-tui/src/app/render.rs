@@ -26,7 +26,20 @@ impl App {
             .thinking_verb(
                 self.state.spinner.current_verb(),
                 self.state.spinner.verb_fade_intensity(),
-            );
+            )
+            .stalled_secs(
+                self.state
+                    .last_token_at
+                    .filter(|_| self.state.agent_active)
+                    .map(|t| t.elapsed().as_secs()),
+            )
+            .turn_info(
+                self.state.turn_token_count,
+                self.state
+                    .turn_started_at
+                    .map_or(0, |t| t.elapsed().as_secs()),
+            )
+            .last_tool_context(self.state.last_tool_context.as_deref());
         widget
             .build_spinner_lines()
             .iter()
@@ -95,6 +108,18 @@ impl App {
                     .thinking_verb(
                         self.state.spinner.current_verb(),
                         self.state.spinner.verb_fade_intensity(),
+                    )
+                    .stalled_secs(
+                        self.state
+                            .last_token_at
+                            .filter(|_| self.state.agent_active)
+                            .map(|t| t.elapsed().as_secs()),
+                    )
+                    .turn_info(
+                        self.state.turn_token_count,
+                        self.state
+                            .turn_started_at
+                            .map_or(0, |t| t.elapsed().as_secs()),
                     );
             if !self.state.cached_lines.is_empty() {
                 conversation = conversation.cached_lines(&self.state.cached_lines);

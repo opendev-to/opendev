@@ -381,6 +381,7 @@ pub async fn run_interactive(
                             collapsed: true,
                             thinking_started_at: None,
                             thinking_duration_secs: Some(0),
+                            thinking_finalized_at: None,
                         });
                     }
                     // Add assistant text
@@ -404,6 +405,7 @@ pub async fn run_interactive(
                             collapsed: false,
                             thinking_started_at: None,
                             thinking_duration_secs: None,
+                            thinking_finalized_at: None,
                         });
                     }
                 }

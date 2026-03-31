@@ -69,6 +69,14 @@ pub struct ConversationWidget<'a> {
     thinking_verb: &'a str,
     /// Fade-in intensity for the thinking verb (0.0 = dim, 1.0 = bright).
     verb_fade_intensity: f32,
+    /// Seconds since last token/event (None = no stall, used for spinner color).
+    stalled_secs: Option<u64>,
+    /// Context from last completed tool (e.g. "Read src/main.rs") for thinking spinner.
+    last_tool_context: Option<&'a str>,
+    /// Estimated token count for the current turn (shown after 30s).
+    turn_token_count: u64,
+    /// Seconds since the current turn started (for token counter threshold).
+    turn_elapsed_secs: u64,
 }
 
 impl<'a> ConversationWidget<'a> {
@@ -89,6 +97,10 @@ impl<'a> ConversationWidget<'a> {
             backgrounding_pending: false,
             thinking_verb: "Thinking",
             verb_fade_intensity: 1.0,
+            stalled_secs: None,
+            last_tool_context: None,
+            turn_token_count: 0,
+            turn_elapsed_secs: 0,
         }
     }
 
@@ -148,6 +160,25 @@ impl<'a> ConversationWidget<'a> {
     pub fn thinking_verb(mut self, verb: &'a str, fade_intensity: f32) -> Self {
         self.thinking_verb = verb;
         self.verb_fade_intensity = fade_intensity;
+        self
+    }
+
+    /// Set stall duration for spinner color changes (orange at 3s, red at 10s).
+    pub fn stalled_secs(mut self, secs: Option<u64>) -> Self {
+        self.stalled_secs = secs;
+        self
+    }
+
+    /// Set context from last completed tool (shown in thinking spinner).
+    pub fn last_tool_context(mut self, ctx: Option<&'a str>) -> Self {
+        self.last_tool_context = ctx;
+        self
+    }
+
+    /// Set turn token count and elapsed seconds (shown after 30s threshold).
+    pub fn turn_info(mut self, token_count: u64, elapsed_secs: u64) -> Self {
+        self.turn_token_count = token_count;
+        self.turn_elapsed_secs = elapsed_secs;
         self
     }
 
@@ -325,27 +356,58 @@ impl<'a> ConversationWidget<'a> {
                     let thinking_style = Style::default().fg(style_tokens::THINKING_BG);
 
                     if msg.collapsed {
+                        // Check if thinking just finalized (< 2s ago) — keep shimmer
+                        // to avoid jarring flicker on brief thinking blocks.
+                        let recently_finalized = msg
+                            .thinking_finalized_at
+                            .is_some_and(|t| t.elapsed().as_secs() < 2);
+
                         if let Some(secs) = msg.thinking_duration_secs {
-                            // Finalized collapsed: single summary line
-                            let duration_text = if secs == 0 {
-                                "<1".to_string()
-                            } else {
-                                secs.to_string()
-                            };
-                            lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!(
-                                        "{} Thought for {}s",
-                                        style_tokens::THINKING_ICON,
-                                        duration_text
-                                    ),
-                                    thinking_style,
-                                ),
-                                Span::styled(
+                            if recently_finalized {
+                                // Still within 2s grace period: show shimmer with duration
+                                let text = format!(
+                                    "{} Thought for {}s",
+                                    style_tokens::THINKING_ICON,
+                                    if secs == 0 {
+                                        "<1".to_string()
+                                    } else {
+                                        secs.to_string()
+                                    }
+                                );
+                                let highlight = ratatui::style::Color::Rgb(200, 200, 220);
+                                let mut spans = style_tokens::shimmer_line(
+                                    &text,
+                                    0,
+                                    style_tokens::THINKING_BG,
+                                    highlight,
+                                );
+                                spans.push(Span::styled(
                                     " (Ctrl+I to expand)",
                                     Style::default().fg(style_tokens::SUBTLE),
-                                ),
-                            ]));
+                                ));
+                                lines.push(Line::from(spans));
+                            } else {
+                                // Finalized collapsed: static summary line
+                                let duration_text = if secs == 0 {
+                                    "<1".to_string()
+                                } else {
+                                    secs.to_string()
+                                };
+                                lines.push(Line::from(vec![
+                                    Span::styled(
+                                        format!(
+                                            "{} Thought for {}s",
+                                            style_tokens::THINKING_ICON,
+                                            duration_text
+                                        ),
+                                        thinking_style,
+                                    ),
+                                    Span::styled(
+                                        " (Ctrl+I to expand)",
+                                        Style::default().fg(style_tokens::SUBTLE),
+                                    ),
+                                ]));
+                            }
                         } else if let Some(started) = msg.thinking_started_at {
                             // Streaming: shimmer wave animation
                             let elapsed = started.elapsed().as_secs();

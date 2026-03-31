@@ -13,6 +13,8 @@ pub struct DisplayMessage {
     pub thinking_started_at: Option<std::time::Instant>,
     /// Finalized thinking duration in seconds (set when thinking ends).
     pub thinking_duration_secs: Option<u64>,
+    /// When thinking was finalized (for minimum 2s display to avoid flicker).
+    pub thinking_finalized_at: Option<std::time::Instant>,
 }
 
 impl DisplayMessage {
@@ -25,6 +27,7 @@ impl DisplayMessage {
             collapsed: false,
             thinking_started_at: None,
             thinking_duration_secs: None,
+            thinking_finalized_at: None,
         }
     }
 }

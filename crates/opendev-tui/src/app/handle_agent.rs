@@ -9,6 +9,8 @@ impl App {
     pub(super) fn handle_agent_started(&mut self) {
         self.state.agent_active = true;
         self.state.backgrounded_task_info = None;
+        self.state.turn_token_count = 0;
+        self.state.turn_started_at = Some(std::time::Instant::now());
         // Clear finished (non-backgrounded) subagents from previous query
         self.state
             .active_subagents
@@ -49,6 +51,8 @@ impl App {
     pub(super) fn handle_agent_finished(&mut self) {
         self.finalize_active_thinking();
         self.state.agent_active = false;
+        self.state.last_token_at = None;
+        self.state.turn_started_at = None;
         self.state.backgrounding_pending = false;
         self.state.dirty = true;
         self.drain_next_pending();
@@ -94,6 +98,7 @@ impl App {
                 collapsed: !self.state.thinking_expanded,
                 thinking_started_at: Some(std::time::Instant::now()),
                 thinking_duration_secs: None,
+                thinking_finalized_at: None,
             });
         }
         self.state.dirty = true;

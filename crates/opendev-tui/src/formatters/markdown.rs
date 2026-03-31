@@ -152,7 +152,7 @@ impl MarkdownRenderer {
                 .or_else(|| if raw_line == ">" { Some("") } else { None })
             {
                 let mut spans = vec![Span::styled(
-                    Cow::<'static, str>::Borrowed("  │ "),
+                    Cow::<'static, str>::Owned(format!("  {} ", style_tokens::BLOCKQUOTE_BAR)),
                     Style::default()
                         .fg(style_tokens::GREY)
                         .add_modifier(base_mod),

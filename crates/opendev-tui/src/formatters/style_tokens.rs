@@ -375,6 +375,9 @@ pub fn shimmer_line(
 }
 
 // Box-drawing characters (rounded)
+/// Blockquote left bar — thicker than box-drawing │, matching Claude Code's ▎.
+pub const BLOCKQUOTE_BAR: &str = "\u{258e}";
+
 pub const BOX_TL: &str = "\u{256d}";
 pub const BOX_TR: &str = "\u{256e}";
 pub const BOX_BL: &str = "\u{2570}";

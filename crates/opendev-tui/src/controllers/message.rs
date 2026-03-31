@@ -63,6 +63,7 @@ impl MessageController {
             collapsed: false,
             thinking_started_at: None,
             thinking_duration_secs: None,
+            thinking_finalized_at: None,
         });
 
         // Auto-scroll to latest message

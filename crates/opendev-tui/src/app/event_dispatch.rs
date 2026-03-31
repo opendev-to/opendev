@@ -35,6 +35,18 @@ impl App {
             self.state.todo_items = map_todo_items(&mgr);
         }
     }
+    /// Record that the agent produced output (for stall detection in the spinner).
+    /// Optionally increments the turn token estimate.
+    pub(super) fn touch_last_token(&mut self) {
+        self.state.last_token_at = Some(std::time::Instant::now());
+    }
+
+    /// Estimate and accumulate tokens from a streaming text chunk.
+    pub(super) fn accumulate_turn_tokens(&mut self, char_count: usize) {
+        // Rough estimate: ~4 chars per token
+        self.state.turn_token_count += (char_count / 4).max(1) as u64;
+    }
+
     /// Finalize the most recent unfinalized thinking block by freezing its duration.
     /// Called when a non-reasoning event arrives (AgentChunk, ToolStarted, etc.).
     pub(super) fn finalize_active_thinking(&mut self) {
@@ -51,6 +63,7 @@ impl App {
                 // History replay or missing start time
                 msg.thinking_duration_secs = Some(0);
             }
+            msg.thinking_finalized_at = Some(std::time::Instant::now());
             self.state.message_generation += 1;
         }
     }
@@ -110,6 +123,7 @@ impl App {
                         collapsed: false,
                         thinking_started_at: None,
                         thinking_duration_secs: None,
+                        thinking_finalized_at: None,
                     });
 
                     // Send to the tui_runner as a tool-result injection (not a
@@ -243,21 +257,32 @@ impl App {
 
             // Agent events
             AppEvent::AgentStarted => self.handle_agent_started(),
-            AppEvent::AgentChunk(text) => self.handle_agent_chunk(text),
+            AppEvent::AgentChunk(text) => {
+                self.touch_last_token();
+                self.accumulate_turn_tokens(text.len());
+                self.handle_agent_chunk(text);
+            }
             AppEvent::AgentMessage(msg) => self.handle_agent_message(msg),
             AppEvent::AgentFinished => self.handle_agent_finished(),
             AppEvent::AgentError(err) => self.handle_agent_error(err),
 
             // Reasoning events
             AppEvent::ReasoningBlockStart => self.handle_reasoning_block_start(),
-            AppEvent::ReasoningContent(content) => self.handle_reasoning_content(content),
+            AppEvent::ReasoningContent(content) => {
+                self.touch_last_token();
+                self.accumulate_turn_tokens(content.len());
+                self.handle_reasoning_content(content);
+            }
 
             // Tool events
             AppEvent::ToolStarted {
                 tool_id,
                 tool_name,
                 args,
-            } => self.handle_tool_started(tool_id, tool_name, args),
+            } => {
+                self.touch_last_token();
+                self.handle_tool_started(tool_id, tool_name, args);
+            }
             AppEvent::ToolOutput { tool_id, output } => self.handle_tool_output(tool_id, output),
             AppEvent::ToolResult {
                 tool_id,
@@ -265,7 +290,10 @@ impl App {
                 output,
                 success,
                 args: result_args,
-            } => self.handle_tool_result(tool_id, tool_name, output, success, result_args),
+            } => {
+                self.touch_last_token();
+                self.handle_tool_result(tool_id, tool_name, output, success, result_args);
+            }
             AppEvent::ToolFinished { tool_id, success } => {
                 self.handle_tool_finished(tool_id, success)
             }
@@ -299,7 +327,10 @@ impl App {
                 tool_id,
                 args,
                 ..
-            } => self.handle_subagent_tool_call(subagent_id, tool_name, tool_id, args),
+            } => {
+                self.touch_last_token();
+                self.handle_subagent_tool_call(subagent_id, tool_name, tool_id, args);
+            }
             AppEvent::SubagentToolComplete {
                 subagent_id,
                 tool_name,
@@ -330,7 +361,8 @@ impl App {
 
             // Task progress events
             AppEvent::TaskProgressStarted { description } => {
-                self.handle_task_progress_started(description)
+                self.touch_last_token();
+                self.handle_task_progress_started(description);
             }
             AppEvent::TaskProgressFinished => self.handle_task_progress_finished(),
 

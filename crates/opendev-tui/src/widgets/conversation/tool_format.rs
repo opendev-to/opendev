@@ -36,18 +36,26 @@ pub(crate) fn format_tool_call(tc: &DisplayToolCall, working_dir: Option<&str>) 
     tool_line_completed(vec![], tc.success, verb, arg, None, ToolLineStyle::Primary)
 }
 
-/// Format a nested tool call with ⎿ continuation indent (Python style).
+/// Format a nested tool call with indentation.
+///
+/// At depth 0, shows the `⎿` continuation character. At depth 1+, uses
+/// spaces of equal width to avoid visually broken `⎿⎿` double-nesting.
 pub(crate) fn format_nested_tool_call(
     tc: &DisplayToolCall,
-    _depth: usize,
+    depth: usize,
     working_dir: Option<&str>,
 ) -> Line<'static> {
     let (verb, arg) = format_tool_call_parts_with_wd(&tc.name, &tc.arguments, working_dir);
 
-    let continuation_prefix = vec![Span::styled(
-        format!("  {CONTINUATION_CHAR}  "),
-        Style::default().fg(style_tokens::GREY),
-    )];
+    let continuation_prefix = if depth == 0 {
+        vec![Span::styled(
+            format!("  {CONTINUATION_CHAR}  "),
+            Style::default().fg(style_tokens::GREY),
+        )]
+    } else {
+        // Same visual width as "  ⎿  " (5 chars) but spaces only
+        vec![Span::raw("     ")]
+    };
 
     tool_line_completed(
         continuation_prefix,

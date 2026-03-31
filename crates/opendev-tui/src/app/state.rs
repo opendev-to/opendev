@@ -45,6 +45,14 @@ pub struct AppState {
     pub mcp_has_errors: bool,
     /// Whether the agent is currently processing.
     pub agent_active: bool,
+    /// Timestamp of the last token/event received from the agent (for stall detection).
+    pub last_token_at: Option<Instant>,
+    /// Context from the last completed tool (e.g. "Read src/main.rs") for thinking spinner.
+    pub last_tool_context: Option<String>,
+    /// Estimated token count for the current turn (for long-turn display).
+    pub turn_token_count: u64,
+    /// When the current turn started (for long-turn token counter threshold).
+    pub turn_started_at: Option<Instant>,
     /// Conversation messages for display.
     pub messages: Vec<DisplayMessage>,
     /// Current task progress (while agent is working).
@@ -206,6 +214,10 @@ impl Default for AppState {
             mcp_status: None,
             mcp_has_errors: false,
             agent_active: false,
+            last_token_at: None,
+            last_tool_context: None,
+            turn_token_count: 0,
+            turn_started_at: None,
             messages: Vec::new(),
             task_progress: None,
             spinner: crate::widgets::spinner::SpinnerState::new(),

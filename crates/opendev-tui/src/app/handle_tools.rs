@@ -116,6 +116,21 @@ impl App {
             .map(|t| t.args.clone())
             .unwrap_or(result_args);
 
+        // Store tool context for the thinking spinner (e.g. "Read src/main.rs")
+        {
+            let (verb, arg) = crate::formatters::tool_registry::format_tool_call_parts_short(
+                &tool_name,
+                &arguments,
+                &self.state.path_shortener,
+            );
+            let ctx = if arg.is_empty() {
+                verb
+            } else {
+                format!("{verb} {arg}")
+            };
+            self.state.last_tool_context = Some(ctx);
+        }
+
         // Check if this is a todo tool for special handling
         let is_todo_tool = matches!(
             tool_name.as_str(),
@@ -225,6 +240,7 @@ impl App {
                     collapsed: false,
                     thinking_started_at: None,
                     thinking_duration_secs: None,
+                    thinking_finalized_at: None,
                 });
             }
         } else if !display_lines.is_empty() {
@@ -244,6 +260,7 @@ impl App {
                 collapsed: false,
                 thinking_started_at: None,
                 thinking_duration_secs: None,
+                thinking_finalized_at: None,
             });
         }
 

@@ -16,6 +16,30 @@ use crate::app::DisplayRole;
 
 use super::ConversationWidget;
 
+/// Format a token count for display: 500 → "500", 1234 → "1.2k", 1500000 → "1.5M".
+fn format_token_count(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Return spinner color based on time since last token event.
+///
+/// - `None` or `< 3s` → blue (normal)
+/// - `3–10s` → orange/warning (stalling)
+/// - `> 10s` → red/error (likely stuck)
+fn stall_color(stalled_secs: Option<u64>) -> ratatui::style::Color {
+    match stalled_secs {
+        Some(s) if s >= 10 => style_tokens::ERROR,
+        Some(s) if s >= 3 => style_tokens::WARNING,
+        _ => style_tokens::BLUE_BRIGHT,
+    }
+}
+
 impl<'a> ConversationWidget<'a> {
     /// Get or create a `PathShortener` for this widget.
     fn get_shortener(&self) -> std::borrow::Cow<'_, crate::formatters::PathShortener> {
@@ -45,7 +69,7 @@ impl<'a> ConversationWidget<'a> {
                 Span::styled(
                     format!("{} ", COMPACTION_CHAR),
                     Style::default()
-                        .fg(style_tokens::BLUE_BRIGHT)
+                        .fg(stall_color(self.stalled_secs))
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
@@ -66,7 +90,7 @@ impl<'a> ConversationWidget<'a> {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("{} ", self.spinner_char),
-                    Style::default().fg(style_tokens::BLUE_BRIGHT),
+                    Style::default().fg(stall_color(self.stalled_secs)),
                 ),
                 Span::styled(
                     "Sending to background\u{2026}",
@@ -118,7 +142,7 @@ impl<'a> ConversationWidget<'a> {
                     let mut spans = vec![
                         Span::styled(
                             format!("{spinner} "),
-                            Style::default().fg(style_tokens::BLUE_BRIGHT),
+                            Style::default().fg(stall_color(self.stalled_secs)),
                         ),
                         Span::styled(
                             agent_name,
@@ -175,14 +199,18 @@ impl<'a> ConversationWidget<'a> {
                 });
             if !has_active_thinking {
                 let elapsed = progress.started_at.elapsed().as_secs();
-                lines.push(Line::from(vec![
+                let mut progress_spans = vec![
                     Span::styled(
                         format!("{} ", self.spinner_char),
-                        Style::default().fg(style_tokens::BLUE_BRIGHT),
+                        Style::default().fg(stall_color(self.stalled_secs)),
                     ),
                     Span::styled(
                         if progress.description == "Thinking" {
-                            format!("{}... ", self.thinking_verb)
+                            if let Some(ctx) = self.last_tool_context {
+                                format!("{ctx}... ")
+                            } else {
+                                format!("{}... ", self.thinking_verb)
+                            }
                         } else {
                             format!("{}... ", progress.description)
                         },
@@ -201,11 +229,44 @@ impl<'a> ConversationWidget<'a> {
                         },
                     ),
                     Span::styled(
-                        format!("{}s (Esc to interrupt)", elapsed),
+                        format!("{}s", elapsed),
                         Style::default().fg(style_tokens::SUBTLE),
                     ),
-                ]));
+                ];
+                // Show token count after 30s of turn execution
+                if self.turn_elapsed_secs >= 30 && self.turn_token_count > 0 {
+                    progress_spans.push(Span::styled(
+                        format!(
+                            " \u{00b7} {} tokens",
+                            format_token_count(self.turn_token_count)
+                        ),
+                        Style::default().fg(style_tokens::SUBTLE),
+                    ));
+                }
+                progress_spans.push(Span::styled(
+                    " (Esc to interrupt)",
+                    Style::default().fg(style_tokens::SUBTLE),
+                ));
+                lines.push(Line::from(progress_spans));
             }
+        } else if self
+            .active_subagents
+            .iter()
+            .any(|s| !s.finished && !s.backgrounded)
+        {
+            // Leader is idle while subagents are still working
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{} ", COMPACTION_CHAR),
+                    Style::default().fg(style_tokens::ACCENT),
+                ),
+                Span::styled(
+                    "Idle \u{00b7} teammates running",
+                    Style::default()
+                        .fg(style_tokens::SUBTLE)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]));
         }
 
         lines

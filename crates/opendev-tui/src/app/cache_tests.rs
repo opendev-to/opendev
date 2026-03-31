@@ -236,6 +236,7 @@ fn test_reasoning_message_produces_lines() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: Some(5),
+        thinking_finalized_at: None,
     });
     app.rebuild_cached_lines();
 
@@ -307,6 +308,7 @@ fn test_reasoning_via_cached_lines_widget() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: Some(5),
+        thinking_finalized_at: None,
     });
     app.state.messages.push(DisplayMessage::new(
         DisplayRole::Assistant,
@@ -369,6 +371,7 @@ fn test_active_subagents_keep_recent_reasoning_lines_cached() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: Some(5),
+        thinking_finalized_at: None,
     });
     app.state.messages.push(DisplayMessage::new(
         DisplayRole::Assistant,
@@ -427,6 +430,7 @@ fn test_reasoning_to_subagent_transition_remains_visible_in_short_tui() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: Some(5),
+        thinking_finalized_at: None,
     });
     app.state.messages.push(DisplayMessage::new(
         DisplayRole::Assistant,
@@ -599,6 +603,7 @@ fn test_25_subagents_render_to_terminal() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: Some(5),
+        thinking_finalized_at: None,
     });
     app.state.messages.push(DisplayMessage::new(
         DisplayRole::Assistant,

@@ -24,6 +24,7 @@ impl App {
                 collapsed: false,
                 thinking_started_at: None,
                 thinking_duration_secs: None,
+                thinking_finalized_at: None,
             });
         }
         // Mark surviving (finished) subagents as backgrounded.

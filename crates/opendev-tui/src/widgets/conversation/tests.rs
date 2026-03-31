@@ -36,6 +36,7 @@ fn test_tool_call_display() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: None,
+        thinking_finalized_at: None,
     }];
     let widget = ConversationWidget::new(&msgs, 0);
     let lines = widget.build_lines();
@@ -80,6 +81,7 @@ fn test_collapsed_tool_result() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: None,
+        thinking_finalized_at: None,
     }];
     let widget = ConversationWidget::new(&msgs, 0);
     let lines = widget.build_lines();
@@ -219,6 +221,7 @@ fn test_nested_tool_calls() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: None,
+        thinking_finalized_at: None,
     }];
     let widget = ConversationWidget::new(&msgs, 0);
     let lines = widget.build_lines();
@@ -351,6 +354,7 @@ fn test_snapshot_multi_message_with_tool_call() {
             collapsed: false,
             thinking_started_at: None,
             thinking_duration_secs: None,
+        thinking_finalized_at: None,
         },
         DisplayMessage::new(DisplayRole::Assistant, "Here are the files."),
     ];
@@ -492,6 +496,7 @@ fn test_diff_rendering_with_line_numbers() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: None,
+        thinking_finalized_at: None,
     }];
     let widget = ConversationWidget::new(&msgs, 0);
     let lines = widget.build_lines();
@@ -544,6 +549,7 @@ fn test_edit_tool_never_collapsed() {
         collapsed: false,
         thinking_started_at: None,
         thinking_duration_secs: None,
+        thinking_finalized_at: None,
     }];
     let widget = ConversationWidget::new(&msgs, 0);
     let lines = widget.build_lines();
@@ -848,6 +854,7 @@ fn test_reasoning_message_visible() {
             collapsed: false,
             thinking_started_at: None,
             thinking_duration_secs: Some(5),
+        thinking_finalized_at: None,
         },
         DisplayMessage::new(DisplayRole::Assistant, "The answer is 42."),
     ];
