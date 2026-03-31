@@ -104,7 +104,20 @@ impl ConfigLoader {
             );
             // Best-effort write-back of migrated config
             if let Ok(json) = serde_json::to_string_pretty(&migrated) {
-                let _ = std::fs::write(path, json);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let mut opts = std::fs::OpenOptions::new();
+                    opts.write(true).create(true).truncate(true).mode(0o600);
+                    let _ = opts.open(path).and_then(|mut f| {
+                        use std::io::Write;
+                        f.write_all(json.as_bytes())
+                    });
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = std::fs::write(path, json);
+                }
             }
         }
 
@@ -184,10 +197,30 @@ impl ConfigLoader {
 
         // Atomic write: write to .tmp then rename
         let tmp_path = path.with_extension("json.tmp");
-        std::fs::write(&tmp_path, &json).map_err(|e| ConfigError::ReadError {
-            path: tmp_path.display().to_string(),
-            source: e,
-        })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true).mode(0o600);
+            opts.open(&tmp_path)
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    f.write_all(json.as_bytes())
+                })
+                .map_err(|e| ConfigError::ReadError {
+                    path: tmp_path.display().to_string(),
+                    source: e,
+                })?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, &json).map_err(|e| ConfigError::ReadError {
+                path: tmp_path.display().to_string(),
+                source: e,
+            })?;
+        }
+
         std::fs::rename(&tmp_path, path).map_err(|e| ConfigError::ReadError {
             path: path.display().to_string(),
             source: e,

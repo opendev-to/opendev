@@ -91,10 +91,7 @@ impl App {
                     // message and creates a NEW assistant message for the LLM's
                     // synthesized response — matching the foreground subagent flow.
                     let mut arguments = std::collections::HashMap::new();
-                    arguments.insert(
-                        "task_id".to_string(),
-                        serde_json::json!(&task_id),
-                    );
+                    arguments.insert("task_id".to_string(), serde_json::json!(&task_id));
                     self.state.messages.push(super::DisplayMessage {
                         role: super::DisplayRole::Assistant,
                         content: String::new(),
