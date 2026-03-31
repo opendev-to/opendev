@@ -502,6 +502,52 @@ impl TuiRunner {
                     continue;
                 }
 
+                // Handle background result injection sentinel
+                if let Some(json_str) = msg.strip_prefix("\x00__BG_RESULT__") {
+                    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(json_str) {
+                        let task_id = payload["task_id"].as_str().unwrap_or("unknown");
+                        let query = payload["query"].as_str().unwrap_or("");
+                        let result = payload["result"].as_str().unwrap_or("");
+                        let tool_call_count =
+                            payload["tool_call_count"].as_u64().unwrap_or(0) as usize;
+
+                        info!(task_id, tool_call_count, "Injecting background result as tool pair");
+
+                        let interrupt_token = InterruptToken::new();
+                        let _ =
+                            event_tx.send(AppEvent::SetInterruptToken(interrupt_token.clone()));
+                        let _ = event_tx.send(AppEvent::AgentStarted);
+                        let _ = event_tx.send(AppEvent::TaskProgressStarted {
+                            description: "Thinking".to_string(),
+                        });
+
+                        match runtime
+                            .inject_background_result(
+                                task_id,
+                                query,
+                                result,
+                                tool_call_count,
+                                &system_prompt,
+                                Some(&callback),
+                                Some(&interrupt_token),
+                            )
+                            .await
+                        {
+                            Ok(_agent_result) => {
+                                let _ = event_tx.send(AppEvent::TaskProgressFinished);
+                                let _ = event_tx.send(AppEvent::AgentFinished);
+                            }
+                            Err(e) => {
+                                let _ = event_tx.send(AppEvent::TaskProgressFinished);
+                                let _ = event_tx.send(AppEvent::AgentError(e.to_string()));
+                            }
+                        }
+                    } else {
+                        warn!("Failed to parse background result JSON");
+                    }
+                    continue;
+                }
+
                 // Detect and strip plan-mode sentinel
                 let (msg, plan_requested) =
                     if let Some(stripped) = msg.strip_prefix("\x00__PLAN_MODE__") {

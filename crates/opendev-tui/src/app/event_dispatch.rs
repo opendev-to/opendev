@@ -86,19 +86,22 @@ impl App {
                     ..
                 }) = self.state.pending_queue.pop_front()
                 {
-                    let msg = format!(
-                        "[Background task [{task_id}] completed ({tool_call_count} tools)]\n\
-                         Task: {query}\n\n\
-                         {result}"
-                    );
-                    // Display as a user-like message so the agent's streaming
-                    // response creates a NEW assistant message instead of
-                    // appending to the previous nudge message.
-                    self.message_controller
-                        .handle_user_submit(&mut self.state, &msg);
+                    // Inject as a tool-result pair (not a user message) so the LLM
+                    // sees it as the outcome of its own spawn_subagent call rather
+                    // than user-provided text.  Serialize as JSON sentinel for the
+                    // tui_runner to parse and handle.
+                    let payload = serde_json::json!({
+                        "task_id": task_id,
+                        "query": query,
+                        "result": result,
+                        "tool_call_count": tool_call_count,
+                    });
+                    let sentinel = format!("\x00__BG_RESULT__{}", payload);
+                    if let Some(ref tx) = self.user_message_tx {
+                        let _ = tx.send(sentinel);
+                    }
                     self.state.agent_active = true;
                     self.state.message_generation += 1;
-                    let _ = self.event_tx.send(AppEvent::UserSubmit(msg));
                     self.state.dirty = true;
                 }
             }

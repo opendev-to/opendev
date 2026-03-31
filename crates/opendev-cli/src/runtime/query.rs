@@ -404,6 +404,161 @@ impl AgentRuntime {
         Ok(result)
     }
 
+    /// Inject a background agent result as a tool-call/tool-result pair and
+    /// run a new react-loop turn so the foreground LLM can synthesize it.
+    ///
+    /// Instead of injecting the result as a `role: "user"` message (which
+    /// makes the LLM treat it as external input), this adds a single
+    /// assistant message with a synthetic `get_background_result` tool call
+    /// whose result is already populated. `chatmessages_to_api_values` then
+    /// emits both the assistant tool_calls and the `role: "tool"` result.
+    ///
+    /// The LLM sees a natural tool-call → tool-result pair and responds
+    /// with a conversational summary rather than re-investigating.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn inject_background_result(
+        &mut self,
+        task_id: &str,
+        query: &str,
+        result: &str,
+        tool_call_count: usize,
+        system_prompt: &str,
+        event_callback: Option<&dyn AgentEventCallback>,
+        interrupt_token: Option<&opendev_runtime::InterruptToken>,
+    ) -> Result<AgentResult, AgentError> {
+        info!(
+            task_id,
+            tool_call_count, "Injecting background result as tool-result pair"
+        );
+
+        // Synthetic tool_call_id linking the assistant call to its result
+        let synthetic_id = format!("bg_{task_id}");
+
+        let tool_result_content = format!(
+            "[Background task [{task_id}] completed ({tool_call_count} tools)]\n\
+             Task: {query}\n\n\
+             {result}"
+        );
+
+        // Add a single assistant ChatMessage with a tool call whose result is
+        // already populated.  `chatmessages_to_api_values` will emit both:
+        //   - an assistant message with the tool_calls array
+        //   - a role:"tool" message with tool_call_id + content
+        let mut tool_call = opendev_models::message::ToolCall {
+            id: synthetic_id.clone(),
+            name: "get_background_result".to_string(),
+            parameters: {
+                let mut p = HashMap::new();
+                p.insert("task_id".to_string(), serde_json::json!(task_id));
+                p
+            },
+            result: Some(serde_json::json!(tool_result_content)),
+            result_summary: None,
+            timestamp: Utc::now(),
+            approved: true,
+            error: None,
+            nested_tool_calls: Vec::new(),
+        };
+        if tool_result_content.len() > 300 {
+            tool_call.result_summary = Some(format!(
+                "Background task {task_id} completed ({tool_call_count} tools) for: {query}"
+            ));
+        }
+
+        self.session_manager.add_message(ChatMessage {
+            role: Role::Assistant,
+            content: String::new(),
+            timestamp: Utc::now(),
+            metadata: HashMap::new(),
+            tool_calls: vec![tool_call],
+            tokens: None,
+            thinking_trace: None,
+            reasoning_content: None,
+            token_usage: None,
+            provenance: None,
+        });
+
+        // 3. Build messages from session history (includes the new tool pair)
+        let session_messages = self
+            .session_manager
+            .current_session()
+            .map(|s| opendev_history::message_convert::chatmessages_to_api_values(&s.messages))
+            .unwrap_or_default();
+
+        let mut messages = self.query_enhancer.prepare_messages(
+            "", // no user query — the tool result is the trigger
+            "",
+            system_prompt,
+            Some(&session_messages),
+            &[],
+            false,
+            None,
+        );
+
+        // 4. Run the react loop
+        let tool_schemas = self.tool_registry.get_schemas();
+        let tool_context = ToolContext {
+            working_dir: self.working_dir.clone(),
+            is_subagent: false,
+            session_id: self.session_manager.current_session().map(|s| s.id.clone()),
+            values: HashMap::new(),
+            timeout_config: None,
+            cancel_token: interrupt_token.map(|t| t.child_token()),
+            diagnostic_provider: None,
+            shared_state: None,
+        };
+
+        self.react_loop.set_original_task(None);
+
+        let pre_count = messages.len();
+        let cancel_token = interrupt_token.map(|t| t.child_token());
+        let result = self
+            .react_loop
+            .run(
+                &self.llm_caller,
+                &self.http_client,
+                &mut messages,
+                &tool_schemas,
+                &self.tool_registry,
+                &tool_context,
+                interrupt_token,
+                event_callback,
+                Some(&self.cost_tracker),
+                Some(&self.artifact_index),
+                Some(&self.compactor),
+                Some(&self.todo_manager),
+                cancel_token.as_ref(),
+                self.tool_approval_tx.as_ref(),
+                Some(&*self.debug_logger),
+            )
+            .await?;
+
+        // Save new messages from the react loop
+        {
+            let new_values = &result.messages[pre_count..];
+            let new_chat_messages =
+                opendev_history::message_convert::api_values_to_chatmessages(new_values);
+            for msg in new_chat_messages {
+                self.session_manager.add_message(msg);
+            }
+        }
+
+        if let Err(e) = self.session_manager.save_current() {
+            warn!("Failed to save session: {e}");
+        }
+
+        // Log session cost
+        if let Ok(tracker) = self.cost_tracker.lock() {
+            info!(
+                cost = tracker.format_cost(),
+                calls = tracker.call_count,
+                "Session cost update (background result)"
+            );
+        }
+
+        Ok(result)
+    }
+
     /// Run manual compaction on the current session's messages.
     ///
     /// Forces LLM-powered compaction regardless of context usage level.
