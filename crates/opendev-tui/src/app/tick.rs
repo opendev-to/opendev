@@ -147,6 +147,20 @@ impl App {
             }
         });
 
+        // Ctrl+B hint: show after 2s of foreground subagent execution
+        for subagent in &mut self.state.active_subagents {
+            if !subagent.finished
+                && !subagent.backgrounded
+                && !subagent.background_hint_shown
+                && !subagent.run_in_background
+                && let Some(start) = subagent.foreground_start
+                && start.elapsed() > Duration::from_secs(2)
+            {
+                subagent.background_hint_shown = true;
+                self.state.dirty = true;
+            }
+        }
+
         // Update task progress elapsed time from wall clock
         if let Some(ref mut progress) = self.state.task_progress {
             progress.elapsed_secs = progress.started_at.elapsed().as_secs();
