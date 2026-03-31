@@ -44,6 +44,34 @@ pub enum SubagentEvent {
         input_tokens: u64,
         output_tokens: u64,
     },
+
+    // -- Background agent events (run_in_background) --
+    /// A background agent was spawned (returns task_id immediately).
+    BackgroundSpawned {
+        task_id: String,
+        agent_type: String,
+        query: String,
+        description: String,
+        session_id: String,
+        interrupt_token: opendev_runtime::InterruptToken,
+    },
+    /// A background agent completed (success or failure).
+    BackgroundCompleted {
+        task_id: String,
+        success: bool,
+        result_summary: String,
+        full_result: String,
+        cost_usd: f64,
+        tool_call_count: usize,
+    },
+    /// Progress update from a background agent.
+    BackgroundProgress {
+        task_id: String,
+        tool_name: String,
+        tool_count: usize,
+    },
+    /// Activity line from a background agent.
+    BackgroundActivity { task_id: String, line: String },
 }
 
 /// Progress callback that sends events through an mpsc channel.
@@ -127,6 +155,81 @@ impl opendev_agents::SubagentProgressCallback for ChannelProgressCallback {
             output_tokens,
         });
     }
+}
+
+/// Progress callback for background agents spawned with `run_in_background`.
+///
+/// Emits `BackgroundProgress` and `BackgroundActivity` events.
+/// All other methods (chunk, reasoning, context_usage) are no-ops to
+/// prevent background tool events from leaking into the foreground display.
+pub struct BackgroundProgressCallback {
+    tx: mpsc::UnboundedSender<SubagentEvent>,
+    task_id: String,
+    tool_count: std::sync::atomic::AtomicUsize,
+}
+
+impl BackgroundProgressCallback {
+    pub fn new(tx: mpsc::UnboundedSender<SubagentEvent>, task_id: String) -> Self {
+        Self {
+            tx,
+            task_id,
+            tool_count: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl std::fmt::Debug for BackgroundProgressCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackgroundProgressCallback")
+            .field("task_id", &self.task_id)
+            .finish()
+    }
+}
+
+impl opendev_agents::SubagentProgressCallback for BackgroundProgressCallback {
+    fn on_started(&self, _subagent_name: &str, _task: &str) {}
+
+    fn on_tool_call(
+        &self,
+        _subagent_name: &str,
+        tool_name: &str,
+        _tool_id: &str,
+        _args: &HashMap<String, serde_json::Value>,
+    ) {
+        let count = self
+            .tool_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        let _ = self.tx.send(SubagentEvent::BackgroundProgress {
+            task_id: self.task_id.clone(),
+            tool_name: tool_name.to_string(),
+            tool_count: count,
+        });
+        let _ = self.tx.send(SubagentEvent::BackgroundActivity {
+            task_id: self.task_id.clone(),
+            line: format!("\u{25b8} {tool_name}"),
+        });
+    }
+
+    fn on_tool_complete(
+        &self,
+        _subagent_name: &str,
+        tool_name: &str,
+        _tool_id: &str,
+        success: bool,
+    ) {
+        let icon = if success { "\u{2713}" } else { "\u{2717}" };
+        let _ = self.tx.send(SubagentEvent::BackgroundActivity {
+            task_id: self.task_id.clone(),
+            line: format!("  \u{23bf} {icon} {tool_name}"),
+        });
+    }
+
+    fn on_finished(&self, _subagent_name: &str, _success: bool, _result_summary: &str) {
+        // BackgroundCompleted event sent by spawn_background(), not here
+    }
+
+    fn on_token_usage(&self, _subagent_name: &str, _input_tokens: u64, _output_tokens: u64) {}
 }
 
 #[cfg(test)]

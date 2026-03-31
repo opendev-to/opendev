@@ -98,8 +98,8 @@ impl BaseTool for SpawnSubagentTool {
          ReAct loop with restricted tools and returns the result. Use for tasks \
          that require multiple tool calls and benefit from isolated context \
          (code exploration, summarization, codebase analysis, planning, web cloning, etc.). \
-         This is the correct tool for 'summarize the codebase', 'how does X work', \
-         'explore the code', etc. — NOT invoke_skill. \
+         Set run_in_background=true for long-running tasks — returns a task_id \
+         immediately and notifies you when complete. \
          Do NOT spawn a subagent for tasks that only need 1-2 tool calls — \
          use the tools directly instead."
     }
@@ -139,6 +139,13 @@ impl BaseTool for SpawnSubagentTool {
                     "type": "string",
                     "description": "A short (3-8 word) summary of the task for display. \
                                     Examples: 'Trace tool_call_count updates', 'Find auth middleware chain'."
+                },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": "Run the agent in background. Returns a task_id immediately \
+                                    and you'll be notified when the agent completes. Use for \
+                                    long-running tasks where you don't need the result right away.",
+                    "default": false
                 }
             },
             "required": ["agent_type", "task"]
@@ -252,6 +259,44 @@ impl BaseTool for SpawnSubagentTool {
         } else {
             CancellationToken::new()
         };
+
+        // Check run_in_background (also check spec.background for auto-background agents)
+        let run_in_background = args
+            .get("run_in_background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            || self.manager.get(agent_type).is_some_and(|s| s.background);
+
+        // Prevent background-in-background spawning
+        if run_in_background
+            && ctx
+                .values
+                .get("is_background_agent")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            return ToolResult::fail(
+                "Background agents cannot spawn other background agents. \
+                 Use synchronous subagents (remove run_in_background) instead.",
+            );
+        }
+
+        if run_in_background {
+            return self
+                .spawn_background(BackgroundSpawnParams {
+                    agent_type,
+                    task,
+                    wd: &wd,
+                    child_session_id: &child_session_id,
+                    subagent_id: &subagent_id,
+                    cancel_token: subagent_cancel,
+                    description: args
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(agent_type),
+                })
+                .await;
+        }
 
         // Create progress callback
         let progress: Arc<dyn opendev_agents::SubagentProgressCallback> =
@@ -401,6 +446,166 @@ impl BaseTool for SpawnSubagentTool {
                 ToolResult::fail(format!("Subagent failed: {e}"))
             }
         }
+    }
+}
+
+/// Parameters for spawning a background agent.
+struct BackgroundSpawnParams<'a> {
+    agent_type: &'a str,
+    task: &'a str,
+    wd: &'a str,
+    child_session_id: &'a str,
+    subagent_id: &'a str,
+    cancel_token: CancellationToken,
+    description: &'a str,
+}
+
+impl SpawnSubagentTool {
+    /// Spawn an agent in the background. Returns immediately with a task_id.
+    async fn spawn_background(&self, params: BackgroundSpawnParams<'_>) -> ToolResult {
+        let task_id = params.subagent_id[..12.min(params.subagent_id.len())].to_string();
+        let agent_type_display = params.agent_type.to_string();
+        let cancel_token = params.cancel_token;
+        let interrupt_token = opendev_runtime::InterruptToken::new();
+
+        info!(
+            agent_type = %agent_type_display,
+            task_id = %task_id,
+            "Spawning background agent"
+        );
+
+        // Notify TUI to register the background task
+        if let Some(ref tx) = self.event_tx {
+            let _ = tx.send(SubagentEvent::BackgroundSpawned {
+                task_id: task_id.clone(),
+                agent_type: params.agent_type.to_string(),
+                query: params.task.to_string(),
+                description: params.description.to_string(),
+                session_id: params.child_session_id.to_string(),
+                interrupt_token: interrupt_token.clone(),
+            });
+        }
+
+        // Clone all needed data for the background task
+        let manager = Arc::clone(&self.manager);
+        let registry = Arc::clone(&self.tool_registry);
+        let http = Arc::clone(&self.http_client);
+        let event_tx = self.event_tx.clone();
+        let parent_model = self.parent_model.clone();
+        let parent_max_tokens = self.parent_max_tokens;
+        let reasoning_effort = self.parent_reasoning_effort.clone();
+        let debug_logger_arc = self.debug_logger.clone();
+        let session_dir = self.session_dir.clone();
+        let agent_type_owned = params.agent_type.to_string();
+        let task_owned = params.task.to_string();
+        let wd_owned = params.wd.to_string();
+        let child_session_id_owned = params.child_session_id.to_string();
+        let task_id_clone = task_id.clone();
+
+        tokio::spawn(async move {
+            // Create background-specific progress callback
+            let progress: Arc<dyn opendev_agents::SubagentProgressCallback> =
+                if let Some(ref tx) = event_tx {
+                    Arc::new(super::events::BackgroundProgressCallback::new(
+                        tx.clone(),
+                        task_id_clone.clone(),
+                    ))
+                } else {
+                    Arc::new(opendev_agents::NoopProgressCallback)
+                };
+
+            let result = manager
+                .spawn(
+                    &agent_type_owned,
+                    &task_owned,
+                    &parent_model,
+                    registry,
+                    http,
+                    &wd_owned,
+                    progress,
+                    None,
+                    None,
+                    parent_max_tokens,
+                    reasoning_effort,
+                    Some(cancel_token),
+                    debug_logger_arc.as_deref(),
+                )
+                .await;
+
+            match result {
+                Ok(run_result) => {
+                    // Save child session for future resume
+                    let child_mgr = opendev_history::SessionManager::new(session_dir);
+                    if let Ok(child_mgr) = child_mgr {
+                        let mut session = opendev_models::session::Session::new();
+                        session.id = child_session_id_owned.clone();
+                        session.working_directory = Some(wd_owned);
+                        session.metadata.insert(
+                            "title".to_string(),
+                            serde_json::json!(format!(
+                                "{} (@{})",
+                                task_owned.chars().take(80).collect::<String>(),
+                                agent_type_owned
+                            )),
+                        );
+                        session.metadata.insert(
+                            "subagent_type".to_string(),
+                            serde_json::json!(agent_type_owned),
+                        );
+                        let messages = opendev_history::message_convert::api_values_to_chatmessages(
+                            &run_result.agent_result.messages,
+                        );
+                        session.messages = messages;
+                        let _ = child_mgr.save_session(&session);
+                    }
+
+                    let success =
+                        run_result.agent_result.success && !run_result.agent_result.interrupted;
+                    let summary = if run_result.agent_result.content.len() > 200 {
+                        format!(
+                            "{}...",
+                            opendev_runtime::safe_truncate(&run_result.agent_result.content, 200)
+                        )
+                    } else {
+                        run_result.agent_result.content.clone()
+                    };
+
+                    if let Some(ref tx) = event_tx {
+                        let _ = tx.send(SubagentEvent::BackgroundCompleted {
+                            task_id: task_id_clone,
+                            success,
+                            result_summary: summary,
+                            full_result: run_result.agent_result.content,
+                            cost_usd: 0.0,
+                            tool_call_count: run_result.tool_call_count,
+                        });
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        agent_type = %agent_type_owned,
+                        task_id = %task_id_clone,
+                        error = %e,
+                        "Background agent failed"
+                    );
+                    if let Some(ref tx) = event_tx {
+                        let _ = tx.send(SubagentEvent::BackgroundCompleted {
+                            task_id: task_id_clone,
+                            success: false,
+                            result_summary: e.to_string(),
+                            full_result: String::new(),
+                            cost_usd: 0.0,
+                            tool_call_count: 0,
+                        });
+                    }
+                }
+            }
+        });
+
+        ToolResult::ok(format!(
+            "Background agent started.\ntask_id: {task_id}\nAgent: {agent_type_display}\n\n\
+             Running in background. You'll be notified when it completes. Continue your work."
+        ))
     }
 }
 

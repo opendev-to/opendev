@@ -344,6 +344,47 @@ impl TuiRunner {
                                 input_tokens,
                                 output_tokens,
                             },
+
+                            // Background agent events → map to existing AppEvent types
+                            SubagentEvent::BackgroundSpawned {
+                                task_id,
+                                query,
+                                session_id,
+                                interrupt_token,
+                                ..
+                            } => AppEvent::SetBackgroundAgentToken {
+                                task_id,
+                                query,
+                                session_id,
+                                interrupt_token,
+                            },
+                            SubagentEvent::BackgroundCompleted {
+                                task_id,
+                                success,
+                                result_summary,
+                                full_result,
+                                cost_usd,
+                                tool_call_count,
+                            } => AppEvent::BackgroundAgentCompleted {
+                                task_id,
+                                success,
+                                result_summary,
+                                full_result,
+                                cost_usd,
+                                tool_call_count,
+                            },
+                            SubagentEvent::BackgroundProgress {
+                                task_id,
+                                tool_name,
+                                tool_count,
+                            } => AppEvent::BackgroundAgentProgress {
+                                task_id,
+                                tool_name,
+                                tool_count,
+                            },
+                            SubagentEvent::BackgroundActivity { task_id, line } => {
+                                AppEvent::BackgroundAgentActivity { task_id, line }
+                            }
                         };
                         if sa_tx.send(app_event).is_err() {
                             break;
@@ -511,11 +552,13 @@ impl TuiRunner {
                         let tool_call_count =
                             payload["tool_call_count"].as_u64().unwrap_or(0) as usize;
 
-                        info!(task_id, tool_call_count, "Injecting background result as tool pair");
+                        info!(
+                            task_id,
+                            tool_call_count, "Injecting background result as tool pair"
+                        );
 
                         let interrupt_token = InterruptToken::new();
-                        let _ =
-                            event_tx.send(AppEvent::SetInterruptToken(interrupt_token.clone()));
+                        let _ = event_tx.send(AppEvent::SetInterruptToken(interrupt_token.clone()));
                         let _ = event_tx.send(AppEvent::AgentStarted);
                         let _ = event_tx.send(AppEvent::TaskProgressStarted {
                             description: "Thinking".to_string(),

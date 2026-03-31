@@ -21,50 +21,59 @@ impl App {
         // This avoids the race where SubagentStarted (forwarded by the bridge task)
         // arrives after ToolResult (sent directly), causing stats to be lost.
         if tool_name == "spawn_subagent" {
-            // Clear stale subagent entries before adding new ones:
-            // - All finished non-backgrounded subagents (previous batch completed)
-            // - Orphaned unfinished subagents whose parent tool is gone (race condition)
-            let active_tool_ids: std::collections::HashSet<&str> = self
-                .state
-                .active_tools
-                .iter()
-                .map(|t| t.id.as_str())
-                .collect();
-            self.state.active_subagents.retain(|s| {
-                if s.backgrounded {
-                    return true;
-                }
-                if s.finished {
-                    return false;
-                }
-                // Keep unfinished subagents only if their parent tool is still active
-                match &s.parent_tool_id {
-                    Some(ptid) => active_tool_ids.contains(ptid.as_str()),
-                    None => true,
-                }
-            });
+            // Skip eager display creation for run_in_background agents —
+            // they go directly to the task watcher via SetBackgroundAgentToken.
+            let is_background = args
+                .get("run_in_background")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
-            let agent_name = args
-                .get("agent_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Agent")
-                .to_string();
-            let task = args
-                .get("task")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let mut sa = crate::widgets::nested_tool::SubagentDisplayState::new(
-                String::new(), // subagent_id filled in by SubagentStarted later
-                agent_name,
-                task,
-            );
-            sa.parent_tool_id = Some(tool_id.clone());
-            sa.description = args
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            self.state.active_subagents.push(sa);
+            if !is_background {
+                // Clear stale subagent entries before adding new ones:
+                // - All finished non-backgrounded subagents (previous batch completed)
+                // - Orphaned unfinished subagents whose parent tool is gone (race condition)
+                let active_tool_ids: std::collections::HashSet<&str> = self
+                    .state
+                    .active_tools
+                    .iter()
+                    .map(|t| t.id.as_str())
+                    .collect();
+                self.state.active_subagents.retain(|s| {
+                    if s.backgrounded {
+                        return true;
+                    }
+                    if s.finished {
+                        return false;
+                    }
+                    // Keep unfinished subagents only if their parent tool is still active
+                    match &s.parent_tool_id {
+                        Some(ptid) => active_tool_ids.contains(ptid.as_str()),
+                        None => true,
+                    }
+                });
+
+                let agent_name = args
+                    .get("agent_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Agent")
+                    .to_string();
+                let task = args
+                    .get("task")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut sa = crate::widgets::nested_tool::SubagentDisplayState::new(
+                    String::new(), // subagent_id filled in by SubagentStarted later
+                    agent_name,
+                    task,
+                );
+                sa.parent_tool_id = Some(tool_id.clone());
+                sa.description = args
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                self.state.active_subagents.push(sa);
+            }
         }
 
         self.state.active_tools.push(ToolExecution {

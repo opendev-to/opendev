@@ -263,6 +263,53 @@ pub fn spawn_channel_bridges(receivers: crate::runtime::ToolChannelReceivers, st
                             "token_count": input_tokens + output_tokens,
                         }),
                     ),
+                    SubagentEvent::BackgroundSpawned {
+                        task_id,
+                        agent_type,
+                        description,
+                        ..
+                    } => (
+                        "background_agent_spawned",
+                        serde_json::json!({
+                            "task_id": task_id,
+                            "agent_type": agent_type,
+                            "description": description,
+                        }),
+                    ),
+                    SubagentEvent::BackgroundCompleted {
+                        task_id,
+                        success,
+                        result_summary,
+                        tool_call_count,
+                        ..
+                    } => (
+                        "background_agent_completed",
+                        serde_json::json!({
+                            "task_id": task_id,
+                            "success": success,
+                            "result_summary": result_summary,
+                            "tool_call_count": tool_call_count,
+                        }),
+                    ),
+                    SubagentEvent::BackgroundProgress {
+                        task_id,
+                        tool_name,
+                        tool_count,
+                    } => (
+                        "background_agent_progress",
+                        serde_json::json!({
+                            "task_id": task_id,
+                            "tool_name": tool_name,
+                            "tool_count": tool_count,
+                        }),
+                    ),
+                    SubagentEvent::BackgroundActivity { task_id, line } => (
+                        "background_agent_activity",
+                        serde_json::json!({
+                            "task_id": task_id,
+                            "line": line,
+                        }),
+                    ),
                 };
                 st.broadcast(WsBroadcast::new(msg_type, data));
             }
