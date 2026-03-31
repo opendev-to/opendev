@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use opendev_models::message::{ChatMessage, Role};
 use opendev_models::session::Session;
 
@@ -87,8 +87,16 @@ impl SessionProjector {
     pub fn apply_event(session: &mut Session, envelope: &EventEnvelope) -> Result<(), String> {
         let event: SessionEvent = serde_json::from_value(envelope.data.clone())
             .map_err(|e| format!("Failed to deserialize event: {e}"))?;
+        Self::apply_session_event(session, &event, envelope.timestamp)
+    }
 
-        match event {
+    /// Apply a domain event directly (avoids serialize/deserialize round-trip).
+    pub fn apply_session_event(
+        session: &mut Session,
+        event: &SessionEvent,
+        timestamp: DateTime<Utc>,
+    ) -> Result<(), String> {
+        match event.clone() {
             SessionEvent::SessionCreated { .. } => {
                 return Err("SessionCreated can only be the first event".to_string());
             }
@@ -131,7 +139,7 @@ impl SessionProjector {
                 session
                     .metadata
                     .insert("title".to_string(), serde_json::Value::String(title));
-                session.updated_at = envelope.timestamp;
+                session.updated_at = timestamp;
             }
             SessionEvent::SessionArchived { time_archived } => {
                 session.time_archived = Some(time_archived);
@@ -141,11 +149,11 @@ impl SessionProjector {
             }
             SessionEvent::FileChangeRecorded { file_change } => {
                 session.file_changes.push(file_change);
-                session.updated_at = envelope.timestamp;
+                session.updated_at = timestamp;
             }
             SessionEvent::MetadataUpdated { key, value } => {
                 session.metadata.insert(key, value);
-                session.updated_at = envelope.timestamp;
+                session.updated_at = timestamp;
             }
             SessionEvent::SessionForked {
                 source_session_id,
@@ -155,7 +163,7 @@ impl SessionProjector {
                 if let Some(point) = fork_point {
                     session.messages.truncate(point);
                 }
-                session.updated_at = envelope.timestamp;
+                session.updated_at = timestamp;
             }
             SessionEvent::Tombstone { .. } => {
                 // Tombstone events are handled at the filtering layer

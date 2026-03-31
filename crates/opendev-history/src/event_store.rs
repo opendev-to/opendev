@@ -208,9 +208,12 @@ impl EventStore {
                 .map_err(|e| format!("validation failed: {e}"))?;
 
             // Apply the event so subsequent validations see updated state.
-            let temp_envelope = EventEnvelope::new(aggregate_id, 0, event);
-            crate::projector::SessionProjector::apply_event(&mut state, &temp_envelope)
-                .map_err(|e| format!("apply failed during validation: {e}"))?;
+            crate::projector::SessionProjector::apply_session_event(
+                &mut state,
+                event,
+                Utc::now(),
+            )
+            .map_err(|e| format!("apply failed during validation: {e}"))?;
         }
 
         // All events validated — persist them.
@@ -368,8 +371,9 @@ impl EventStore {
         // are undone.
         let mut latest_tombstone: Option<(u64, u64)> = None; // (tombstone_seq, undo_to_seq)
         for env in events {
-            if let Ok(SessionEvent::Tombstone { undo_to_seq, .. }) =
-                serde_json::from_value::<SessionEvent>(env.data.clone())
+            if env.event_type == "Tombstone"
+                && let Ok(SessionEvent::Tombstone { undo_to_seq, .. }) =
+                    serde_json::from_value::<SessionEvent>(env.data.clone())
             {
                 let dominated = latest_tombstone.is_none_or(|(ts, _)| env.seq > ts);
                 if dominated {
@@ -401,14 +405,31 @@ impl EventStore {
     // -----------------------------------------------------------------------
 
     /// Read the last line of a JSONL file and extract its seq, or return 0.
+    ///
+    /// Only reads the tail of the file (last 4KB) to avoid loading the
+    /// entire event log into memory.
     fn read_last_seq(&self, path: &std::path::Path) -> u64 {
-        let bytes = match std::fs::read(path) {
-            Ok(b) => b,
+        use std::io::{Read, Seek, SeekFrom};
+
+        let mut file = match std::fs::File::open(path) {
+            Ok(f) => f,
             Err(_) => return 0,
         };
 
-        // Walk backwards to find the last non-empty line.
-        let text = String::from_utf8_lossy(&bytes);
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file_len == 0 {
+            return 0;
+        }
+
+        // Read only the last 4KB (enough for one JSONL line).
+        let tail_size = 4096u64.min(file_len);
+        let _ = file.seek(SeekFrom::End(-(tail_size as i64)));
+        let mut buf = Vec::with_capacity(tail_size as usize);
+        if file.read_to_end(&mut buf).is_err() {
+            return 0;
+        }
+
+        let text = String::from_utf8_lossy(&buf);
         for line in text.lines().rev() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -429,39 +450,25 @@ impl EventStore {
 
 impl ValidateTransition<SessionEvent> for Session {
     fn validate_transition(&self, event: &SessionEvent) -> Result<(), TransitionError> {
-        match event {
-            SessionEvent::MessageAdded { .. } | SessionEvent::MessageEdited { .. } => {
-                if self.is_archived() {
-                    return Err(TransitionError::SessionArchived {
-                        action: "add message to".to_string(),
-                    });
-                }
-            }
+        // Guard: most mutations require an active (non-archived) session.
+        let requires_active = matches!(
+            event,
+            SessionEvent::MessageAdded { .. }
+                | SessionEvent::MessageEdited { .. }
+                | SessionEvent::TitleChanged { .. }
+                | SessionEvent::FileChangeRecorded { .. }
+                | SessionEvent::MetadataUpdated { .. }
+        );
+        if requires_active && self.is_archived() {
+            return Err(TransitionError::SessionArchived {
+                action: "modify".to_string(),
+            });
+        }
 
+        match event {
             SessionEvent::TitleChanged { title } => {
-                if self.is_archived() {
-                    return Err(TransitionError::SessionArchived {
-                        action: "change title of".to_string(),
-                    });
-                }
                 if title.trim().is_empty() {
                     return Err(TransitionError::EmptyTitle);
-                }
-            }
-
-            SessionEvent::FileChangeRecorded { .. } => {
-                if self.is_archived() {
-                    return Err(TransitionError::SessionArchived {
-                        action: "record file change on".to_string(),
-                    });
-                }
-            }
-
-            SessionEvent::MetadataUpdated { .. } => {
-                if self.is_archived() {
-                    return Err(TransitionError::SessionArchived {
-                        action: "update metadata on".to_string(),
-                    });
                 }
             }
 
@@ -488,10 +495,13 @@ impl ValidateTransition<SessionEvent> for Session {
                 }
             }
 
-            SessionEvent::SessionCreated { .. } => {}
-
-            // Tombstone is always valid — it's an administrative undo operation.
-            SessionEvent::Tombstone { .. } => {}
+            // These are already guarded by the requires_active check above.
+            SessionEvent::MessageAdded { .. }
+            | SessionEvent::MessageEdited { .. }
+            | SessionEvent::FileChangeRecorded { .. }
+            | SessionEvent::MetadataUpdated { .. }
+            | SessionEvent::SessionCreated { .. }
+            | SessionEvent::Tombstone { .. } => {}
         }
 
         Ok(())

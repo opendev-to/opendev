@@ -13,7 +13,6 @@ class WebSocketClient {
   private pingInterval: number | null = null;
   private visibilityListenerAdded = false;
   private lastSeq: number = 0;
-  private seenSeqs: Set<number> = new Set();
 
   connect() {
     // Prevent multiple connections
@@ -56,26 +55,15 @@ class WebSocketClient {
         try {
           const message: WSMessage = JSON.parse(event.data);
 
-          // Track sequence numbers for catch-up on reconnect
+          // Track sequence numbers for ordering and dedup.
+          // Messages arrive with monotonically increasing seq from the server,
+          // so a simple watermark suffices — no need for a Set of seen seqs.
           const seq = (message as any).seq;
           if (typeof seq === 'number') {
-            // Deduplicate: skip messages we have already processed
-            if (this.seenSeqs.has(seq)) {
-              return;
+            if (seq <= this.lastSeq) {
+              return; // Already processed (duplicate from catch-up replay)
             }
-            this.seenSeqs.add(seq);
-            if (seq > this.lastSeq) {
-              this.lastSeq = seq;
-            }
-            // Prune old entries to avoid unbounded growth
-            if (this.seenSeqs.size > 5000) {
-              const cutoff = this.lastSeq - 2500;
-              const pruned = new Set<number>();
-              for (const s of this.seenSeqs) {
-                if (s >= cutoff) pruned.add(s);
-              }
-              this.seenSeqs = pruned;
-            }
+            this.lastSeq = seq;
           }
 
           this.emit(message);
