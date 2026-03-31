@@ -394,6 +394,13 @@ impl SubagentRunner for SimpleReactRunner {
         ctx: &RunnerContext<'_>,
         messages: &mut Vec<Value>,
     ) -> Result<AgentResult, AgentError> {
+        // Drain mailbox messages before starting (for team members)
+        if let Some(mailbox) = ctx.mailbox
+            && let Ok(msgs) = mailbox.receive()
+        {
+            super::inject_mailbox_messages(msgs, messages);
+        }
+
         let parallelizable: std::collections::HashSet<&str> =
             PARALLELIZABLE_TOOLS.iter().copied().collect();
         let mut total_tool_calls = 0usize;

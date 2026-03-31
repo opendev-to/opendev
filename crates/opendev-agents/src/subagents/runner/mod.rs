@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::llm_calls::LlmCaller;
 use crate::traits::{AgentError, AgentEventCallback, AgentResult};
 use opendev_http::adapted_client::AdaptedClient;
-use opendev_runtime::{SessionDebugLogger, ToolApprovalSender};
+use opendev_runtime::{Mailbox, SessionDebugLogger, ToolApprovalSender};
 use opendev_tools_core::{ToolContext, ToolRegistry};
 use tokio_util::sync::CancellationToken;
 
@@ -32,6 +32,29 @@ pub struct RunnerContext<'a> {
     pub cancel: Option<&'a CancellationToken>,
     pub tool_approval_tx: Option<&'a ToolApprovalSender>,
     pub debug_logger: Option<&'a SessionDebugLogger>,
+    /// Optional mailbox for team members to receive messages.
+    pub mailbox: Option<&'a Mailbox>,
+}
+
+/// Inject mailbox messages into the LLM message history.
+///
+/// Converts received `MailboxMessage` entries into user-role messages
+/// that the LLM will process on its next turn.
+fn inject_mailbox_messages(msgs: Vec<opendev_runtime::MailboxMessage>, messages: &mut Vec<Value>) {
+    for msg in msgs {
+        let content = match msg.msg_type {
+            opendev_runtime::MessageType::ShutdownRequest => format!(
+                "[TEAM SHUTDOWN REQUEST from '{}']: {}\n\
+                 Wrap up your current work and call task_complete.",
+                msg.from, msg.content
+            ),
+            opendev_runtime::MessageType::Text => {
+                format!("[Message from teammate '{}']: {}", msg.from, msg.content)
+            }
+            _ => continue,
+        };
+        messages.push(serde_json::json!({ "role": "user", "content": content }));
+    }
 }
 
 /// Trait for react loop strategies.

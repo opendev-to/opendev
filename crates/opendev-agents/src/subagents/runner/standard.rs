@@ -29,6 +29,13 @@ impl SubagentRunner for StandardReactRunner {
         ctx: &RunnerContext<'_>,
         messages: &mut Vec<Value>,
     ) -> Result<AgentResult, AgentError> {
+        // Drain mailbox messages before starting the react loop (for team members)
+        if let Some(mailbox) = ctx.mailbox
+            && let Ok(msgs) = mailbox.receive()
+        {
+            super::inject_mailbox_messages(msgs, messages);
+        }
+
         let react_loop = ReactLoop::new(self.config.clone());
 
         react_loop

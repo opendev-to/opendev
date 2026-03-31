@@ -228,6 +228,7 @@ impl SubagentManager {
             cancel: tool_context.cancel_token.as_ref(),
             tool_approval_tx,
             debug_logger,
+            mailbox: None,
         };
 
         // Run the isolated ReAct loop via the selected runner
