@@ -29,6 +29,8 @@ export interface Message {
   parent_tool_call_id?: string;
   thinking_trace?: string | null;
   reasoning_content?: string | null;
+  isOptimistic?: boolean;
+  optimisticId?: string;
 }
 
 // Session types
@@ -136,4 +138,5 @@ export interface PerSessionState {
   pendingPlanApproval: PlanApprovalRequest | null;
   progressMessage: string | null;
   queuedMessages: string[];
+  optimisticMessages: Map<string, Message>;
 }

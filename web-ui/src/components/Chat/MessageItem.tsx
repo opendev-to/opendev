@@ -48,11 +48,12 @@ export const MessageItem = React.memo(function MessageItem({
   }
 
   const isUser = message.role === 'user';
+  const isOptimistic = message.isOptimistic === true;
 
   return (
     <div className="animate-slide-up" style={staggerStyle}>
       {isUser ? (
-        <div className="bg-bg-200 border border-border-300/15 rounded-lg px-4 py-3">
+        <div className={`bg-bg-200 border border-border-300/15 rounded-lg px-4 py-3${isOptimistic ? ' opacity-70' : ''}`}>
           <div className="flex items-start gap-3">
             <span className="text-accent-main-100 font-mono text-sm font-bold flex-shrink-0">#</span>
             <div className="flex-1 text-text-000 font-mono text-sm">
