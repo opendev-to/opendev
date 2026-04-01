@@ -1,13 +1,27 @@
 use std::process::Command;
 
+use std::path::PathBuf;
+
 use tempfile::TempDir;
 
 use super::*;
 
+// Helper to remove UNC paths on Windows which confuse Git
+fn normalize_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if s.starts_with(r"\\?\") {
+            return PathBuf::from(s[4..].to_string());
+        }
+    }
+    path
+}
+
 /// Create a temporary git repo for testing.
 fn create_test_repo() -> TempDir {
     let dir = TempDir::new().unwrap();
-    let repo = dir.path().canonicalize().unwrap();
+    let repo = normalize_path(dir.path().canonicalize().unwrap());
 
     Command::new("git")
         .args(["init"])
@@ -46,7 +60,7 @@ fn create_test_repo() -> TempDir {
 #[test]
 fn test_create_worktree() {
     let repo_dir = create_test_repo();
-    let repo = repo_dir.path().canonicalize().unwrap();
+    let repo = normalize_path(repo_dir.path().canonicalize().unwrap());
     let wt_base = repo.join(".opendev/worktrees");
     let mgr = WorktreeManager::new(wt_base.clone());
 
@@ -59,7 +73,7 @@ fn test_create_worktree() {
 #[test]
 fn test_cleanup_no_changes() {
     let repo_dir = create_test_repo();
-    let repo = repo_dir.path().canonicalize().unwrap();
+    let repo = normalize_path(repo_dir.path().canonicalize().unwrap());
     let wt_base = repo.join(".opendev/worktrees");
     let mgr = WorktreeManager::new(wt_base);
 
@@ -73,7 +87,7 @@ fn test_cleanup_no_changes() {
 #[test]
 fn test_cleanup_with_changes_preserves() {
     let repo_dir = create_test_repo();
-    let repo = repo_dir.path().canonicalize().unwrap();
+    let repo = normalize_path(repo_dir.path().canonicalize().unwrap());
     let wt_base = repo.join(".opendev/worktrees");
     let mgr = WorktreeManager::new(wt_base);
 
@@ -88,7 +102,7 @@ fn test_cleanup_with_changes_preserves() {
 #[test]
 fn test_has_changes() {
     let repo_dir = create_test_repo();
-    let repo = repo_dir.path().canonicalize().unwrap();
+    let repo = normalize_path(repo_dir.path().canonicalize().unwrap());
     let wt_base = repo.join(".opendev/worktrees");
     let mgr = WorktreeManager::new(wt_base);
 
@@ -103,7 +117,7 @@ fn test_has_changes() {
 #[test]
 fn test_list_worktrees() {
     let repo_dir = create_test_repo();
-    let repo = repo_dir.path().canonicalize().unwrap();
+    let repo = normalize_path(repo_dir.path().canonicalize().unwrap());
     let wt_base = repo.join(".opendev/worktrees");
     let mgr = WorktreeManager::new(wt_base);
 
