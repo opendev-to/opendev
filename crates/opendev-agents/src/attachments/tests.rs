@@ -38,6 +38,7 @@ fn test_collector_runner_empty() {
         working_dir: std::path::Path::new("/tmp"),
         todo_manager: None,
         shared_state: None,
+        last_user_query: None,
     };
     rt.block_on(runner.run(&ctx, &mut messages));
     assert!(messages.is_empty());

@@ -10,6 +10,6 @@ mod todo_state;
 pub use compaction::CompactionCollector;
 pub use date_change::DateChangeCollector;
 pub use git_status::GitStatusCollector;
-pub use memory::MemoryCollector;
+pub use memory::SemanticMemoryCollector;
 pub use plan_mode::PlanModeCollector;
 pub use todo_state::TodoStateCollector;

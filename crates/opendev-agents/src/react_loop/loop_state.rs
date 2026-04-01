@@ -7,8 +7,8 @@ use std::sync::atomic::AtomicBool;
 
 use crate::attachments::CollectorRunner;
 use crate::attachments::collectors::{
-    CompactionCollector, DateChangeCollector, GitStatusCollector, MemoryCollector,
-    PlanModeCollector, TodoStateCollector,
+    CompactionCollector, DateChangeCollector, GitStatusCollector, PlanModeCollector,
+    SemanticMemoryCollector, TodoStateCollector,
 };
 use crate::doom_loop::DoomLoopDetector;
 use crate::prompts::reminders::{
@@ -73,7 +73,7 @@ impl LoopState {
             Box::new(DateChangeCollector::new()),
             Box::new(GitStatusCollector::new(5)),
             Box::new(CompactionCollector::new(Arc::clone(&compaction_flag))),
-            Box::new(MemoryCollector::new(20)),
+            Box::new(SemanticMemoryCollector::new(15)),
         ];
 
         Self {

@@ -25,6 +25,8 @@ pub struct TurnContext<'a> {
     pub todo_manager: Option<&'a std::sync::Mutex<opendev_runtime::TodoManager>>,
     pub shared_state:
         Option<&'a std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>>,
+    /// The user's most recent query text, used for semantic memory selection.
+    pub last_user_query: Option<&'a str>,
 }
 
 /// Output produced when a collector fires.

@@ -24,11 +24,11 @@ thiserror = { workspace = true }
 regex = { workspace = true }
 futures = { workspace = true }
 dirs = "6"
+reqwest = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros"] }
-reqwest = { version = "0.12", default-features = false }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]

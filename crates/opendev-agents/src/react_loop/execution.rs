@@ -124,11 +124,20 @@ impl ReactLoop {
 
             // Run per-turn context collectors (live data: todos, git, plan mode, etc.)
             {
+                // Extract last user query for semantic memory selection (clone to avoid borrow conflict)
+                let last_user_query: Option<String> = messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+                    .and_then(|m| m.get("content").and_then(|v| v.as_str()))
+                    .map(String::from);
+
                 let turn_ctx = crate::attachments::TurnContext {
                     turn_number: state.iteration,
                     working_dir: &tool_context.working_dir,
                     todo_manager,
                     shared_state: tool_context.shared_state.as_ref().map(|arc| arc.as_ref()),
+                    last_user_query: last_user_query.as_deref(),
                 };
                 state.collector_runner.run(&turn_ctx, messages).await;
             }
