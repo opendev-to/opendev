@@ -597,11 +597,12 @@ fn build_subagent_cell(
         elapsed_str,
         format!("{tool_count} tools"),
     ];
-    if sa.token_count > 0 {
-        if sa.token_count >= 1_000 {
-            footer_parts.push(format!("{:.1}k tok", sa.token_count as f64 / 1_000.0));
+    let effective_tokens = sa.effective_token_count();
+    if effective_tokens > 0 {
+        if effective_tokens >= 1_000 {
+            footer_parts.push(format!("{:.1}k tok", effective_tokens as f64 / 1_000.0));
         } else {
-            footer_parts.push(format!("{} tok", sa.token_count));
+            footer_parts.push(format!("{} tok", effective_tokens));
         }
     }
     if sa.cost_usd > 0.001 {

@@ -70,11 +70,17 @@ fn test_advance_tick() {
 #[test]
 fn test_token_accumulation() {
     let mut state = SubagentDisplayState::new("id-tok".into(), "test".into(), "task".into());
-    assert_eq!(state.token_count, 0);
+    assert_eq!(state.effective_token_count(), 0);
     state.add_tokens(1000, 500);
-    assert_eq!(state.token_count, 1500);
+    // Input replaced (1000), output accumulated (500)
+    assert_eq!(state.latest_input_tokens, 1000);
+    assert_eq!(state.cumulative_output_tokens, 500);
+    assert_eq!(state.effective_token_count(), 1500);
     state.add_tokens(2000, 300);
-    assert_eq!(state.token_count, 3800);
+    // Input replaced (2000, not 3000), output accumulated (800)
+    assert_eq!(state.latest_input_tokens, 2000);
+    assert_eq!(state.cumulative_output_tokens, 800);
+    assert_eq!(state.effective_token_count(), 2800);
 }
 
 #[test]

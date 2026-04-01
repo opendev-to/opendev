@@ -111,8 +111,9 @@ impl Widget for NestedToolWidget<'_> {
             let elapsed_str = format_elapsed(elapsed);
 
             // Format token count
-            let token_str = if subagent.token_count > 0 {
-                let k = subagent.token_count as f64 / 1000.0;
+            let effective_tokens = subagent.effective_token_count();
+            let token_str = if effective_tokens > 0 {
+                let k = effective_tokens as f64 / 1000.0;
                 format!(" \u{00b7} {k:.1}k tokens")
             } else {
                 String::new()

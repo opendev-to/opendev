@@ -260,7 +260,8 @@ pub fn spawn_channel_bridges(receivers: crate::runtime::ToolChannelReceivers, st
                         "status_update",
                         serde_json::json!({
                             "subagent_id": subagent_id,
-                            "token_count": input_tokens + output_tokens,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
                         }),
                     ),
                     SubagentEvent::BackgroundSpawned {

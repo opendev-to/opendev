@@ -39,8 +39,10 @@ pub struct SubagentDisplayState {
     pub active_tools: HashMap<String, NestedToolCallState>,
     /// Completed tool calls (for display).
     pub completed_tools: Vec<CompletedToolCall>,
-    /// Accumulated token count (input + output).
-    pub token_count: u64,
+    /// Latest input tokens from the most recent LLM call (replaced, not accumulated).
+    pub latest_input_tokens: u64,
+    /// Cumulative output tokens across all LLM calls.
+    pub cumulative_output_tokens: u64,
     /// Animation tick counter for spinner.
     pub tick: usize,
     /// Optional shallow subagent warning.
@@ -73,7 +75,8 @@ impl SubagentDisplayState {
             tool_call_count: 0,
             active_tools: HashMap::new(),
             completed_tools: Vec::new(),
-            token_count: 0,
+            latest_input_tokens: 0,
+            cumulative_output_tokens: 0,
             tick: 0,
             shallow_warning: None,
             finished_at: None,
@@ -110,9 +113,16 @@ impl SubagentDisplayState {
         );
     }
 
-    /// Accumulate token usage from an LLM call.
+    /// Record token usage from an LLM call.
+    /// Input tokens are replaced (each call sends full context), output tokens are accumulated.
     pub fn add_tokens(&mut self, input_tokens: u64, output_tokens: u64) {
-        self.token_count += input_tokens + output_tokens;
+        self.latest_input_tokens = input_tokens;
+        self.cumulative_output_tokens += output_tokens;
+    }
+
+    /// Effective token count: latest context window size + total output generated.
+    pub fn effective_token_count(&self) -> u64 {
+        self.latest_input_tokens + self.cumulative_output_tokens
     }
 
     /// Record a tool call completing.
@@ -179,8 +189,9 @@ impl SubagentDisplayState {
         let elapsed = self.started_at.elapsed().as_secs();
         parts.push(format_elapsed(elapsed));
 
-        if self.token_count > 0 {
-            parts.push(format_token_count(self.token_count));
+        let effective = self.effective_token_count();
+        if effective > 0 {
+            parts.push(format_token_count(effective));
         }
 
         format!("Done ({})", parts.join(", "))
