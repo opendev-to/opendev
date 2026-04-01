@@ -599,11 +599,9 @@ fn build_subagent_cell(
     ];
     let effective_tokens = sa.effective_token_count();
     if effective_tokens > 0 {
-        if effective_tokens >= 1_000 {
-            footer_parts.push(format!("{:.1}k tok", effective_tokens as f64 / 1_000.0));
-        } else {
-            footer_parts.push(format!("{} tok", effective_tokens));
-        }
+        footer_parts.push(crate::formatters::tool_line::format_token_count(
+            effective_tokens,
+        ));
     }
     if sa.cost_usd > 0.001 {
         footer_parts.push(format!("${:.3}", sa.cost_usd));

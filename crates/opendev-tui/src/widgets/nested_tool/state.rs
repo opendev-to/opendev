@@ -3,18 +3,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::formatters::tool_line::format_elapsed;
-
-/// Format a token count as human-readable (e.g., "1.2k tokens", "3.5M tokens").
-fn format_token_count(tokens: u64) -> String {
-    if tokens >= 1_000_000 {
-        format!("{:.1}M tokens", tokens as f64 / 1_000_000.0)
-    } else if tokens >= 1_000 {
-        format!("{:.1}k tokens", tokens as f64 / 1_000.0)
-    } else {
-        format!("{tokens} tokens")
-    }
-}
+use crate::formatters::tool_line::{format_elapsed, format_token_count};
 
 /// State tracking for a single subagent execution.
 #[derive(Debug, Clone)]

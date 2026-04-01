@@ -28,6 +28,17 @@ pub fn format_elapsed(secs: u64) -> String {
     }
 }
 
+/// Format a token count as human-readable (e.g., `"500 tokens"`, `"1.5k tokens"`, `"3.5M tokens"`).
+pub fn format_token_count(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M tokens", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k tokens", tokens as f64 / 1_000.0)
+    } else {
+        format!("{tokens} tokens")
+    }
+}
+
 /// Build a `Line` for an **active** (spinning) tool.
 ///
 /// Layout: `{prefix_spans}{spinner} {verb} {arg} {elapsed}`

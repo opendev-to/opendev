@@ -113,8 +113,10 @@ impl Widget for NestedToolWidget<'_> {
             // Format token count
             let effective_tokens = subagent.effective_token_count();
             let token_str = if effective_tokens > 0 {
-                let k = effective_tokens as f64 / 1000.0;
-                format!(" \u{00b7} {k:.1}k tokens")
+                format!(
+                    " \u{00b7} {}",
+                    crate::formatters::tool_line::format_token_count(effective_tokens)
+                )
             } else {
                 String::new()
             };

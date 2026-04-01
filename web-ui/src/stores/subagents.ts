@@ -27,8 +27,9 @@ export interface SubagentState {
   toolCallCount: number;
   activeTools: Map<string, ActiveToolCall>;
   completedTools: CompletedToolCall[];
-  tokenCount: number;
+  latestInputTokens: number;
   cumulativeOutputTokens: number;
+  tokenCount: number;
   shallowWarning: string | null;
   toolCallId: string | null; // parent tool_call_id from spawn_subagent
 }
@@ -96,8 +97,9 @@ wsClient.on('subagent_start', (message) => {
     toolCallCount: 0,
     activeTools: new Map(),
     completedTools: [],
-    tokenCount: 0,
+    latestInputTokens: 0,
     cumulativeOutputTokens: 0,
+    tokenCount: 0,
     shallowWarning: null,
     toolCallId: d.tool_call_id || null,
   };
@@ -251,11 +253,16 @@ wsClient.on('status_update', (message) => {
     if (!sa) return {};
 
     // Input tokens replaced (each call sends full context), output tokens accumulated
-    const cumOut = sa.cumulativeOutputTokens + (d.output_tokens || 0);
+    const inputTokens = d.input_tokens ?? 0;
+    const cumOut = sa.cumulativeOutputTokens + (d.output_tokens ?? 0);
+    const newTokenCount = inputTokens + cumOut;
+    if (newTokenCount === sa.tokenCount) return {};
+
     subagents.set(d.subagent_id, {
       ...sa,
-      tokenCount: (d.input_tokens || 0) + cumOut,
+      latestInputTokens: inputTokens,
       cumulativeOutputTokens: cumOut,
+      tokenCount: newTokenCount,
     });
     return { subagents };
   });
