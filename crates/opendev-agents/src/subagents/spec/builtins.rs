@@ -32,18 +32,6 @@ pub fn planner(system_prompt: &str) -> SubAgentSpec {
     .with_tools(PLANNER_TOOLS.iter().map(|s| s.to_string()).collect())
 }
 
-/// Create the Ask User subagent spec.
-pub fn ask_user(system_prompt: &str) -> SubAgentSpec {
-    SubAgentSpec::new(
-        "ask-user",
-        "Ask the user clarifying questions with structured multiple-choice options. \
-         Use when you need to gather preferences, clarify ambiguous requirements, \
-         or confirm critical decisions.",
-        system_prompt,
-    )
-    // No tools — UI-only interaction
-}
-
 /// Create the General subagent spec.
 ///
 /// This is the most versatile subagent type with access to all parent tools.

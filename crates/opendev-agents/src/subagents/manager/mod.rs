@@ -303,7 +303,10 @@ impl SubagentManager {
                 } else {
                     spec.tools.join(", ")
                 };
-                format!("- {}: {} (Tools: {})", spec.name, spec.description, tools_str)
+                format!(
+                    "- {}: {} (Tools: {})",
+                    spec.name, spec.description, tools_str
+                )
             })
             .collect();
         lines.join("\n")

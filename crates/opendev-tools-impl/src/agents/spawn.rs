@@ -51,9 +51,8 @@ impl SpawnSubagentTool {
         working_dir: impl Into<String>,
     ) -> Self {
         let agent_listing = manager.build_agent_listing();
-        let listing_section = format!(
-            "Available agent types and the tools they have access to:\n{agent_listing}"
-        );
+        let listing_section =
+            format!("Available agent types and the tools they have access to:\n{agent_listing}");
         let cached_description = opendev_agents::prompts::embedded::TOOLS_TOOL_SPAWN_AGENT
             .replace("{agent_listing}", &listing_section);
         Self {

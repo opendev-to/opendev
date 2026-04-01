@@ -18,7 +18,6 @@ pub enum SubagentType {
     Planner,
     General,
     Build,
-    AskUser,
     Verification,
     Custom,
 }
@@ -31,7 +30,6 @@ impl SubagentType {
             "Planner" | "planner" => Self::Planner,
             "General" | "general" => Self::General,
             "Build" | "build" => Self::Build,
-            "ask-user" | "ask_user" => Self::AskUser,
             "Verification" | "verification" => Self::Verification,
             _ => Self::Custom,
         }
@@ -44,7 +42,6 @@ impl SubagentType {
             Self::Planner => "Planner",
             Self::General => "General",
             Self::Build => "Build",
-            Self::AskUser => "ask-user",
             Self::Verification => "Verification",
             Self::Custom => "custom",
         }

@@ -20,8 +20,6 @@ pub const GENERATORS_GENERATOR_SKILL: &str =
 pub const REMINDERS: &str = include_str!("../../templates/reminders.md");
 
 // subagents/
-pub const SUBAGENTS_SUBAGENT_ASK_USER: &str =
-    include_str!("../../templates/subagents/subagent-ask-user.md");
 pub const SUBAGENTS_SUBAGENT_BUILD: &str =
     include_str!("../../templates/subagents/subagent-build.md");
 pub const SUBAGENTS_SUBAGENT_CODE_EXPLORER: &str =
@@ -145,8 +143,7 @@ pub const TOOLS_TOOL_GREP: &str = include_str!("../../templates/tools/tool-grep.
 pub const TOOLS_TOOL_AST_GREP: &str = include_str!("../../templates/tools/tool-ast-grep.md");
 pub const TOOLS_TOOL_SEND_MESSAGE: &str =
     include_str!("../../templates/tools/tool-send-message.md");
-pub const TOOLS_TOOL_SPAWN_AGENT: &str =
-    include_str!("../../templates/tools/tool-spawn-agent.md");
+pub const TOOLS_TOOL_SPAWN_AGENT: &str = include_str!("../../templates/tools/tool-spawn-agent.md");
 pub const TOOLS_TOOL_TASK_COMPLETE: &str =
     include_str!("../../templates/tools/tool-task-complete.md");
 pub const TOOLS_TOOL_UPDATE_TODO: &str = include_str!("../../templates/tools/tool-update-todo.md");
@@ -159,7 +156,7 @@ pub const TOOLS_TOOL_WRITE_TODOS: &str = include_str!("../../templates/tools/too
 // ---------------------------------------------------------------------------
 
 /// Total number of embedded templates.
-pub const TEMPLATE_COUNT: usize = 79;
+pub const TEMPLATE_COUNT: usize = 78;
 
 /// All embedded templates indexed by their relative path.
 ///
@@ -176,10 +173,6 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     m.insert("reminders.md", REMINDERS);
 
     // subagents
-    m.insert(
-        "subagents/subagent-ask-user.md",
-        SUBAGENTS_SUBAGENT_ASK_USER,
-    );
     m.insert("subagents/subagent-build.md", SUBAGENTS_SUBAGENT_BUILD);
     m.insert(
         "subagents/subagent-code-explorer.md",

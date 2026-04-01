@@ -20,13 +20,6 @@ fn test_planner_builtin() {
 }
 
 #[test]
-fn test_ask_user_builtin() {
-    let spec = ask_user("You ask questions.");
-    assert_eq!(spec.name, "ask-user");
-    assert!(!spec.has_tool_restriction()); // No tools
-}
-
-#[test]
 fn test_general_builtin() {
     let spec = general("You are versatile.");
     assert_eq!(spec.name, "General");

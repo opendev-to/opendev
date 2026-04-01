@@ -15,7 +15,6 @@ fn test_subagent_type_from_name() {
     assert_eq!(SubagentType::from_name("general"), SubagentType::General);
     assert_eq!(SubagentType::from_name("Build"), SubagentType::Build);
     assert_eq!(SubagentType::from_name("build"), SubagentType::Build);
-    assert_eq!(SubagentType::from_name("ask-user"), SubagentType::AskUser);
     assert_eq!(
         SubagentType::from_name("Verification"),
         SubagentType::Verification
@@ -32,11 +31,7 @@ fn test_subagent_type_canonical_name() {
     assert_eq!(SubagentType::CodeExplorer.canonical_name(), "Explore");
     assert_eq!(SubagentType::General.canonical_name(), "General");
     assert_eq!(SubagentType::Build.canonical_name(), "Build");
-    assert_eq!(SubagentType::AskUser.canonical_name(), "ask-user");
-    assert_eq!(
-        SubagentType::Verification.canonical_name(),
-        "Verification"
-    );
+    assert_eq!(SubagentType::Verification.canonical_name(), "Verification");
 }
 
 // --- SubagentEventBridge tests ---
