@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-03-31
+
+### Added
+
+- Read-only tool parallelization via consecutive batching for agents
+- Human-readable memory system replacing unused Playbook
+- Per-turn context attachment system for agents
+- Team collaboration: TeamManager, file-based mailbox, team tools (create_team, send_message, delete_team)
+- WorktreeManager for git worktree isolation
+- Background agent support with `run_in_background` for subagents
+- TaskManager for agent task lifecycle
+- Sidechain transcripts for agent resume
+- Task watcher detail view with enhanced footer and new keybindings
+- Ctrl+B background hint after 2s of subagent execution
+- `resume_with_messages()` for agent continuation
+
+### Changed
+
+- Redesigned system prompt and reminder architecture
+- Renamed all tools to match Claude Code naming convention
+- Removed restrictive prompt instructions that blocked conversational behavior
+
+### Fixed
+
+- Duplicate Ctrl+B hint in agent status line
+- Stall detection, thinking finalization, and spinner improvements
+- Actual line counts used for culled message placeholders
+- Display-layer tool call boundary for background results
+
 ## [0.1.6] - 2026-03-30
 
 ### Added
@@ -112,6 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release automation with cargo-dist for 5 platform targets
 - Shell installer (macOS/Linux), PowerShell installer (Windows), Homebrew tap
 
+[0.1.7]: https://github.com/opendev-to/opendev/releases/tag/v0.1.7
 [0.1.6]: https://github.com/opendev-to/opendev/releases/tag/v0.1.6
 [0.1.1]: https://github.com/opendev-to/opendev/releases/tag/v0.1.1
 [0.1.2]: https://github.com/opendev-to/opendev/releases/tag/v0.1.2
