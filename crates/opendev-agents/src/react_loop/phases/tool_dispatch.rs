@@ -15,7 +15,6 @@ use opendev_runtime::{
     TodoManager, TodoStatus, extract_command_prefix, play_finish_sound, summarize_tool_result,
 };
 use opendev_tools_core::parallel::{ParallelPolicy, ToolCall as ParallelToolCall};
-use opendev_tools_core::path::is_external_path;
 use opendev_tools_core::{ToolContext, ToolRegistry, ToolResult};
 use tokio_util::sync::CancellationToken;
 
@@ -304,55 +303,57 @@ where
             }
         }
 
-        // External directory approval for file tools
-        if let Some(target_path) = extract_file_tool_path(tool_name, &args_map) {
-            let resolved = std::path::Path::new(target_path.as_str());
-            if is_external_path(resolved, &tool_context.working_dir)
-                && !state.auto_approved_patterns.contains("external_directory")
-                && let Some(approval_tx) = tool_approval_tx
-            {
-                let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-                let req = opendev_runtime::ToolApprovalRequest {
-                    tool_name: format!("{tool_name} (external path)"),
-                    command: target_path,
-                    working_dir: tool_context.working_dir.display().to_string(),
-                    response_tx: resp_tx,
-                };
-                if approval_tx.send(req).is_ok() {
-                    match resp_rx.await {
-                        Ok(d) if !d.approved => {
-                            let result_content = ReactLoop::format_tool_result(
-                                tool_name,
-                                &serde_json::json!({
-                                    "success": false,
-                                    "error": format!(
-                                        "Access denied: path '{}' is outside the project directory",
-                                        d.command
-                                    )
-                                }),
-                            );
-                            messages.push(serde_json::json!({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id_str,
-                                "name": tool_name,
-                                "content": result_content,
-                            }));
-                            emitter.emit_tool_result(
-                                tool_call_id_str,
-                                tool_name,
-                                "External directory access denied by user",
-                                false,
-                            );
-                            emitter.emit_tool_finished(tool_call_id_str, false);
-                            continue;
-                        }
-                        Ok(d) if d.choice == "yes_remember" => {
-                            state
-                                .auto_approved_patterns
-                                .insert("external_directory".to_string());
-                        }
-                        _ => {}
+        // Plan edit review gate — when user selected "review edits" at plan approval,
+        // file-writing tools require per-call user approval.
+        let is_file_edit_tool = matches!(
+            tool_name,
+            "Write" | "write_file" | "Edit" | "edit_file" | "multi_edit"
+        );
+        if is_file_edit_tool
+            && state.plan_edit_review_mode
+            && !permission_allows
+            && let Some(approval_tx) = tool_approval_tx
+        {
+            let file_path = extract_file_tool_path(tool_name, &args_map)
+                .unwrap_or_else(|| "unknown".to_string());
+            let preview = format_edit_preview(tool_name, &args_map);
+            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+            let req = opendev_runtime::ToolApprovalRequest {
+                tool_name: format!("{tool_name} (plan review)"),
+                command: format!("{file_path}\n{preview}"),
+                working_dir: tool_context.working_dir.display().to_string(),
+                response_tx: resp_tx,
+            };
+            if approval_tx.send(req).is_ok() {
+                match resp_rx.await {
+                    Ok(d) if !d.approved => {
+                        let result_content = ReactLoop::format_tool_result(
+                            tool_name,
+                            &serde_json::json!({
+                                "success": false,
+                                "error": "File edit denied by user during plan review"
+                            }),
+                        );
+                        messages.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id_str,
+                            "name": tool_name,
+                            "content": result_content,
+                        }));
+                        emitter.emit_tool_result(
+                            tool_call_id_str,
+                            tool_name,
+                            "File edit denied by user during plan review",
+                            false,
+                        );
+                        emitter.emit_tool_finished(tool_call_id_str, false);
+                        continue;
                     }
+                    Ok(d) if d.choice == "yes_remember" => {
+                        // User opted to stop reviewing — switch to auto mode
+                        state.plan_edit_review_mode = false;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -551,14 +552,32 @@ where
             }
         }
 
-        // Inject plan_approved_signal after successful present_plan
-        if matches!(tool_name, "EnterPlanMode" | "present_plan") && tool_result.success {
+        // Inject plan_approved_signal after successful ExitPlanMode / present_plan
+        if matches!(tool_name, "ExitPlanMode" | "present_plan") && tool_result.success {
             let plan_content = tool_result
                 .metadata
                 .get("plan_content")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let reminder = get_reminder("plan_approved_signal", &[("plan_content", plan_content)]);
+            if !reminder.is_empty() {
+                append_directive(messages, &reminder);
+            }
+
+            // Store plan edit review mode from approval decision.
+            // When auto_approve is false, user selected "review edits" mode.
+            if let Some(auto_approve) = tool_result
+                .metadata
+                .get("auto_approve")
+                .and_then(|v| v.as_bool())
+            {
+                state.plan_edit_review_mode = !auto_approve;
+            }
+        }
+
+        // Inject plan_mode_entered directive after successful EnterPlanMode
+        if tool_name == "EnterPlanMode" && tool_result.success {
+            let reminder = get_reminder("plan_mode_entered", &[]);
             if !reminder.is_empty() {
                 append_directive(messages, &reminder);
             }
@@ -709,6 +728,36 @@ fn extract_file_tool_path(
     }
 }
 
+/// Build a short preview string for a file-edit tool call (for the approval popup).
+fn format_edit_preview(tool_name: &str, args: &std::collections::HashMap<String, Value>) -> String {
+    match tool_name {
+        "Write" | "write_file" => {
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let lines: Vec<&str> = content.lines().take(20).collect();
+            let total = content.lines().count();
+            if total > 20 {
+                format!("{}\n... ({} more lines)", lines.join("\n"), total - 20)
+            } else {
+                lines.join("\n")
+            }
+        }
+        "Edit" | "edit_file" => {
+            let old = args
+                .get("old_string")
+                .or_else(|| args.get("old_content"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let new = args
+                .get("new_string")
+                .or_else(|| args.get("new_content"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            format!("--- old\n{old}\n+++ new\n{new}")
+        }
+        _ => String::new(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Batched execution: parallelize consecutive read-only tool calls
 // ---------------------------------------------------------------------------
@@ -814,7 +863,9 @@ where
             }
 
             // Stub remaining tool calls
-            for remaining_batch in &batches[batches.iter().position(|b| std::ptr::eq(b, batch)).unwrap()..] {
+            for remaining_batch in
+                &batches[batches.iter().position(|b| std::ptr::eq(b, batch)).unwrap()..]
+            {
                 for &idx in remaining_batch {
                     let tc = &tool_calls[idx];
                     messages.push(serde_json::json!({
@@ -972,44 +1023,6 @@ async fn execute_concurrent_batch(
         let args_map =
             opendev_tools_core::normalizer::normalize_params(&tool_name, args_map, Some(&wd_str));
 
-        // Check external path approval serially (may need user interaction)
-        if let Some(target_path) = extract_file_tool_path(&tool_name, &args_map) {
-            let resolved = std::path::Path::new(target_path.as_str());
-            if is_external_path(resolved, &tool_context.working_dir)
-                && !state
-                    .auto_approved_patterns
-                    .contains("external_directory")
-            {
-                // For read-only tools in a concurrent batch, deny external paths
-                // rather than blocking the entire batch on approval UI.
-                let result_content = ReactLoop::format_tool_result(
-                    &tool_name,
-                    &serde_json::json!({
-                        "success": false,
-                        "error": format!(
-                            "Access denied: path '{}' is outside the project directory. \
-                             Use the tool individually to approve external access.",
-                            target_path
-                        )
-                    }),
-                );
-                messages.push(serde_json::json!({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": tool_name,
-                    "content": result_content,
-                }));
-                emitter.emit_tool_result(
-                    &tool_call_id,
-                    &tool_name,
-                    "External directory access denied in concurrent batch",
-                    false,
-                );
-                emitter.emit_tool_finished(&tool_call_id, false);
-                continue;
-            }
-        }
-
         emitter.emit_tool_started(&tool_call_id, &tool_name, &args_map);
         preps.push(ToolPrep {
             idx,
@@ -1126,11 +1139,7 @@ async fn execute_concurrent_batch(
         }
 
         // Subdirectory instruction injection
-        if tool_result.success
-            && matches!(
-                t_name.as_str(),
-                "Read" | "read_file" | "Grep" | "grep"
-            )
+        if tool_result.success && matches!(t_name.as_str(), "Read" | "read_file" | "Grep" | "grep")
         {
             let file_path_str = prep
                 .args_value
