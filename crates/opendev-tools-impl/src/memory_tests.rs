@@ -73,7 +73,10 @@ fn test_resolve_memory_dir_global() {
     let dir = resolve_memory_dir("global", Path::new("/tmp/test-project"));
     assert!(dir.is_some());
     let path = dir.unwrap();
+    #[cfg(not(windows))]
     assert!(path.to_string_lossy().ends_with(".opendev/memory"));
+    #[cfg(windows)]
+    assert!(path.to_string_lossy().ends_with(".opendev\\memory"));
 }
 
 #[test]
