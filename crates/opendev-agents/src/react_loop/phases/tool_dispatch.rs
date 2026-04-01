@@ -1,6 +1,6 @@
 //! Sequential tool execution loop: approval, permissions, execution, post-processing.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serde_json::Value;
@@ -14,6 +14,7 @@ use opendev_context::ArtifactIndex;
 use opendev_runtime::{
     TodoManager, TodoStatus, extract_command_prefix, play_finish_sound, summarize_tool_result,
 };
+use opendev_tools_core::parallel::{ParallelPolicy, ToolCall as ParallelToolCall};
 use opendev_tools_core::path::is_external_path;
 use opendev_tools_core::{ToolContext, ToolRegistry, ToolResult};
 use tokio_util::sync::CancellationToken;
@@ -706,4 +707,474 @@ fn extract_file_tool_path(
         }
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Batched execution: parallelize consecutive read-only tool calls
+// ---------------------------------------------------------------------------
+
+/// Maximum number of read-only tools to execute concurrently within a batch.
+const MAX_CONCURRENT_TOOLS: usize = 10;
+
+/// Extract tool name from a raw tool call Value.
+fn tool_name_from(tc: &Value) -> &str {
+    tc.get("function")
+        .and_then(|f| f.get("name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or("unknown")
+}
+
+/// Extract tool call ID from a raw tool call Value.
+fn tool_call_id_from(tc: &Value) -> &str {
+    tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown")
+}
+
+/// Parse arguments from a raw tool call Value.
+fn parse_tool_args(tc: &Value) -> (Value, std::collections::HashMap<String, Value>) {
+    let args_str = tc
+        .get("function")
+        .and_then(|f| f.get("arguments"))
+        .and_then(|a| a.as_str())
+        .unwrap_or("{}");
+    let args_value: Value = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+    let args_map = args_value
+        .as_object()
+        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    (args_value, args_map)
+}
+
+/// Execute tool calls using batched parallelism for consecutive read-only tools.
+///
+/// Returns `None` if no batches have >1 element (no parallelism benefit, caller
+/// should fall through to `execute_sequential`). Returns `Some(LoopAction)` when
+/// batched execution handled everything.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::react_loop) async fn execute_batched<M>(
+    react_loop: &ReactLoop,
+    tool_calls: &[Value],
+    response: &LlmResponse,
+    messages: &mut Vec<Value>,
+    state: &mut LoopState,
+    emitter: &IterationEmitter<'_>,
+    iter_metrics: &mut IterationMetrics,
+    iter_start: Instant,
+    tool_registry: &ToolRegistry,
+    tool_context: &ToolContext,
+    task_monitor: Option<&M>,
+    artifact_index: Option<&Mutex<ArtifactIndex>>,
+    todo_manager: Option<&Mutex<TodoManager>>,
+    cancel: Option<&CancellationToken>,
+    tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
+) -> Option<LoopAction>
+where
+    M: TaskMonitor + ?Sized,
+{
+    // Build ToolCall structs for the partitioner
+    let parallel_calls: Vec<ParallelToolCall> = tool_calls
+        .iter()
+        .map(|tc| {
+            let name = tool_name_from(tc).to_string();
+            let (args_value, _) = parse_tool_args(tc);
+            ParallelToolCall::new(name, args_value)
+        })
+        .collect();
+
+    let batches = ParallelPolicy::partition(&parallel_calls);
+
+    // If no batch has >1 element, fall through to sequential execution
+    if !ParallelPolicy::has_parallel_batches(&batches) {
+        return None;
+    }
+
+    info!(
+        batch_count = batches.len(),
+        "Executing tool calls with batched parallelism"
+    );
+
+    let total_tool_count = tool_calls.len();
+    let mut completed_tool_count: usize = 0;
+    let mut any_tool_failed = false;
+
+    for batch in &batches {
+        // Check for interruption between batches
+        let interrupted_by_monitor = task_monitor.is_some_and(|m| m.should_interrupt());
+        let interrupted_by_cancel = cancel.is_some_and(|c| c.is_cancelled());
+        if interrupted_by_monitor || interrupted_by_cancel {
+            if task_monitor.is_some_and(|m| m.is_background_requested()) {
+                info!(
+                    iteration = state.iteration,
+                    "Background requested during batched tools — yielding"
+                );
+                iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+                react_loop.push_metrics(iter_metrics.clone());
+                return Some(LoopAction::Return(Ok(AgentResult::backgrounded(
+                    messages.clone(),
+                ))));
+            }
+
+            // Stub remaining tool calls
+            for remaining_batch in &batches[batches.iter().position(|b| std::ptr::eq(b, batch)).unwrap()..] {
+                for &idx in remaining_batch {
+                    let tc = &tool_calls[idx];
+                    messages.push(serde_json::json!({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id_from(tc),
+                        "name": tool_name_from(tc),
+                        "content": "Error: Interrupted by user",
+                    }));
+                }
+            }
+
+            let partial = PartialResult::from_interrupted_state(
+                messages,
+                response.content.as_deref(),
+                state.iteration,
+                completed_tool_count,
+                total_tool_count,
+            );
+            iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+            react_loop.push_metrics(iter_metrics.clone());
+            let mut result = AgentResult::interrupted(messages.clone());
+            result.partial_result = Some(partial);
+            return Some(LoopAction::Return(Ok(result)));
+        }
+
+        if batch.len() == 1 {
+            // Single-element batch: run through full sequential pipeline
+            let idx = batch[0];
+            let tc = &tool_calls[idx];
+
+            // Delegate to execute_sequential for single tools — this handles
+            // task_complete, permissions, approval gates, external paths, etc.
+            // We call execute_sequential with a single-element slice.
+            if let Some(action) = execute_sequential(
+                react_loop,
+                std::slice::from_ref(tc),
+                response,
+                messages,
+                state,
+                emitter,
+                iter_metrics,
+                iter_start,
+                tool_registry,
+                tool_context,
+                task_monitor,
+                artifact_index,
+                todo_manager,
+                cancel,
+                tool_approval_tx,
+            )
+            .await
+            {
+                return Some(action);
+            }
+            completed_tool_count += 1;
+        } else {
+            // Multi-element batch: all read-only, run in parallel
+            if let Some(action) = execute_concurrent_batch(
+                react_loop,
+                tool_calls,
+                batch,
+                messages,
+                state,
+                emitter,
+                iter_metrics,
+                tool_registry,
+                tool_context,
+                artifact_index,
+                cancel,
+                &mut any_tool_failed,
+            )
+            .await
+            {
+                return Some(action);
+            }
+            completed_tool_count += batch.len();
+        }
+    }
+
+    // --- Post-tool analysis (same as execute_sequential) ---
+
+    // Consecutive reads detection
+    let all_reads = tool_calls.iter().all(|tc| {
+        let name = tool_name_from(tc);
+        READ_OPS.contains(&name)
+    });
+    if all_reads && !any_tool_failed {
+        state.consecutive_reads += 1;
+        if state.consecutive_reads >= 5 {
+            let nudge = get_reminder("consecutive_reads_nudge", &[]);
+            if !nudge.is_empty() {
+                append_directive(messages, &nudge);
+            }
+            state.consecutive_reads = 0;
+        }
+    } else {
+        state.consecutive_reads = 0;
+    }
+
+    // All-todos-complete signal
+    if !state.all_todos_complete_nudged
+        && let Some(mgr) = todo_manager
+        && let Ok(mgr) = mgr.lock()
+        && mgr.has_todos()
+        && !mgr.has_incomplete_todos()
+    {
+        state.all_todos_complete_nudged = true;
+        let nudge = get_reminder("all_todos_complete_nudge", &[]);
+        if !nudge.is_empty() {
+            append_nudge(messages, &nudge);
+        }
+    }
+
+    iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
+    react_loop.push_metrics(iter_metrics.clone());
+    Some(LoopAction::Continue)
+}
+
+/// Execute a batch of read-only tools concurrently.
+#[allow(clippy::too_many_arguments)]
+async fn execute_concurrent_batch(
+    _react_loop: &ReactLoop,
+    tool_calls: &[Value],
+    batch_indices: &[usize],
+    messages: &mut Vec<Value>,
+    state: &mut LoopState,
+    emitter: &IterationEmitter<'_>,
+    iter_metrics: &mut IterationMetrics,
+    tool_registry: &ToolRegistry,
+    tool_context: &ToolContext,
+    artifact_index: Option<&Mutex<ArtifactIndex>>,
+    cancel: Option<&CancellationToken>,
+    any_tool_failed: &mut bool,
+) -> Option<LoopAction> {
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_TOOLS));
+
+    // Pre-process: parse args, normalize, emit tool_started for each tool
+    struct ToolPrep {
+        #[allow(dead_code)]
+        idx: usize,
+        tool_call_id: String,
+        tool_name: String,
+        args_value: Value,
+        args_map: std::collections::HashMap<String, Value>,
+    }
+
+    let mut preps: Vec<ToolPrep> = Vec::with_capacity(batch_indices.len());
+    for &idx in batch_indices {
+        let tc = &tool_calls[idx];
+        let tool_name = tool_name_from(tc).to_string();
+        let tool_call_id = tool_call_id_from(tc).to_string();
+        let (args_value, args_map) = parse_tool_args(tc);
+
+        let wd_str = tool_context.working_dir.to_string_lossy().to_string();
+        let args_map =
+            opendev_tools_core::normalizer::normalize_params(&tool_name, args_map, Some(&wd_str));
+
+        // Check external path approval serially (may need user interaction)
+        if let Some(target_path) = extract_file_tool_path(&tool_name, &args_map) {
+            let resolved = std::path::Path::new(target_path.as_str());
+            if is_external_path(resolved, &tool_context.working_dir)
+                && !state
+                    .auto_approved_patterns
+                    .contains("external_directory")
+            {
+                // For read-only tools in a concurrent batch, deny external paths
+                // rather than blocking the entire batch on approval UI.
+                let result_content = ReactLoop::format_tool_result(
+                    &tool_name,
+                    &serde_json::json!({
+                        "success": false,
+                        "error": format!(
+                            "Access denied: path '{}' is outside the project directory. \
+                             Use the tool individually to approve external access.",
+                            target_path
+                        )
+                    }),
+                );
+                messages.push(serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": result_content,
+                }));
+                emitter.emit_tool_result(
+                    &tool_call_id,
+                    &tool_name,
+                    "External directory access denied in concurrent batch",
+                    false,
+                );
+                emitter.emit_tool_finished(&tool_call_id, false);
+                continue;
+            }
+        }
+
+        emitter.emit_tool_started(&tool_call_id, &tool_name, &args_map);
+        preps.push(ToolPrep {
+            idx,
+            tool_call_id,
+            tool_name,
+            args_value,
+            args_map,
+        });
+    }
+
+    if preps.is_empty() {
+        return None;
+    }
+
+    // Spawn concurrent tool executions
+    let futures: Vec<_> = preps
+        .iter()
+        .map(|prep| {
+            let tool_name = prep.tool_name.clone();
+            let tool_call_id = prep.tool_call_id.clone();
+            let args_map = prep.args_map.clone();
+            let exec_ctx = match cancel {
+                Some(ct) => {
+                    let mut ctx = tool_context.clone();
+                    ctx.cancel_token = Some(ct.child_token());
+                    ctx
+                }
+                None => tool_context.clone(),
+            };
+            let sem = Arc::clone(&semaphore);
+
+            async move {
+                let _permit = sem.acquire().await;
+                let start = Instant::now();
+                let result = tool_registry
+                    .execute(&tool_name, args_map, &exec_ctx)
+                    .instrument(info_span!(
+                        "tool_execution_concurrent",
+                        tool_name = %tool_name,
+                        tool_call_id = %tool_call_id,
+                    ))
+                    .await;
+                let duration_ms = start.elapsed().as_millis() as u64;
+                (tool_call_id, tool_name, result, duration_ms)
+            }
+        })
+        .collect();
+
+    // Await all — read-only tools are safe to complete even on cancellation
+    let results = futures::future::join_all(futures).await;
+
+    // Process results in original order (futures::join_all preserves order)
+    for (i, (tc_id, t_name, tool_result, duration_ms)) in results.into_iter().enumerate() {
+        let prep = &preps[i];
+
+        // Record metric
+        iter_metrics.tool_calls.push(ToolCallMetric {
+            tool_name: t_name.clone(),
+            duration_ms,
+            success: tool_result.success,
+        });
+
+        // Record artifact
+        if tool_result.success
+            && let Some(ai) = artifact_index
+        {
+            record_artifact(ai, &t_name, &prep.args_value, &tool_result);
+        }
+
+        // Emit result
+        let output_str = tool_result_display_output(&tool_result);
+        emitter.emit_tool_result(&tc_id, &t_name, &output_str, tool_result.success);
+        emitter.emit_tool_finished(&tc_id, tool_result.success);
+
+        // Result summary for logging
+        let _result_summary = summarize_tool_result(
+            &t_name,
+            tool_result.output.as_deref(),
+            if tool_result.success {
+                None
+            } else {
+                tool_result.error.as_deref()
+            },
+        );
+        debug!(tool = %t_name, summary = %_result_summary, "Tool result summary (concurrent)");
+
+        // Format and append tool result to messages
+        let mut result_value = if tool_result.success {
+            serde_json::json!({
+                "success": true,
+                "output": tool_result.output.as_deref().unwrap_or(""),
+            })
+        } else {
+            serde_json::json!({
+                "success": false,
+                "error": tool_result.error.as_deref().unwrap_or("Tool execution failed"),
+            })
+        };
+        if let Some(ref suffix) = tool_result.llm_suffix {
+            result_value["llm_suffix"] = serde_json::json!(suffix);
+        }
+
+        let formatted = ReactLoop::format_tool_result(&t_name, &result_value);
+        messages.push(serde_json::json!({
+            "role": "tool",
+            "tool_call_id": tc_id,
+            "name": t_name,
+            "content": formatted,
+        }));
+
+        // Reset proactive reminder counters
+        if tool_result.success {
+            state.proactive_reminders.reset("task_proactive_reminder");
+        }
+
+        // Subdirectory instruction injection
+        if tool_result.success
+            && matches!(
+                t_name.as_str(),
+                "Read" | "read_file" | "Grep" | "grep"
+            )
+        {
+            let file_path_str = prep
+                .args_value
+                .get("file_path")
+                .or_else(|| prep.args_value.get("path"))
+                .and_then(|v| v.as_str());
+            if let Some(fp) = file_path_str {
+                let path = std::path::Path::new(fp);
+                let instructions = state.subdir_tracker.check_file_read(path);
+                for instr in &instructions {
+                    let note = format!(
+                        "The following project instructions apply to files in this directory ({}):\n\n{}",
+                        instr.relative_path, instr.content,
+                    );
+                    append_directive(messages, &note);
+                    debug!(
+                        path = %instr.relative_path,
+                        "Injected subdirectory instruction file (concurrent)"
+                    );
+                }
+            }
+        }
+
+        // Error directive after tool failure
+        if !tool_result.success {
+            *any_tool_failed = true;
+            let error_text = tool_result.error.as_deref().unwrap_or("");
+            let error_type = ReactLoop::classify_error(error_text);
+            let nudge_name = format!("nudge_{error_type}");
+            let nudge = get_reminder(&nudge_name, &[]);
+            if nudge.is_empty() {
+                let generic = get_reminder("failed_tool_nudge", &[]);
+                if !generic.is_empty() {
+                    append_directive(messages, &generic);
+                }
+            } else {
+                append_directive(messages, &nudge);
+            }
+        }
+    }
+
+    // Track exploration tools
+    let tool_names: Vec<String> = preps.iter().map(|p| p.tool_name.clone()).collect();
+    ReactLoop::track_exploration_tools(tool_context, &tool_names, messages);
+
+    None
 }

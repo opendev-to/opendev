@@ -37,28 +37,20 @@ impl ContextCollector for PlanModeCollector {
 
     async fn collect(&self, ctx: &TurnContext<'_>) -> Option<Attachment> {
         let state = ctx.shared_state?.lock().ok()?;
-        let phase = state
-            .get("planning_phase")
-            .and_then(|v| v.as_str())?;
+        let phase = state.get("planning_phase").and_then(|v| v.as_str())?;
 
         let content = match phase {
-            "explore" => {
-                "You are in the exploration phase of planning. Focus on understanding \
+            "explore" => "You are in the exploration phase of planning. Focus on understanding \
                  the codebase before creating a plan. Use Explore subagents for \
                  multi-file analysis."
-                    .to_string()
-            }
-            "plan" => {
-                "You are in plan creation mode. Spawn a Planner subagent with your \
+                .to_string(),
+            "plan" => "You are in plan creation mode. Spawn a Planner subagent with your \
                  findings to create a detailed implementation plan."
-                    .to_string()
-            }
-            "executing" => {
-                "You are executing an approved plan. Continue working through your \
+                .to_string(),
+            "executing" => "You are executing an approved plan. Continue working through your \
                  todo list items in order. Check your todo list for the next \
                  incomplete item."
-                    .to_string()
-            }
+                .to_string(),
             _ => return None,
         };
 

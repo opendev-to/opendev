@@ -128,10 +128,7 @@ impl ReactLoop {
                     turn_number: state.iteration,
                     working_dir: &tool_context.working_dir,
                     todo_manager,
-                    shared_state: tool_context
-                        .shared_state
-                        .as_ref()
-                        .map(|arc| arc.as_ref()),
+                    shared_state: tool_context.shared_state.as_ref().map(|arc| arc.as_ref()),
                 };
                 state.collector_runner.run(&turn_ctx, messages).await;
             }
@@ -297,7 +294,33 @@ impl ReactLoop {
                         }
                     }
 
-                    // Sequential tool execution
+                    // Try batched execution (read-only parallelism)
+                    if let Some(action) = super::phases::execute_batched(
+                        self,
+                        &tool_calls,
+                        &response,
+                        messages,
+                        &mut state,
+                        &emitter,
+                        &mut iter_metrics,
+                        iter_start,
+                        tool_registry,
+                        tool_context,
+                        task_monitor,
+                        artifact_index,
+                        todo_manager,
+                        cancel,
+                        tool_approval_tx,
+                    )
+                    .await
+                    {
+                        match action {
+                            super::types::LoopAction::Continue => continue,
+                            super::types::LoopAction::Return(result) => return result,
+                        }
+                    }
+
+                    // Sequential tool execution (fallback for single tools / no parallelism)
                     if let Some(action) = super::phases::execute_sequential(
                         self,
                         &tool_calls,

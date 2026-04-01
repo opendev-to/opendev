@@ -354,7 +354,7 @@ fn test_snapshot_multi_message_with_tool_call() {
             collapsed: false,
             thinking_started_at: None,
             thinking_duration_secs: None,
-        thinking_finalized_at: None,
+            thinking_finalized_at: None,
         },
         DisplayMessage::new(DisplayRole::Assistant, "Here are the files."),
     ];
@@ -854,7 +854,7 @@ fn test_reasoning_message_visible() {
             collapsed: false,
             thinking_started_at: None,
             thinking_duration_secs: Some(5),
-        thinking_finalized_at: None,
+            thinking_finalized_at: None,
         },
         DisplayMessage::new(DisplayRole::Assistant, "The answer is 42."),
     ];

@@ -23,7 +23,8 @@ pub struct TurnContext<'a> {
     pub turn_number: usize,
     pub working_dir: &'a std::path::Path,
     pub todo_manager: Option<&'a std::sync::Mutex<opendev_runtime::TodoManager>>,
-    pub shared_state: Option<&'a std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>>,
+    pub shared_state:
+        Option<&'a std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>>,
 }
 
 /// Output produced when a collector fires.
@@ -120,11 +121,7 @@ impl CollectorRunner {
     }
 
     /// Run all collectors for this turn, injecting attachments into messages.
-    pub async fn run(
-        &self,
-        ctx: &TurnContext<'_>,
-        messages: &mut Vec<serde_json::Value>,
-    ) {
+    pub async fn run(&self, ctx: &TurnContext<'_>, messages: &mut Vec<serde_json::Value>) {
         for collector in &self.collectors {
             if collector.should_fire(ctx)
                 && let Some(attachment) = collector.collect(ctx).await

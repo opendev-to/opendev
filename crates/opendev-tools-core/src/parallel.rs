@@ -34,29 +34,6 @@ fn read_only_tools() -> HashSet<&'static str> {
     ])
 }
 
-/// Tools that modify state and should generally run sequentially.
-fn write_tools() -> HashSet<&'static str> {
-    HashSet::from([
-        "Write",
-        "Edit",
-        "multi_edit",
-        "Bash",
-        "insert_before_symbol",
-        "insert_after_symbol",
-        "replace_symbol_body",
-        "rename_symbol",
-        "NotebookEdit",
-        "apply_patch",
-        "memory_write",
-        "TodoWrite",
-        "TaskUpdate",
-        "complete_todo",
-        "clear_todos",
-        "SendMessage",
-        "schedule",
-    ])
-}
-
 /// A tool call with its name and arguments, used for partitioning.
 #[derive(Debug, Clone)]
 pub struct ToolCall {
@@ -73,18 +50,21 @@ impl ToolCall {
     }
 }
 
-/// Partitions tool calls into execution groups for optimal parallelism.
+/// Partitions tool calls into ordered execution batches.
 ///
-/// Rules:
-/// 1. All read-only tools can run in parallel (group 1)
-/// 2. Write tools targeting different files can parallelize (group 2)
-/// 3. Everything else runs sequentially (individual groups)
+/// Consecutive read-only tools are grouped into a single batch (safe to run in
+/// parallel). Non-read-only tools each get their own batch (run serially).
+/// Batches execute in strict positional order, preserving the LLM's intended
+/// tool call sequence.
+///
+/// Example: `[Read, Grep, Edit, Read, Glob]` → `[[0,1], [2], [3,4]]`
 pub struct ParallelPolicy;
 
 impl ParallelPolicy {
-    /// Partition tool calls into ordered execution groups.
+    /// Partition tool calls into ordered execution batches.
     ///
-    /// Each group can be executed in parallel. Groups must be executed in order.
+    /// Each batch can be executed in parallel internally. Batches must execute
+    /// in order. Batches with a single element run serially.
     pub fn partition(tool_calls: &[ToolCall]) -> Vec<Vec<usize>> {
         if tool_calls.len() <= 1 {
             return if tool_calls.is_empty() {
@@ -95,80 +75,33 @@ impl ParallelPolicy {
         }
 
         let ro_tools = read_only_tools();
-        let w_tools = write_tools();
-
-        let mut read_indices: Vec<usize> = Vec::new();
-        let mut write_indices: Vec<usize> = Vec::new();
-        let mut other_indices: Vec<usize> = Vec::new();
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut current_concurrent: Vec<usize> = Vec::new();
 
         for (i, tc) in tool_calls.iter().enumerate() {
-            if Self::is_read_only(tc, &ro_tools) {
-                read_indices.push(i);
-            } else if w_tools.contains(tc.name.as_str()) {
-                write_indices.push(i);
+            if ro_tools.contains(tc.name.as_str()) {
+                current_concurrent.push(i);
             } else {
-                other_indices.push(i);
-            }
-        }
-
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-
-        // Group 1: All read-only tools (parallel)
-        if !read_indices.is_empty() {
-            groups.push(read_indices);
-        }
-
-        // Group 2: Write tools
-        if !write_indices.is_empty() {
-            if Self::can_parallelize_writes(tool_calls, &write_indices) {
-                groups.push(write_indices);
-            } else {
-                for idx in write_indices {
-                    groups.push(vec![idx]);
+                // Flush accumulated concurrent batch
+                if !current_concurrent.is_empty() {
+                    groups.push(std::mem::take(&mut current_concurrent));
                 }
+                // Non-concurrent tool gets its own batch
+                groups.push(vec![i]);
             }
         }
 
-        // Group 3: Everything else (sequential)
-        for idx in other_indices {
-            groups.push(vec![idx]);
+        // Flush trailing concurrent batch
+        if !current_concurrent.is_empty() {
+            groups.push(current_concurrent);
         }
 
         groups
     }
 
-    /// Check if a tool call is read-only.
-    fn is_read_only(tc: &ToolCall, ro_tools: &HashSet<&str>) -> bool {
-        ro_tools.contains(tc.name.as_str())
-    }
-
-    /// Check if write operations target different files (safe to parallelize).
-    fn can_parallelize_writes(tool_calls: &[ToolCall], write_indices: &[usize]) -> bool {
-        let mut targets: HashSet<String> = HashSet::new();
-
-        for &idx in write_indices {
-            let tc = &tool_calls[idx];
-            match tc.name.as_str() {
-                "Write" | "Edit" | "NotebookEdit" => {
-                    let target = tc
-                        .arguments
-                        .get("file_path")
-                        .or_else(|| tc.arguments.get("notebook_path"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    if target.is_empty() {
-                        return false;
-                    }
-                    if targets.contains(target) {
-                        return false; // Same file -> sequential
-                    }
-                    targets.insert(target.to_string());
-                }
-                _ => return false, // Non-file writes -> sequential
-            }
-        }
-
-        targets.len() > 1
+    /// Returns true if any batch has more than one element (parallelism possible).
+    pub fn has_parallel_batches(batches: &[Vec<usize>]) -> bool {
+        batches.iter().any(|b| b.len() > 1)
     }
 }
 
