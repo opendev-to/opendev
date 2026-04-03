@@ -29,9 +29,13 @@ export function InputBox() {
   const currentSessionId = useChatStore(state => state.currentSessionId);
   const hasActiveSession = !!currentSessionId;
 
-  // Load files when @ is detected
+  // Load files when @ is detected (with debounce)
   useEffect(() => {
-    if (showFileMention) {
+    if (!showFileMention) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
       apiClient.listFiles(mentionQuery).then(response => {
         setFilesList(response.files);
         setSelectedFileIndex(0);
@@ -39,7 +43,9 @@ export function InputBox() {
         console.error('Failed to load files:', error);
         setFilesList([]);
       });
-    }
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timer);
   }, [mentionQuery, showFileMention]);
 
   const handleSend = () => {
