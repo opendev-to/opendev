@@ -296,7 +296,16 @@ impl AgentRuntime {
                     hdrs.insert("api-key", val);
                 }
                 hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                (url, hdrs, None)
+                let adapter = opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
+                    url.clone(),
+                );
+                (
+                    url,
+                    hdrs,
+                    Some(
+                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
+                    ),
+                )
             }
             provider => {
                 // OpenAI-compatible providers — use registry/config base URL or fall back
@@ -321,7 +330,16 @@ impl AgentRuntime {
                 {
                     hdrs.insert("HTTP-Referer", val);
                 }
-                (url, hdrs, None)
+                let adapter = opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
+                    url.clone(),
+                );
+                (
+                    url,
+                    hdrs,
+                    Some(
+                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
+                    ),
+                )
             }
         };
 
@@ -718,7 +736,15 @@ impl AgentRuntime {
                         hdrs.insert("api-key", val);
                     }
                     hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                    (url, hdrs, None)
+                    let adapter =
+                        opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
+                            url.clone(),
+                        );
+                    (
+                        url,
+                        hdrs,
+                        Some(Box::new(adapter) as Box<dyn ProviderAdapter>),
+                    )
                 }
                 _ => {
                     // OpenAI-compatible providers — use registry api_base_url
@@ -744,7 +770,15 @@ impl AgentRuntime {
                     {
                         hdrs.insert("HTTP-Referer", val);
                     }
-                    (url, hdrs, None)
+                    let adapter =
+                        opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
+                            url.clone(),
+                        );
+                    (
+                        url,
+                        hdrs,
+                        Some(Box::new(adapter) as Box<dyn ProviderAdapter>),
+                    )
                 }
             };
 
