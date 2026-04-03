@@ -57,7 +57,7 @@ When **multiple subagents** return results (parallel execution), do NOT summariz
 
 ## Agent Teams
 
-For complex tasks that require **inter-agent coordination**, use Agent Teams instead of plain subagents. Teams provide a shared task list and a mailbox system so teammates can communicate, claim work, and collaborate.
+For complex tasks that require **inter-agent coordination**, use Agent Teams instead of plain subagents. Teams provide a mailbox system so teammates can communicate, plus an optional shared task list for dependency tracking.
 
 **When to use teams instead of subagents:**
 
@@ -72,13 +72,40 @@ For complex tasks that require **inter-agent coordination**, use Agent Teams ins
 - Quick research or exploration (1-2 agents, < 30 seconds)
 - Tasks where you only need the final result, not ongoing coordination
 
-**Team workflow:**
+**Team workflow — spawn directly, wait, synthesize:**
 
-1. `TeamCreate` — Register the team and its members
-2. `TeamAddTask` — Populate the shared task list (with optional dependencies)
-3. `SpawnTeammate` — Start each member as a background agent
-4. `SendMessage` — Communicate with members or broadcast to all (to="*")
-5. `TeamListTasks` — Monitor progress on the shared task list
-6. `TeamDelete` — Disband the team when work is complete
+Just call `SpawnTeammate` for each member — team creation and member registration happen automatically. No setup tools needed.
+
+**CRITICAL**: To run teammates in PARALLEL, make ALL `SpawnTeammate` calls in the SAME response. Sequential responses = sequential execution.
+
+```
+# Step 1: Spawn all teammates in ONE response (parallel execution)
+SpawnTeammate(team_name="research", member_name="explorer", agent_type="Explore", task="...")
+SpawnTeammate(team_name="research", member_name="analyzer", agent_type="Explore", task="...")
+SpawnTeammate(team_name="research", member_name="docs-reader", agent_type="Explore", task="...")
+
+# Step 2: WAIT for ALL background completions (automatic notifications)
+# Results are delivered automatically — do NOT poll, sleep, or call get_background_result.
+# Do NOT do the teammates' work yourself while waiting. Do NOT call TeamDelete yet.
+# You may do genuinely independent work (unrelated to what teammates are doing).
+
+# Step 3: Once ALL results arrive, synthesize into a unified response
+# Merge findings by topic, not by agent. Present as one coherent answer.
+```
+
+**IMPORTANT rules while teammates are running:**
+
+- **Do NOT call `get_background_result`** — it is not a tool. Results arrive automatically.
+- **Do NOT read files or run searches** that overlap with any teammate's task.
+- **Do NOT call `TeamDelete`** until all teammates have reported back.
+- **Do NOT call `TaskStop`** until all background results have been received.
+- You MAY use `SendMessage` to give teammates additional instructions mid-flight.
+
+**Optional tools for advanced coordination:**
+
+- `SendMessage` — Send messages to specific teammates or broadcast to all (to="*")
+- `TeamAddTask` — Add tasks to a shared list with optional dependencies between them
+- `TeamListTasks` — Monitor shared task progress
+- `TeamDelete` — Disband the team ONLY after all teammates have completed
 
 Teammates automatically receive team context and can use `CheckMailbox`, `SendMessage`, `TeamListTasks`, `TeamClaimTask`, and `TeamCompleteTask` to coordinate with each other.

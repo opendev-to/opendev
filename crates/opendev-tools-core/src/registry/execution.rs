@@ -112,6 +112,19 @@ impl ToolRegistry {
         args: HashMap<String, serde_json::Value>,
         ctx: &ToolContext,
     ) -> ToolResult {
+        // `get_background_result` is a synthetic tool injected by the system
+        // when background tasks complete. It is not a real registered tool.
+        // If the LLM tries to call it explicitly, return a helpful message
+        // instead of "Unknown tool".
+        if tool_name == "get_background_result" {
+            return ToolResult::fail(
+                "get_background_result is not callable directly. \
+                 Background task results are delivered automatically when tasks complete. \
+                 Wait for the background completion notification instead of calling this tool."
+                    .to_string(),
+            );
+        }
+
         // Clone Arc out of the read lock so we don't hold it during execution
         let (tool, resolved_name) = match self.resolve_tool(tool_name) {
             Some((t, name)) => (t, name),

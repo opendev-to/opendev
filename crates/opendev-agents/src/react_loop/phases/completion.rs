@@ -77,6 +77,44 @@ where
         return LoopAction::Continue;
     }
 
+    // Block completion when background tasks are still pending.
+    // Count spawned background tasks (from tool_dispatch tracking) vs
+    // completed ones (synthetic get_background_result messages in history).
+    // This check is repeatable — it keeps blocking until all results arrive.
+    if state.bg_tasks_spawned > 0 {
+        let bg_completed = messages
+            .iter()
+            .filter(|m| {
+                m.get("name")
+                    .and_then(|n| n.as_str())
+                    .is_some_and(|n| n == "get_background_result")
+            })
+            .count();
+        if bg_completed < state.bg_tasks_spawned {
+            let pending = state.bg_tasks_spawned - bg_completed;
+            // Limit nudges to avoid infinite loops (max 3 background wait nudges)
+            if state.bg_wait_nudge_count < 3 {
+                state.bg_wait_nudge_count += 1;
+                info!(
+                    spawned = state.bg_tasks_spawned,
+                    completed = bg_completed,
+                    pending,
+                    nudge_count = state.bg_wait_nudge_count,
+                    "Blocking completion — background tasks still running"
+                );
+                let nudge = format!(
+                    "You have {pending} background task(s) still running. \
+                     Do NOT duplicate their work or call TeamDelete. \
+                     Do NOT call get_background_result — results arrive automatically. \
+                     Wait for the background completion notifications before finishing."
+                );
+                append_nudge(messages, &nudge);
+                react_loop.push_metrics(iter_metrics);
+                return LoopAction::Continue;
+            }
+        }
+    }
+
     // Implicit completion nudge — verify original task before finishing
     // Skip on first iteration: text-only response = conversational reply
     if !state.completion_nudge_sent

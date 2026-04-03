@@ -89,14 +89,16 @@ impl BaseTool for SpawnTeammateTool {
     }
 
     fn description(&self) -> &str {
-        "Spawn a registered team member as a background agent. The teammate runs \
-         independently with its own context window and receives messages via its \
-         mailbox. Use TeamCreate first to register the team and its members, then \
-         SpawnTeammate to start each one.\n\n\
-         The teammate is given its task from the team config and will:\n\
+        "Spawn a teammate as a background agent. The teammate runs independently \
+         with its own context window and receives messages via its mailbox.\n\n\
+         You can call this directly — the team is auto-created if it doesn't exist, \
+         and the member is auto-registered if not already present. Just provide \
+         team_name, member_name, agent_type, and task.\n\n\
+         CRITICAL: To spawn multiple teammates in PARALLEL, make all SpawnTeammate \
+         calls in the SAME response. Sequential responses = sequential execution.\n\n\
+         The teammate will:\n\
          - Check its mailbox for messages from you and other teammates\n\
-         - Report progress via the task list\n\
-         - Send messages back via SendMessage\n\
+         - Send results back via SendMessage when done\n\
          - Run until its task is complete or it receives a shutdown request"
     }
 
@@ -106,11 +108,19 @@ impl BaseTool for SpawnTeammateTool {
             "properties": {
                 "team_name": {
                     "type": "string",
-                    "description": "Name of the team the member belongs to."
+                    "description": "Short name for the team (e.g., 'research', 'refactor'). Auto-created if it doesn't exist."
                 },
                 "member_name": {
                     "type": "string",
-                    "description": "Name of the team member to spawn (must be registered via TeamCreate)."
+                    "description": "Unique name for this teammate (e.g., 'explorer', 'analyzer')."
+                },
+                "agent_type": {
+                    "type": "string",
+                    "description": "Subagent type (e.g., 'Explore', 'Planner'). Required for new members, ignored if member already registered."
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Detailed task description for this teammate. Required for new members, ignored if member already registered."
                 },
                 "model": {
                     "type": "string",
@@ -135,23 +145,60 @@ impl BaseTool for SpawnTeammateTool {
             None => return ToolResult::fail("Missing required parameter: member_name"),
         };
         let model_override = args.get("model").and_then(|v| v.as_str());
+        let inline_agent_type = args.get("agent_type").and_then(|v| v.as_str());
+        let inline_task = args.get("task").and_then(|v| v.as_str());
 
-        // Look up the team
-        let team = match self.team_manager.get_team(team_name) {
-            Some(t) => t,
-            None => return ToolResult::fail(format!("Team '{team_name}' not found. Create it first with TeamCreate.")),
-        };
-
-        // Look up the member
-        let member = match team.members.iter().find(|m| m.name == member_name) {
-            Some(m) => m.clone(),
-            None => {
-                let available: Vec<_> = team.members.iter().map(|m| m.name.as_str()).collect();
-                return ToolResult::fail(format!(
-                    "Member '{member_name}' not in team '{team_name}'. Available: {}",
-                    available.join(", ")
-                ));
+        // Auto-create team if it doesn't exist
+        if self.team_manager.get_team(team_name).is_none() {
+            let session_id = ctx.session_id.as_deref().unwrap_or("unknown");
+            if let Err(e) = self.team_manager.create_team(team_name, "leader", session_id) {
+                return ToolResult::fail(format!("Failed to auto-create team: {e}"));
             }
+            info!(team = %team_name, "Auto-created team");
+        }
+
+        // Auto-register member if not already in the team
+        let member = if let Some(existing) = self
+            .team_manager
+            .get_team(team_name)
+            .and_then(|t| t.members.iter().find(|m| m.name == member_name).cloned())
+        {
+            existing
+        } else {
+            // Need agent_type and task for new members
+            let agent_type = match inline_agent_type {
+                Some(t) => t,
+                None => {
+                    return ToolResult::fail(
+                        "New member requires 'agent_type' parameter (e.g., 'Explore', 'Planner').",
+                    )
+                }
+            };
+            let task = match inline_task {
+                Some(t) => t,
+                None => {
+                    return ToolResult::fail(
+                        "New member requires 'task' parameter with a detailed task description.",
+                    )
+                }
+            };
+            let task_id = uuid::Uuid::new_v4().to_string()[..12].to_string();
+            let new_member = opendev_runtime::TeamMember {
+                name: member_name.to_string(),
+                agent_type: agent_type.to_string(),
+                task_id,
+                task: task.to_string(),
+                status: TeamMemberStatus::Idle,
+                joined_at_ms: opendev_runtime::now_ms(),
+            };
+            let _ = self.team_manager.add_member(team_name, new_member.clone());
+            info!(
+                team = %team_name,
+                member = %member_name,
+                agent_type = %agent_type,
+                "Auto-registered member"
+            );
+            new_member
         };
 
         // Validate the agent type exists
@@ -163,7 +210,12 @@ impl BaseTool for SpawnTeammateTool {
         }
 
         // Build the teammate's task (inject team context into the task)
-        let team_context = build_team_context(team_name, member_name, &team.leader, &member.task);
+        let leader = self
+            .team_manager
+            .get_team(team_name)
+            .map(|t| t.leader.clone())
+            .unwrap_or_else(|| "leader".to_string());
+        let team_context = build_team_context(team_name, member_name, &leader, &member.task);
 
         // Create the mailbox for this teammate
         let team_dir = self.team_manager.team_dir(team_name);

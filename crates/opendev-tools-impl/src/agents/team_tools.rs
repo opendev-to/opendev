@@ -400,6 +400,22 @@ impl BaseTool for DeleteTeamTool {
             None => return ToolResult::fail(format!("Team '{team_name}' not found")),
         };
 
+        // Warn if members are still busy — deleting prematurely loses results
+        let busy_members: Vec<_> = team
+            .members
+            .iter()
+            .filter(|m| m.status == TeamMemberStatus::Busy)
+            .map(|m| m.name.as_str())
+            .collect();
+        if !busy_members.is_empty() {
+            return ToolResult::fail(format!(
+                "Cannot delete team '{team_name}' — {} member(s) still running: {}. \
+                 Wait for all teammates to finish before deleting the team.",
+                busy_members.len(),
+                busy_members.join(", ")
+            ));
+        }
+
         let team_dir = self.team_manager.team_dir(team_name);
 
         // Send shutdown requests to all members
