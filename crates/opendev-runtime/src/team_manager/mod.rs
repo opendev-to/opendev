@@ -99,7 +99,23 @@ impl TeamManager {
         // Persist to disk
         let config_path = team_dir.join("team.json");
         let json = serde_json::to_string_pretty(&config).map_err(std::io::Error::other)?;
-        fs::write(&config_path, json)?;
+
+        // Write to temp file then rename (atomic)
+        let tmp_path = config_path.with_extension(format!("tmp.{}", crate::now_ms()));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true).mode(0o600);
+            std::io::Write::write_all(&mut opts.open(&tmp_path)?, json.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(&tmp_path, json)?;
+        }
+
+        fs::rename(&tmp_path, &config_path)?;
 
         let mut teams = self
             .active_teams
@@ -177,7 +193,22 @@ impl TeamManager {
     fn persist_config(&self, config: &TeamConfig) -> std::io::Result<()> {
         let config_path = self.teams_dir.join(&config.name).join("team.json");
         let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
-        fs::write(&config_path, json)?;
+
+        let tmp_path = config_path.with_extension(format!("tmp.{}", crate::now_ms()));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true).mode(0o600);
+            std::io::Write::write_all(&mut opts.open(&tmp_path)?, json.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(&tmp_path, json)?;
+        }
+
+        fs::rename(&tmp_path, &config_path)?;
         Ok(())
     }
 

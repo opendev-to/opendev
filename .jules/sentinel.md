@@ -1,4 +1,4 @@
-## 2025-02-26 - [TOCTOU in Sensitive File Creation]
-**Vulnerability:** Time-of-Check to Time-of-Use (TOCTOU) vulnerability where sensitive files (like `auth.json`) were created with default permissions using `std::fs::write` and then restricted using `std::fs::set_permissions(..., 0o600)`. This leaves a brief window where the file is readable by others.
-**Learning:** Post-creation permission modification leaves a race condition window that can be exploited, especially for files storing API keys and credentials.
-**Prevention:** Always use `std::fs::OpenOptions` with `std::os::unix::fs::OpenOptionsExt::mode(0o600)` to securely and atomically create the file with restricted permissions before writing any data to it.
+## 2025-02-18 - [Fix TOCTOU vulnerability in `TeamManager`]
+**Vulnerability:** A Time-of-Check to Time-of-Use (TOCTOU) vulnerability where `team.json` configuration files were created with default file permissions using `std::fs::write` directly. The file might contain sensitive data but its contents were unprotected by default file permissions.
+**Learning:** In the codebase, configuration files must be written defensively, securely, and atomically to prevent data corruption and permission escalation. We discovered that multiple config writers were missing this setup and directly calling `std::fs::write` which allows for a brief window where the file is readable by others.
+**Prevention:** Always write config files using `std::os::unix::fs::OpenOptionsExt` to restrict permissions to `0o600` atomically to a `.tmp` file when creating it, and rename it to the final target file.
