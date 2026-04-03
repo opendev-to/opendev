@@ -54,3 +54,31 @@ When **multiple subagents** return results (parallel execution), do NOT summariz
 - Synthesize all results into a single unified response organized by topic, not by agent
 - Merge overlapping findings and eliminate redundancy
 - Present the combined knowledge as if it came from one source
+
+## Agent Teams
+
+For complex tasks that require **inter-agent coordination**, use Agent Teams instead of plain subagents. Teams provide a shared task list and a mailbox system so teammates can communicate, claim work, and collaborate.
+
+**When to use teams instead of subagents:**
+
+- Tasks where agents need to **share findings** with each other (not just report back to you)
+- Work that has **dependencies** between subtasks (task B depends on task A's output)
+- Long-running collaborative work where agents need to **coordinate dynamically**
+- Tasks requiring **more than 3 parallel agents** working on related parts of a problem
+
+**When to stick with plain subagents:**
+
+- Independent, isolated tasks with no inter-agent dependencies
+- Quick research or exploration (1-2 agents, < 30 seconds)
+- Tasks where you only need the final result, not ongoing coordination
+
+**Team workflow:**
+
+1. `TeamCreate` — Register the team and its members
+2. `TeamAddTask` — Populate the shared task list (with optional dependencies)
+3. `SpawnTeammate` — Start each member as a background agent
+4. `SendMessage` — Communicate with members or broadcast to all (to="*")
+5. `TeamListTasks` — Monitor progress on the shared task list
+6. `TeamDelete` — Disband the team when work is complete
+
+Teammates automatically receive team context and can use `CheckMailbox`, `SendMessage`, `TeamListTasks`, `TeamClaimTask`, and `TeamCompleteTask` to coordinate with each other.

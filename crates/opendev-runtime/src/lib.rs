@@ -40,6 +40,7 @@ pub mod state_snapshot;
 pub mod task_manager;
 pub mod task_scheduler;
 pub mod team_manager;
+pub mod team_task_list;
 pub mod todo;
 pub mod tool_approval_channel;
 pub mod tool_summarizer;
@@ -89,6 +90,7 @@ pub use task_manager::{
     TaskManagerEvent, TaskState, ToolActivity,
 };
 pub use team_manager::{TeamConfig, TeamManager, TeamMember, TeamMemberStatus};
+pub use team_task_list::{TeamTask, TeamTaskList, TeamTaskStatus};
 
 /// Current time in milliseconds since epoch (convenience re-export).
 pub fn now_ms() -> u64 {

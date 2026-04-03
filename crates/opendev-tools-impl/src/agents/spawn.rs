@@ -337,6 +337,7 @@ impl BaseTool for SpawnSubagentTool {
                 Some(subagent_cancel),
                 self.debug_logger.as_deref(),
                 model_override,
+                None, // no mailbox for regular subagents
             )
             .await;
 
@@ -542,6 +543,7 @@ impl SpawnSubagentTool {
                     Some(cancel_token),
                     debug_logger_arc.as_deref(),
                     model_override_owned.as_deref(),
+                    None, // no mailbox for regular subagents
                 )
                 .await;
 

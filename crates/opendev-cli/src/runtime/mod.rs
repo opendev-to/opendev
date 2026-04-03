@@ -412,6 +412,19 @@ impl AgentRuntime {
         // Create subagent event channel for TUI bridging
         let (subagent_event_tx, subagent_event_rx) =
             tokio::sync::mpsc::unbounded_channel::<opendev_tools_impl::SubagentEvent>();
+
+        // Create team manager and shared task list for agent team tools
+        let app_paths = opendev_config::paths::Paths::new(Some(working_dir.to_path_buf()));
+        let team_manager = Arc::new(opendev_runtime::TeamManager::new(
+            app_paths.data_dir().join("teams"),
+        ));
+        let team_task_list = Arc::new(opendev_runtime::TeamTaskList::new(
+            app_paths.data_dir().join("tasks"),
+        ));
+
+        // Register SpawnSubagentTool
+        let subagent_manager_for_teammate = Arc::clone(&subagent_manager);
+        let session_dir_for_teammate = session_dir.clone();
         tool_registry.register(Arc::new(
             SpawnSubagentTool::new(
                 subagent_manager,
@@ -421,7 +434,7 @@ impl AgentRuntime {
                 &config.model,
                 working_dir.display().to_string(),
             )
-            .with_event_sender(subagent_event_tx)
+            .with_event_sender(subagent_event_tx.clone())
             .with_parent_max_tokens(model_max_tokens)
             .with_parent_reasoning_effort(if config.reasoning_effort == "none" {
                 None
@@ -430,10 +443,52 @@ impl AgentRuntime {
             })
             .with_debug_logger(Arc::clone(&debug_logger)),
         ));
+
+        // Register agent team tools (TeamCreate, SendMessage, TeamDelete, SpawnTeammate, task list tools)
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::team_tools::CreateTeamTool::new(Arc::clone(&team_manager))
+                .with_event_sender(subagent_event_tx.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::team_tools::SendMessageTool::new(Arc::clone(&team_manager))
+                .with_event_sender(subagent_event_tx.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::team_tools::DeleteTeamTool::new(Arc::clone(&team_manager))
+                .with_event_sender(subagent_event_tx.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            SpawnTeammateTool::new(
+                Arc::clone(&team_manager),
+                subagent_manager_for_teammate,
+                Arc::clone(&tool_registry),
+                Arc::clone(&http_client),
+                session_dir_for_teammate,
+                &config.model,
+                working_dir.display().to_string(),
+            )
+            .with_event_sender(subagent_event_tx.clone())
+            .with_parent_max_tokens(model_max_tokens)
+            .with_parent_reasoning_effort(if config.reasoning_effort == "none" {
+                None
+            } else {
+                Some(config.reasoning_effort.clone())
+            })
+            .with_debug_logger(Arc::clone(&debug_logger)),
+        ));
+        tool_registry.register(Arc::new(TeamAddTaskTool::new(
+            Arc::clone(&team_manager),
+            Arc::clone(&team_task_list),
+        )));
+        tool_registry.register(Arc::new(TeamListTasksTool::new(
+            Arc::clone(&team_manager),
+            Arc::clone(&team_task_list),
+        )));
+
         channel_receivers.subagent_event_rx = Some(subagent_event_rx);
         info!(
             tool_count = tool_registry.tool_names().len(),
-            "Registered all tools including spawn_subagent"
+            "Registered all tools including spawn_subagent and team tools"
         );
 
         // Configure LLM caller

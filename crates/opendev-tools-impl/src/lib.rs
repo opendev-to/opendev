@@ -66,7 +66,10 @@ pub mod worktree;
 pub mod write_todos;
 
 /// Re-export all tool structs for convenient registration.
-pub use agents::{AgentsTool, ChannelProgressCallback, SpawnSubagentTool, SubagentEvent};
+pub use agents::{
+    AgentsTool, ChannelProgressCallback, CheckMailboxTool, SpawnSubagentTool, SpawnTeammateTool,
+    SubagentEvent, TeamAddTaskTool, TeamClaimTaskTool, TeamCompleteTaskTool, TeamListTasksTool,
+};
 pub use ask_user::AskUserTool;
 pub use bash::BashTool;
 pub use browser::BrowserTool;
