@@ -184,10 +184,32 @@ impl ConfigLoader {
 
         // Atomic write: write to .tmp then rename
         let tmp_path = path.with_extension("json.tmp");
-        std::fs::write(&tmp_path, &json).map_err(|e| ConfigError::ReadError {
-            path: tmp_path.display().to_string(),
-            source: e,
-        })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true).mode(0o600);
+
+            let mut file = opts.open(&tmp_path).map_err(|e| ConfigError::ReadError {
+                path: tmp_path.display().to_string(),
+                source: e,
+            })?;
+            std::io::Write::write_all(&mut file, json.as_bytes()).map_err(|e| {
+                ConfigError::ReadError {
+                    path: tmp_path.display().to_string(),
+                    source: e,
+                }
+            })?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, &json).map_err(|e| ConfigError::ReadError {
+                path: tmp_path.display().to_string(),
+                source: e,
+            })?;
+        }
+
         std::fs::rename(&tmp_path, path).map_err(|e| ConfigError::ReadError {
             path: path.display().to_string(),
             source: e,

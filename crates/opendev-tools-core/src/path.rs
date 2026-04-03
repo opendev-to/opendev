@@ -264,8 +264,15 @@ pub fn is_external_path(resolved: &Path, working_dir: &Path) -> bool {
         return false;
     }
 
-    // Well-known config dirs
+    // Well-known config dirs (XDG and legacy)
+    let paths = opendev_config::Paths::default();
+    for prefix in paths.all_base_dirs() {
+        if normalized.starts_with(&prefix) {
+            return false;
+        }
+    }
     if let Some(home) = dirs::home_dir() {
+        // Always allow legacy ~/.opendev and XDG ~/.config/opendev
         let allowed = [home.join(".opendev"), home.join(".config").join("opendev")];
         for prefix in &allowed {
             if normalized.starts_with(prefix) {

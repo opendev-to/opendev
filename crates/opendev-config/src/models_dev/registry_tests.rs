@@ -132,3 +132,107 @@ fn test_find_model_prefers_provider_with_api_key() {
         "Should prefer provider with available API key over one without"
     );
 }
+
+#[test]
+fn test_builtin_provider_known() {
+    let cases = vec![
+        (
+            "anthropic",
+            "Anthropic",
+            "ANTHROPIC_API_KEY",
+            "https://api.anthropic.com",
+        ),
+        (
+            "openai",
+            "OpenAI",
+            "OPENAI_API_KEY",
+            "https://api.openai.com",
+        ),
+        ("ollama", "Ollama", "", "http://localhost:11434"),
+        (
+            "gemini",
+            "Google Gemini",
+            "GEMINI_API_KEY",
+            "https://generativelanguage.googleapis.com",
+        ),
+        (
+            "google",
+            "Google Gemini",
+            "GEMINI_API_KEY",
+            "https://generativelanguage.googleapis.com",
+        ),
+        (
+            "groq",
+            "Groq",
+            "GROQ_API_KEY",
+            "https://api.groq.com/openai",
+        ),
+        (
+            "deepseek",
+            "DeepSeek",
+            "DEEPSEEK_API_KEY",
+            "https://api.deepseek.com",
+        ),
+        ("xai", "xAI", "XAI_API_KEY", "https://api.x.ai"),
+        ("lmstudio", "LM Studio", "", "http://localhost:1234"),
+    ];
+    for (id, expected_name, expected_env, expected_url) in cases {
+        let info = ModelRegistry::builtin_provider(id)
+            .unwrap_or_else(|| panic!("builtin_provider should return Some for {id}"));
+        assert_eq!(info.id, id);
+        assert_eq!(info.name, expected_name);
+        assert_eq!(info.api_key_env, expected_env);
+        assert_eq!(info.api_base_url, expected_url);
+        assert!(
+            info.models.is_empty(),
+            "builtin providers should have no models"
+        );
+    }
+}
+
+#[test]
+fn test_builtin_provider_unknown_returns_none() {
+    assert!(ModelRegistry::builtin_provider("nonexistent-provider").is_none());
+    assert!(ModelRegistry::builtin_provider("").is_none());
+}
+
+#[test]
+fn test_get_provider_or_builtin_prefers_registry() {
+    let mut registry = ModelRegistry::new();
+
+    // Insert a custom provider with the same id as a builtin
+    let custom_url = "https://custom.anthropic.example.com";
+    registry.providers.insert(
+        "anthropic".to_string(),
+        ProviderInfo {
+            id: "anthropic".to_string(),
+            name: "Custom Anthropic".to_string(),
+            description: "Custom".to_string(),
+            api_key_env: "CUSTOM_KEY".to_string(),
+            api_base_url: custom_url.to_string(),
+            models: HashMap::new(),
+        },
+    );
+
+    let info = registry.get_provider_or_builtin("anthropic").unwrap();
+    assert_eq!(
+        info.name, "Custom Anthropic",
+        "should prefer registry over builtin"
+    );
+    assert_eq!(info.api_base_url, custom_url);
+    assert_eq!(info.api_key_env, "CUSTOM_KEY");
+}
+
+#[test]
+fn test_get_provider_or_builtin_falls_back_when_empty() {
+    let registry = ModelRegistry::new();
+    assert!(registry.providers.is_empty());
+
+    let info = registry.get_provider_or_builtin("openai").unwrap();
+    assert_eq!(info.name, "OpenAI");
+    assert_eq!(info.api_key_env, "OPENAI_API_KEY");
+    assert_eq!(info.api_base_url, "https://api.openai.com");
+
+    // Unknown provider still returns None
+    assert!(registry.get_provider_or_builtin("nonexistent").is_none());
+}

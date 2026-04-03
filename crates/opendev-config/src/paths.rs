@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use directories::ProjectDirs;
+
 // Directory and file names
 pub const APP_DIR_NAME: &str = ".opendev";
 pub const MCP_CONFIG_NAME: &str = "mcp.json";
@@ -47,19 +49,73 @@ pub fn encode_project_path(path: &Path) -> String {
 /// Centralized path management.
 ///
 /// Provides access to all application paths with support for:
-/// - Global paths (~/.opendev/...)
+/// - XDG Base Directory paths for fresh installs
+/// - Legacy paths (~/.opendev/...) for existing users
 /// - Project paths (<working_dir>/.opendev/...)
 /// - Environment variable overrides
 #[derive(Debug, Clone)]
 pub struct Paths {
     working_dir: PathBuf,
+    config_dir: PathBuf,
+    data_dir: PathBuf,
+    cache_dir: PathBuf,
+    state_dir: PathBuf,
 }
 
 impl Paths {
     /// Create a new Paths instance.
     pub fn new(working_dir: Option<PathBuf>) -> Self {
-        Self {
-            working_dir: working_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+        let working_dir =
+            working_dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+        // Full override via environment variable
+        if let Ok(override_dir) = std::env::var(ENV_OPENDEV_DIR) {
+            let base = PathBuf::from(override_dir);
+            return Self {
+                working_dir,
+                config_dir: base.clone(),
+                data_dir: base.clone(),
+                cache_dir: base.join(CACHE_DIR_NAME),
+                state_dir: base,
+            };
+        }
+
+        // Legacy: if ~/.opendev exists, use it (don't force migration)
+        let legacy_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join(APP_DIR_NAME);
+        if legacy_dir.exists() {
+            return Self {
+                working_dir,
+                config_dir: legacy_dir.clone(),
+                data_dir: legacy_dir.clone(),
+                cache_dir: legacy_dir.join(CACHE_DIR_NAME),
+                state_dir: legacy_dir,
+            };
+        }
+
+        // XDG paths for fresh installs
+        if let Some(proj_dirs) = ProjectDirs::from("", "", "opendev") {
+            Self {
+                working_dir,
+                config_dir: proj_dirs.config_dir().to_path_buf(),
+                data_dir: proj_dirs.data_dir().to_path_buf(),
+                cache_dir: proj_dirs.cache_dir().to_path_buf(),
+                state_dir: proj_dirs
+                    .state_dir()
+                    .unwrap_or_else(|| proj_dirs.data_dir())
+                    .to_path_buf(),
+            }
+        } else {
+            // Fallback if home dir can't be determined
+            let base = PathBuf::from("/tmp").join("opendev");
+            Self {
+                working_dir,
+                config_dir: base.clone(),
+                data_dir: base.clone(),
+                cache_dir: base.join(CACHE_DIR_NAME),
+                state_dir: base,
+            }
         }
     }
 
@@ -68,23 +124,41 @@ impl Paths {
         &self.working_dir
     }
 
+    /// Get the config directory.
+    pub fn config_dir(&self) -> &Path {
+        &self.config_dir
+    }
+
+    /// Get the data directory.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// Get the cache base directory.
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
+    /// Get the state directory.
+    pub fn state_dir(&self) -> &Path {
+        &self.state_dir
+    }
+
     // ========================================================================
-    // Global Paths (User-level, in ~/.opendev/)
+    // Global Paths
     // ========================================================================
 
-    /// Get the global opendev directory. Can be overridden with OPENDEV_DIR.
+    /// Get the global opendev directory.
+    ///
+    /// Returns `config_dir` for backward compatibility. Callers that need a
+    /// specific XDG directory should use `config_dir()`, `data_dir()`, etc.
     pub fn global_dir(&self) -> PathBuf {
-        if let Ok(override_dir) = std::env::var(ENV_OPENDEV_DIR) {
-            return PathBuf::from(override_dir);
-        }
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(APP_DIR_NAME)
+        self.config_dir.clone()
     }
 
     /// Get global settings file path.
     pub fn global_settings(&self) -> PathBuf {
-        self.global_dir().join(SETTINGS_FILE_NAME)
+        self.config_dir.join(SETTINGS_FILE_NAME)
     }
 
     /// Get global sessions directory.
@@ -92,12 +166,12 @@ impl Paths {
         if let Ok(override_dir) = std::env::var(ENV_OPENDEV_SESSION_DIR) {
             return PathBuf::from(override_dir);
         }
-        self.global_dir().join(SESSIONS_DIR_NAME)
+        self.data_dir.join(SESSIONS_DIR_NAME)
     }
 
     /// Get global projects directory for project-scoped sessions.
     pub fn global_projects_dir(&self) -> PathBuf {
-        self.global_dir().join(PROJECTS_DIR_NAME)
+        self.data_dir.join(PROJECTS_DIR_NAME)
     }
 
     /// Get the project-scoped sessions directory for a given working directory.
@@ -111,7 +185,7 @@ impl Paths {
         if let Ok(override_dir) = std::env::var(ENV_OPENDEV_LOG_DIR) {
             return PathBuf::from(override_dir);
         }
-        self.global_dir().join(LOGS_DIR_NAME)
+        self.state_dir.join(LOGS_DIR_NAME)
     }
 
     /// Get global cache directory.
@@ -119,66 +193,64 @@ impl Paths {
         if let Ok(override_dir) = std::env::var(ENV_OPENDEV_CACHE_DIR) {
             return PathBuf::from(override_dir);
         }
-        self.global_dir().join(CACHE_DIR_NAME)
+        self.cache_dir.clone()
     }
 
-    /// Get provider cache directory (`~/.opendev/cache/providers/`).
-    ///
-    /// Stores cached model/provider JSON from models.dev API with 24h TTL.
+    /// Get provider cache directory.
     pub fn providers_cache_dir(&self) -> PathBuf {
         self.global_cache_dir().join("providers")
     }
 
     /// Get global skills directory.
     pub fn global_skills_dir(&self) -> PathBuf {
-        self.global_dir().join(SKILLS_DIR_NAME)
+        self.data_dir.join(SKILLS_DIR_NAME)
     }
 
     /// Get global agents directory.
     pub fn global_agents_dir(&self) -> PathBuf {
-        self.global_dir().join(AGENTS_DIR_NAME)
+        self.config_dir.join(AGENTS_DIR_NAME)
     }
 
     /// Get global agents.json file path.
     pub fn global_agents_file(&self) -> PathBuf {
-        self.global_dir().join(AGENTS_FILE_NAME)
+        self.config_dir.join(AGENTS_FILE_NAME)
     }
 
     /// Get global context file (AGENTS.md) path.
     pub fn global_context_file(&self) -> PathBuf {
-        self.global_dir().join(CONTEXT_FILE_NAME)
+        self.config_dir.join(CONTEXT_FILE_NAME)
     }
 
     /// Get global MCP configuration file path.
     pub fn global_mcp_config(&self) -> PathBuf {
-        self.global_dir().join(MCP_CONFIG_NAME)
+        self.config_dir.join(MCP_CONFIG_NAME)
     }
 
     /// Get global plans directory.
     pub fn global_plans_dir(&self) -> PathBuf {
-        self.global_dir().join(PLANS_DIR_NAME)
+        self.data_dir.join(PLANS_DIR_NAME)
     }
 
     /// Get global repos directory.
     pub fn global_repos_dir(&self) -> PathBuf {
-        self.global_dir().join(REPOS_DIR_NAME)
+        self.data_dir.join(REPOS_DIR_NAME)
     }
 
     /// Get global command history file path.
     pub fn global_history_file(&self) -> PathBuf {
-        self.global_dir().join(HISTORY_FILE_NAME)
+        self.data_dir.join(HISTORY_FILE_NAME)
     }
 
     // ========================================================================
     // Memory Paths
     // ========================================================================
 
-    /// Get global memory directory (`~/.opendev/memory/`).
+    /// Get global memory directory.
     pub fn global_memory_dir(&self) -> PathBuf {
-        self.global_dir().join(MEMORY_DIR_NAME)
+        self.data_dir.join(MEMORY_DIR_NAME)
     }
 
-    /// Get the project-scoped memory directory (`~/.opendev/projects/{encoded}/memory/`).
+    /// Get the project-scoped memory directory.
     pub fn project_memory_dir(&self) -> PathBuf {
         let encoded = encode_project_path(&self.working_dir);
         self.global_projects_dir()
@@ -205,7 +277,7 @@ impl Paths {
 
     /// Get global plugins directory.
     pub fn global_plugins_dir(&self) -> PathBuf {
-        self.global_dir().join(PLUGINS_DIR_NAME)
+        self.data_dir.join(PLUGINS_DIR_NAME)
     }
 
     /// Get global marketplaces directory.
@@ -235,7 +307,7 @@ impl Paths {
 
     /// Get global bundles registry file.
     pub fn global_bundles_file(&self) -> PathBuf {
-        self.global_plugins_dir().join(BUNDLES_FILE_NAME)
+        self.config_dir.join(BUNDLES_FILE_NAME)
     }
 
     // ========================================================================
@@ -300,7 +372,10 @@ impl Paths {
     /// Create all required global directories.
     pub fn ensure_global_dirs(&self) -> std::io::Result<()> {
         let dirs = [
-            self.global_dir(),
+            self.config_dir.clone(),
+            self.data_dir.clone(),
+            self.cache_dir.clone(),
+            self.state_dir.clone(),
             self.global_sessions_dir(),
             self.global_projects_dir(),
             self.global_logs_dir(),
@@ -338,6 +413,18 @@ impl Paths {
     pub fn get_agents_dirs(&self) -> Vec<PathBuf> {
         let candidates = [self.project_agents_dir(), self.global_agents_dir()];
         candidates.into_iter().filter(|p| p.exists()).collect()
+    }
+
+    /// Get all XDG base directories used by this instance.
+    ///
+    /// Used by `is_external_path` to allow access to all opendev directories.
+    pub fn all_base_dirs(&self) -> Vec<PathBuf> {
+        vec![
+            self.config_dir.clone(),
+            self.data_dir.clone(),
+            self.cache_dir.clone(),
+            self.state_dir.clone(),
+        ]
     }
 }
 

@@ -18,8 +18,8 @@ pub fn init_tracing(verbose: bool, tui_mode: bool) {
 
     if tui_mode {
         // Redirect logs to file so they don't corrupt the alternate screen
-        if let Some(home) = dirs_next::home_dir() {
-            let log_dir = home.join(".opendev").join("logs");
+        {
+            let log_dir = opendev_config::Paths::default().global_logs_dir();
             let _ = std::fs::create_dir_all(&log_dir);
             let log_path = log_dir.join("opendev.log");
 

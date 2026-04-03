@@ -90,9 +90,8 @@ impl SnapshotManager {
             .unwrap_or_else(|_| PathBuf::from(project_dir));
         let project_dir_str = abs_path.to_string_lossy().to_string();
         let project_id = encode_project_id(&project_dir_str);
-        let shadow_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(".opendev")
+        let shadow_dir = opendev_config::Paths::default()
+            .data_dir()
             .join("snapshot")
             .join(&project_id);
 

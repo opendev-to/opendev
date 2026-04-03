@@ -64,9 +64,8 @@ impl CredentialStore {
     /// If `auth_path` is `None`, defaults to `~/.opendev/auth.json`.
     pub fn new(auth_path: Option<PathBuf>) -> Self {
         let path = auth_path.unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("/tmp"))
-                .join(".opendev")
+            opendev_config::Paths::default()
+                .config_dir()
                 .join("auth.json")
         });
         Self { path, cache: None }

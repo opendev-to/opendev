@@ -12,7 +12,11 @@ pub struct ScheduleTool;
 
 impl ScheduleTool {
     fn schedules_path() -> Option<PathBuf> {
-        dirs::home_dir().map(|h| h.join(".opendev").join("schedules.json"))
+        Some(
+            opendev_config::Paths::default()
+                .data_dir()
+                .join("schedules.json"),
+        )
     }
 }
 

@@ -180,12 +180,13 @@ impl AgentRuntime {
         // Configure HTTP client based on provider.
         // Consult the registry for the correct API key env var and base URL,
         // so all registry-based providers work out of the box.
-        let provider_info = registry.get_provider(&config.model_provider);
-        let registry_env = provider_info.map(|pi| pi.api_key_env.as_str());
+        let provider_info = registry.get_provider_or_builtin(&config.model_provider);
+        let registry_env = provider_info.as_ref().map(|pi| pi.api_key_env.as_str());
         let api_key = config
             .get_api_key_with_env(registry_env)
             .unwrap_or_default();
         let registry_base_url = provider_info
+            .as_ref()
             .map(|pi| pi.api_base_url.clone())
             .filter(|s| !s.is_empty());
 
@@ -296,7 +297,16 @@ impl AgentRuntime {
                     hdrs.insert("api-key", val);
                 }
                 hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                (url, hdrs, None)
+                let adapter = opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
+                    url.clone(),
+                );
+                (
+                    url,
+                    hdrs,
+                    Some(
+                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
+                    ),
+                )
             }
             provider => {
                 // OpenAI-compatible providers — use registry/config base URL or fall back
@@ -321,19 +331,39 @@ impl AgentRuntime {
                 {
                     hdrs.insert("HTTP-Referer", val);
                 }
-                (url, hdrs, None)
+                let adapter = opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
+                    url.clone(),
+                );
+                (
+                    url,
+                    hdrs,
+                    Some(
+                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
+                    ),
+                )
             }
         };
 
         let circuit_breaker =
             std::sync::Arc::new(opendev_http::CircuitBreaker::with_defaults(&provider));
-        let raw_http_client = HttpClient::new(api_url, headers, None)
+        let raw_http_client = HttpClient::new(api_url.clone(), headers, None)
             .map_err(|e| format!("Failed to create HTTP client: {e}"))?
             .with_circuit_breaker(circuit_breaker);
 
-        let http_client = Arc::new(match adapter {
-            Some(a) => AdaptedClient::with_adapter(raw_http_client, a),
-            None => AdaptedClient::new(raw_http_client),
+        // DashScope Coding Plan endpoint rejects reqwest — must use curl subprocess.
+        let needs_curl = api_url.contains("coding-intl.dashscope.aliyuncs.com");
+        let curl_auth = needs_curl.then(|| format!("Authorization: Bearer {api_key}"));
+
+        let http_client = Arc::new({
+            let client = match adapter {
+                Some(a) => AdaptedClient::with_adapter(raw_http_client, a),
+                None => AdaptedClient::new(raw_http_client),
+            };
+            if let Some(auth) = curl_auth {
+                client.with_curl_transport(auth)
+            } else {
+                client
+            }
         });
 
         // Check model capabilities via models.dev metadata
@@ -707,7 +737,15 @@ impl AgentRuntime {
                         hdrs.insert("api-key", val);
                     }
                     hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                    (url, hdrs, None)
+                    let adapter =
+                        opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
+                            url.clone(),
+                        );
+                    (
+                        url,
+                        hdrs,
+                        Some(Box::new(adapter) as Box<dyn ProviderAdapter>),
+                    )
                 }
                 _ => {
                     // OpenAI-compatible providers — use registry api_base_url
@@ -733,20 +771,36 @@ impl AgentRuntime {
                     {
                         hdrs.insert("HTTP-Referer", val);
                     }
-                    (url, hdrs, None)
+                    let adapter =
+                        opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
+                            url.clone(),
+                        );
+                    (
+                        url,
+                        hdrs,
+                        Some(Box::new(adapter) as Box<dyn ProviderAdapter>),
+                    )
                 }
             };
 
         let circuit_breaker =
             std::sync::Arc::new(opendev_http::CircuitBreaker::with_defaults(provider));
+        let needs_curl = api_url.contains("coding-intl.dashscope.aliyuncs.com");
         let raw = HttpClient::new(api_url, headers, None)
             .map_err(|e| format!("Failed to create HTTP client: {e}"))?
             .with_circuit_breaker(circuit_breaker);
 
-        Ok(match adapter {
+        let client = match adapter {
             Some(a) => AdaptedClient::with_adapter(raw, a),
             None => AdaptedClient::new(raw),
-        })
+        };
+        // DashScope coding endpoint rejects reqwest — attach curl subprocess transport.
+        let client = if needs_curl {
+            client.with_curl_transport(format!("Authorization: Bearer {api_key}"))
+        } else {
+            client
+        };
+        Ok(client)
     }
 }
 

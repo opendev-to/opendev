@@ -6,6 +6,7 @@ license.workspace = true
 description = "Plugin and marketplace management for opendev"
 
 [dependencies]
+opendev-config = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

@@ -14,7 +14,11 @@ pub(crate) struct PermissionsFile {
 
 /// User-global permissions path: `~/.opendev/permissions.json`.
 pub(crate) fn user_permissions_path() -> Option<PathBuf> {
-    dirs_next::home_dir().map(|h| h.join(".opendev").join("permissions.json"))
+    Some(
+        opendev_config::Paths::default()
+            .config_dir()
+            .join("permissions.json"),
+    )
 }
 
 /// Load persistent rules from both user-global and project-scoped files.

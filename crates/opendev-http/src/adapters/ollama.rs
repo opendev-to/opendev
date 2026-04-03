@@ -81,6 +81,23 @@ impl super::base::ProviderAdapter for OllamaAdapter {
     fn api_url(&self) -> &str {
         &self.api_url
     }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    fn enable_streaming(&self, payload: &mut Value) {
+        payload["stream"] = serde_json::json!(true);
+    }
+
+    fn parse_stream_event(
+        &self,
+        _event_type: &str,
+        data: &Value,
+    ) -> Option<crate::streaming::StreamEvent> {
+        // Ollama uses standard Chat Completions SSE format — delegate to shared parser.
+        crate::adapters::chat_completions::ChatCompletionsAdapter::parse_chat_completions_sse(data)
+    }
 }
 
 #[cfg(test)]

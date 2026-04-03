@@ -26,12 +26,9 @@ pub fn sync_provider_cache(
     cache_dir: Option<&Path>,
     cache_ttl: Option<Duration>,
 ) -> Result<bool, RegistryError> {
-    let cache_dir = cache_dir.map(PathBuf::from).unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(".opendev")
-            .join("cache")
-    });
+    let cache_dir = cache_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::Paths::default().global_cache_dir());
     let providers_dir = cache_dir.join("providers");
     let ttl = cache_ttl.unwrap_or(DEFAULT_CACHE_TTL);
 
@@ -160,12 +157,9 @@ pub async fn sync_provider_cache_async(
     cache_dir: Option<&Path>,
     cache_ttl: Option<Duration>,
 ) -> Result<bool, RegistryError> {
-    let cache_dir = cache_dir.map(PathBuf::from).unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(".opendev")
-            .join("cache")
-    });
+    let cache_dir = cache_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::Paths::default().global_cache_dir());
     let providers_dir = cache_dir.join("providers");
     let ttl = cache_ttl.unwrap_or(DEFAULT_CACHE_TTL);
 

@@ -56,19 +56,18 @@ pub struct PluginPaths {
 impl PluginPaths {
     /// Build plugin paths from an optional working directory.
     pub fn new(working_dir: Option<&Path>) -> Self {
-        let home = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let global_base = home.join(".opendev");
+        let paths = opendev_config::Paths::new(working_dir.map(PathBuf::from));
         let project_base = working_dir
             .map(|d| d.join(".opendev"))
             .unwrap_or_else(|| PathBuf::from(".opendev"));
 
         Self {
-            global_plugins_dir: global_base.join("plugins"),
+            global_plugins_dir: paths.global_plugins_dir(),
             project_plugins_dir: project_base.join("plugins"),
-            global_marketplaces_dir: global_base.join("marketplaces"),
-            global_plugin_cache_dir: global_base.join("plugins").join("cache"),
-            known_marketplaces_file: global_base.join("marketplaces.json"),
-            global_installed_plugins_file: global_base.join("installed_plugins.json"),
+            global_marketplaces_dir: paths.global_marketplaces_dir(),
+            global_plugin_cache_dir: paths.global_plugin_cache_dir(),
+            known_marketplaces_file: paths.known_marketplaces_file(),
+            global_installed_plugins_file: paths.global_installed_plugins_file(),
             project_installed_plugins_file: project_base.join("installed_plugins.json"),
         }
     }

@@ -62,7 +62,7 @@ impl PresentPlanTool {
 
     /// Plans directory: `~/.opendev/plans/`.
     fn plans_dir() -> Option<PathBuf> {
-        dirs::home_dir().map(|h| h.join(".opendev").join("plans"))
+        Some(opendev_config::Paths::default().global_plans_dir())
     }
 }
 

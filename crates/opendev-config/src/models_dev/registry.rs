@@ -44,9 +44,9 @@ impl ModelRegistry {
         }
 
         if registry.providers.is_empty() {
-            warn!(
-                "No provider configurations loaded. \
-                 Check network connectivity and retry, or run: opendev setup"
+            debug!(
+                "No provider configurations loaded from models.dev cache; \
+                 built-in provider defaults will be used"
             );
         }
 
@@ -174,6 +174,60 @@ impl ModelRegistry {
                 .to_string(),
             models,
         })
+    }
+
+    /// Built-in fallback for well-known providers when registry is unavailable.
+    pub fn builtin_provider(provider_id: &str) -> Option<ProviderInfo> {
+        let (name, api_key_env, api_base_url) = match provider_id {
+            "anthropic" => (
+                "Anthropic",
+                "ANTHROPIC_API_KEY",
+                "https://api.anthropic.com",
+            ),
+            "openai" => ("OpenAI", "OPENAI_API_KEY", "https://api.openai.com"),
+            "ollama" => ("Ollama", "", "http://localhost:11434"),
+            "gemini" | "google" => (
+                "Google Gemini",
+                "GEMINI_API_KEY",
+                "https://generativelanguage.googleapis.com",
+            ),
+            "groq" => ("Groq", "GROQ_API_KEY", "https://api.groq.com/openai"),
+            "fireworks" => (
+                "Fireworks AI",
+                "FIREWORKS_API_KEY",
+                "https://api.fireworks.ai/inference",
+            ),
+            "mistral" => ("Mistral AI", "MISTRAL_API_KEY", "https://api.mistral.ai"),
+            "deepseek" => ("DeepSeek", "DEEPSEEK_API_KEY", "https://api.deepseek.com"),
+            "openrouter" => (
+                "OpenRouter",
+                "OPENROUTER_API_KEY",
+                "https://openrouter.ai/api",
+            ),
+            "together" => (
+                "Together AI",
+                "TOGETHER_API_KEY",
+                "https://api.together.xyz",
+            ),
+            "xai" => ("xAI", "XAI_API_KEY", "https://api.x.ai"),
+            "lmstudio" => ("LM Studio", "", "http://localhost:1234"),
+            _ => return None,
+        };
+        Some(ProviderInfo {
+            id: provider_id.to_string(),
+            name: name.to_string(),
+            description: format!("{name} models"),
+            api_key_env: api_key_env.to_string(),
+            api_base_url: api_base_url.to_string(),
+            models: std::collections::HashMap::new(),
+        })
+    }
+
+    /// Get provider info from registry, falling back to built-in defaults.
+    pub fn get_provider_or_builtin(&self, provider_id: &str) -> Option<ProviderInfo> {
+        self.get_provider(provider_id)
+            .cloned()
+            .or_else(|| Self::builtin_provider(provider_id))
     }
 
     /// Get provider information by ID.

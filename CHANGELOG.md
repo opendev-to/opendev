@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-04-01
+
+### Added
+
+- Per-turn system prompt composition with section caching for efficient prompt reuse
+- Semantic memory retrieval and message normalization for agents
+- Plan edit review mode with plan recovery and improved error display
+
+### Changed
+
+- Align agent system with Claude Code patterns for tool dispatch and subagent handling
+- Remove redundant ask-user subagent in favor of direct tool use
+- Deduplicate token formatting and improve web-ui store architecture
+- Remove external directory path restriction from tool dispatch
+- Prevent unnecessary re-renders in web-ui MessageItem and DocumentationContent
+
+### Fixed
+
+- HTML comment headers in subagent templates causing 0 tool uses
+- Subagent token tracking double-counting input tokens
+- Windows tempfile paths with UNC prefix for CI compatibility
+- Tests for API config and memory path resolution in CI
+
 ## [0.1.7] - 2026-03-31
 
 ### Added
@@ -141,6 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release automation with cargo-dist for 5 platform targets
 - Shell installer (macOS/Linux), PowerShell installer (Windows), Homebrew tap
 
+[0.1.8]: https://github.com/opendev-to/opendev/releases/tag/v0.1.8
 [0.1.7]: https://github.com/opendev-to/opendev/releases/tag/v0.1.7
 [0.1.6]: https://github.com/opendev-to/opendev/releases/tag/v0.1.6
 [0.1.1]: https://github.com/opendev-to/opendev/releases/tag/v0.1.1

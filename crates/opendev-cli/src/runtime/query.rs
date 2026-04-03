@@ -212,8 +212,7 @@ impl AgentRuntime {
             && session.messages.len() > 1
         {
             // Resumed session — check PlanIndex for an active plan
-            let plans_dir =
-                dirs_next::home_dir().map(|h: std::path::PathBuf| h.join(".opendev").join("plans"));
+            let plans_dir = Some(opendev_config::Paths::default().global_plans_dir());
             if let Some(ref plans_dir) = plans_dir {
                 let plan_index = opendev_runtime::PlanIndex::new(plans_dir);
                 if let Some(entry) = plan_index.get_by_session(&session.id) {

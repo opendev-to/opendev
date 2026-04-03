@@ -43,10 +43,7 @@ pub struct Skill {
 
 /// Default cache directory for downloaded skills.
 fn default_skills_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".opendev")
-        .join("skills")
+    opendev_config::Paths::default().global_skills_dir()
 }
 
 /// Generate a cache filename from a URL.

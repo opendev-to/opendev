@@ -179,7 +179,7 @@ fn load_channel_config() -> HashMap<String, serde_json::Value> {
     let mut channels = HashMap::new();
 
     let config_paths = [
-        dirs::home_dir().map(|h| h.join(".opendev").join("settings.json")),
+        Some(opendev_config::Paths::default().global_settings()),
         Some(PathBuf::from(".opendev").join("settings.json")),
     ];
 

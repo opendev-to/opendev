@@ -15,6 +15,7 @@ tracing = { workspace = true }
 reqwest = { version = "0.13", features = ["json", "rustls"] }
 tokio = { workspace = true }
 dirs = "6"
+directories = "6"
 
 [dev-dependencies]
 tempfile = { workspace = true }
