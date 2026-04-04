@@ -29,16 +29,22 @@ export function InputBox() {
   const currentSessionId = useChatStore(state => state.currentSessionId);
   const hasActiveSession = !!currentSessionId;
 
-  // Load files when @ is detected
+  // ⚡ Bolt Performance Optimization:
+  // Debounce the file list API call when typing @ mentions to reduce unnecessary network requests
+  // and prevent potential race conditions as the user types the query.
   useEffect(() => {
     if (showFileMention) {
-      apiClient.listFiles(mentionQuery).then(response => {
-        setFilesList(response.files);
-        setSelectedFileIndex(0);
-      }).catch(error => {
-        console.error('Failed to load files:', error);
-        setFilesList([]);
-      });
+      const timeoutId = setTimeout(() => {
+        apiClient.listFiles(mentionQuery).then(response => {
+          setFilesList(response.files);
+          setSelectedFileIndex(0);
+        }).catch(error => {
+          console.error('Failed to load files:', error);
+          setFilesList([]);
+        });
+      }, 300);
+
+      return () => clearTimeout(timeoutId);
     }
   }, [mentionQuery, showFileMention]);
 
