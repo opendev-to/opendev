@@ -175,10 +175,18 @@ pub fn save_config(config: &McpConfig, config_path: &Path) -> McpResult<()> {
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(true).mode(0o600);
         let mut file = opts.open(&tmp_path).map_err(|e| {
-            McpError::Config(format!("Failed to open temp config file {}: {}", tmp_path.display(), e))
+            McpError::Config(format!(
+                "Failed to open temp config file {}: {}",
+                tmp_path.display(),
+                e
+            ))
         })?;
         std::io::Write::write_all(&mut file, content.as_bytes()).map_err(|e| {
-            McpError::Config(format!("Failed to write MCP config to {}: {}", tmp_path.display(), e))
+            McpError::Config(format!(
+                "Failed to write MCP config to {}: {}",
+                tmp_path.display(),
+                e
+            ))
         })?;
     }
     #[cfg(not(unix))]
