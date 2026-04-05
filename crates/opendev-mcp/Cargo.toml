@@ -17,6 +17,7 @@ regex = { workspace = true }
 opendev-models = { workspace = true }
 opendev-config = { workspace = true }
 futures = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
