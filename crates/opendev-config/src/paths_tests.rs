@@ -97,13 +97,21 @@ fn test_config_vs_data_separation() {
 
     unsafe { env::set_var(key, "/tmp/override-opendev") };
     let paths = Paths::new(Some(PathBuf::from("/tmp/wd")));
-    // Settings (config) in config_dir
-    assert!(paths.global_settings().starts_with("/tmp/override-opendev"));
-    // Sessions (data) in data_dir
+
+    // We expect both config and data directories to be overridden to the custom path.
+    // Ensure that the resulting paths start with the custom path.
+    let global_settings = paths.global_settings();
     assert!(
-        paths
-            .global_sessions_dir()
-            .starts_with("/tmp/override-opendev")
+        global_settings.starts_with("/tmp/override-opendev"),
+        "global_settings did not start with /tmp/override-opendev. Was: {:?}",
+        global_settings
+    );
+
+    let global_sessions = paths.global_sessions_dir();
+    assert!(
+        global_sessions.starts_with("/tmp/override-opendev"),
+        "global_sessions_dir did not start with /tmp/override-opendev. Was: {:?}",
+        global_sessions
     );
 
     match original {
