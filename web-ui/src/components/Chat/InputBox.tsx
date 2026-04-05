@@ -30,15 +30,22 @@ export function InputBox() {
   const hasActiveSession = !!currentSessionId;
 
   // Load files when @ is detected
+  // ⚡ Bolt Performance Optimization:
+  // Added a 300ms debounce to prevent excessive API calls and potential race
+  // conditions when the user types quickly in the mention query.
   useEffect(() => {
     if (showFileMention) {
-      apiClient.listFiles(mentionQuery).then(response => {
-        setFilesList(response.files);
-        setSelectedFileIndex(0);
-      }).catch(error => {
-        console.error('Failed to load files:', error);
-        setFilesList([]);
-      });
+      const timeoutId = setTimeout(() => {
+        apiClient.listFiles(mentionQuery).then(response => {
+          setFilesList(response.files);
+          setSelectedFileIndex(0);
+        }).catch(error => {
+          console.error('Failed to load files:', error);
+          setFilesList([]);
+        });
+      }, 300);
+
+      return () => clearTimeout(timeoutId);
     }
   }, [mentionQuery, showFileMention]);
 
