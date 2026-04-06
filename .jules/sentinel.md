@@ -1,4 +1,4 @@
-## 2025-02-26 - [TOCTOU in Sensitive File Creation]
-**Vulnerability:** Time-of-Check to Time-of-Use (TOCTOU) vulnerability where sensitive files (like `auth.json`) were created with default permissions using `std::fs::write` and then restricted using `std::fs::set_permissions(..., 0o600)`. This leaves a brief window where the file is readable by others.
-**Learning:** Post-creation permission modification leaves a race condition window that can be exploited, especially for files storing API keys and credentials.
-**Prevention:** Always use `std::fs::OpenOptions` with `std::os::unix::fs::OpenOptionsExt::mode(0o600)` to securely and atomically create the file with restricted permissions before writing any data to it.
+## 2024-04-06 - Secure Atomic File Writes for MCP Configs
+**Vulnerability:** The `mcp.json` configuration file, which contains sensitive user OAuth credentials, was being written insecurely using `std::fs::write`. This could leave it world-readable on Unix systems, leading to a local privilege escalation/credential leak. Also, direct writes can be vulnerable to TOCTOU and corruption on crash.
+**Learning:** We need to explicitly check everywhere configuration files are saved. We already securely save `.opendev/config.json` via atomic writes with 0600 mode permissions in `opendev-config`, but `opendev-mcp` and `opendev-web`'s IO module did not follow this pattern for MCP configurations.
+**Prevention:** Always use atomic writes via a temporary file with restricted permissions (0o600 on Unix using `OpenOptionsExt::mode`) for files containing sensitive data instead of `std::fs::write`.
