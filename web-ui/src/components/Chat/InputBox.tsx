@@ -29,16 +29,20 @@ export function InputBox() {
   const currentSessionId = useChatStore(state => state.currentSessionId);
   const hasActiveSession = !!currentSessionId;
 
-  // Load files when @ is detected
+  // Load files when @ is detected (with debouncing)
   useEffect(() => {
     if (showFileMention) {
-      apiClient.listFiles(mentionQuery).then(response => {
-        setFilesList(response.files);
-        setSelectedFileIndex(0);
-      }).catch(error => {
-        console.error('Failed to load files:', error);
-        setFilesList([]);
-      });
+      const timer = setTimeout(() => {
+        apiClient.listFiles(mentionQuery).then(response => {
+          setFilesList(response.files);
+          setSelectedFileIndex(0);
+        }).catch(error => {
+          console.error('Failed to load files:', error);
+          setFilesList([]);
+        });
+      }, 300);
+
+      return () => clearTimeout(timer);
     }
   }, [mentionQuery, showFileMention]);
 
