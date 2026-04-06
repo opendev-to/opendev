@@ -73,8 +73,32 @@ pub(super) fn save_server_to_config(
     let content = serde_json::to_string_pretty(&mcp_config)
         .map_err(|e| WebError::Internal(format!("Failed to serialize config: {}", e)))?;
 
-    std::fs::write(config_path, content)
-        .map_err(|e| WebError::Internal(format!("Failed to write config: {}", e)))?;
+    let tmp_path = config_path.with_extension("json.tmp");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true).mode(0o600);
+
+        let mut file = opts.open(&tmp_path).map_err(|e| {
+            WebError::Internal(format!("Failed to open temp config file {}: {}", tmp_path.display(), e))
+        })?;
+        std::io::Write::write_all(&mut file, content.as_bytes()).map_err(|e| {
+            WebError::Internal(format!("Failed to write temp config file {}: {}", tmp_path.display(), e))
+        })?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp_path, content).map_err(|e| {
+            WebError::Internal(format!("Failed to write temp config file {}: {}", tmp_path.display(), e))
+        })?;
+    }
+
+    std::fs::rename(&tmp_path, config_path).map_err(|e| {
+        WebError::Internal(format!("Failed to rename temp config to {}: {}", config_path.display(), e))
+    })?;
 
     Ok(())
 }
@@ -96,8 +120,33 @@ pub(super) fn remove_server_from_config(name: &str, config_path: &Path) -> Resul
     if removed {
         let content = serde_json::to_string_pretty(&mcp_config)
             .map_err(|e| WebError::Internal(format!("Failed to serialize config: {}", e)))?;
-        std::fs::write(config_path, content)
-            .map_err(|e| WebError::Internal(format!("Failed to write config: {}", e)))?;
+
+        let tmp_path = config_path.with_extension("json.tmp");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true).mode(0o600);
+
+            let mut file = opts.open(&tmp_path).map_err(|e| {
+                WebError::Internal(format!("Failed to open temp config file {}: {}", tmp_path.display(), e))
+            })?;
+            std::io::Write::write_all(&mut file, content.as_bytes()).map_err(|e| {
+                WebError::Internal(format!("Failed to write temp config file {}: {}", tmp_path.display(), e))
+            })?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, content).map_err(|e| {
+                WebError::Internal(format!("Failed to write temp config file {}: {}", tmp_path.display(), e))
+            })?;
+        }
+
+        std::fs::rename(&tmp_path, config_path).map_err(|e| {
+            WebError::Internal(format!("Failed to rename temp config to {}: {}", config_path.display(), e))
+        })?;
     }
 
     Ok(removed)
