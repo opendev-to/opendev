@@ -31,15 +31,30 @@ export function InputBox() {
 
   // Load files when @ is detected
   useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+
     if (showFileMention) {
-      apiClient.listFiles(mentionQuery).then(response => {
-        setFilesList(response.files);
-        setSelectedFileIndex(0);
-      }).catch(error => {
-        console.error('Failed to load files:', error);
-        setFilesList([]);
-      });
+      // ⚡ Bolt Performance Optimization:
+      // Debounce file search API calls by 300ms while user types.
+      // This prevents sending an API request for every single keystroke
+      // when typing a file mention query, reducing server load and avoiding
+      // potential race conditions where earlier queries resolve after later ones.
+      timeoutId = setTimeout(() => {
+        apiClient.listFiles(mentionQuery).then(response => {
+          setFilesList(response.files);
+          setSelectedFileIndex(0);
+        }).catch(error => {
+          console.error('Failed to load files:', error);
+          setFilesList([]);
+        });
+      }, 300);
     }
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
   }, [mentionQuery, showFileMention]);
 
   const handleSend = () => {
