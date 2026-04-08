@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 /// Tools that are always safe to parallelize (read-only operations).
-fn read_only_tools() -> HashSet<&'static str> {
+pub fn read_only_tools() -> HashSet<&'static str> {
     HashSet::from([
         // File reading
         "Read",

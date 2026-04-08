@@ -20,6 +20,9 @@ use crate::prompts::reminders::{
 /// Bundled into a struct to keep the orchestrator loop clean and make
 /// dependencies explicit when passing to phase functions.
 pub(super) struct LoopState {
+    /// Cached tool schemas as a `Value::Array`, built once from `&[Value]`.
+    /// Avoids cloning `&[Value]` into `serde_json::json!()` every iteration.
+    pub cached_tool_schemas: Option<serde_json::Value>,
     pub iteration: usize,
     pub consecutive_no_tool_calls: usize,
     pub consecutive_truncations: usize,
@@ -77,6 +80,7 @@ impl LoopState {
         ];
 
         Self {
+            cached_tool_schemas: None,
             iteration: 0,
             consecutive_no_tool_calls: 0,
             consecutive_truncations: 0,

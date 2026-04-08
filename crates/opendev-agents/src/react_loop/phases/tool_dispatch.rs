@@ -22,6 +22,7 @@ use super::super::ReactLoop;
 use super::super::compaction::record_artifact;
 use super::super::emitter::{IterationEmitter, tool_result_display_output};
 use super::super::loop_state::LoopState;
+use super::super::streaming_executor::StreamingToolExecutor;
 use super::super::types::{IterationMetrics, LoopAction, READ_OPS, ToolCallMetric};
 
 /// Execute tool calls sequentially, handling permissions, approval, and post-processing.
@@ -38,13 +39,14 @@ pub(in crate::react_loop) async fn execute_sequential<M>(
     emitter: &IterationEmitter<'_>,
     iter_metrics: &mut IterationMetrics,
     iter_start: Instant,
-    tool_registry: &ToolRegistry,
+    tool_registry: &Arc<ToolRegistry>,
     tool_context: &ToolContext,
     task_monitor: Option<&M>,
     artifact_index: Option<&Mutex<ArtifactIndex>>,
     todo_manager: Option<&Mutex<TodoManager>>,
     cancel: Option<&CancellationToken>,
     tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
+    streaming_executor: Option<&StreamingToolExecutor>,
 ) -> Option<LoopAction>
 where
     M: TaskMonitor + ?Sized,
@@ -356,6 +358,72 @@ where
                     _ => {}
                 }
             }
+        }
+
+        // Check for an early result from the streaming executor (read-only tools
+        // may have already completed during LLM streaming).
+        if let Some(executor) = streaming_executor
+            && let Some(early) = executor.take_result(tool_call_id_str)
+        {
+            debug!(
+                tool = tool_name,
+                call_id = tool_call_id_str,
+                duration_ms = early.duration_ms,
+                "Using early result from streaming executor"
+            );
+            let tool_result = early.result;
+            let tool_duration_ms = early.duration_ms;
+
+            iter_metrics.tool_calls.push(ToolCallMetric {
+                tool_name: tool_name.to_string(),
+                duration_ms: tool_duration_ms,
+                success: tool_result.success,
+            });
+
+            if tool_result.success
+                && let Some(ai) = artifact_index
+            {
+                record_artifact(ai, tool_name, &args_value, &tool_result);
+            }
+
+            let output_str = tool_result_display_output(&tool_result);
+            emitter.emit_tool_result(
+                tool_call_id_str,
+                tool_name,
+                &output_str,
+                tool_result.success,
+            );
+            emitter.emit_tool_finished(tool_call_id_str, tool_result.success);
+
+            if !tool_result.success {
+                any_tool_failed = true;
+            }
+
+            let mut result_value = if tool_result.success {
+                serde_json::json!({
+                    "success": true,
+                    "output": tool_result.output.as_deref().unwrap_or(""),
+                })
+            } else {
+                serde_json::json!({
+                    "success": false,
+                    "error": tool_result.error.as_deref().unwrap_or("Tool execution failed"),
+                })
+            };
+            if let Some(ref suffix) = tool_result.llm_suffix {
+                result_value["llm_suffix"] = serde_json::json!(suffix);
+            }
+
+            let formatted = ReactLoop::format_tool_result(tool_name, &result_value);
+            messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": tool_call_id_str,
+                "name": tool_name,
+                "content": formatted,
+            }));
+
+            completed_tool_count += 1;
+            continue;
         }
 
         // Execute the tool
@@ -821,13 +889,14 @@ pub(in crate::react_loop) async fn execute_batched<M>(
     emitter: &IterationEmitter<'_>,
     iter_metrics: &mut IterationMetrics,
     iter_start: Instant,
-    tool_registry: &ToolRegistry,
+    tool_registry: &Arc<ToolRegistry>,
     tool_context: &ToolContext,
     task_monitor: Option<&M>,
     artifact_index: Option<&Mutex<ArtifactIndex>>,
     todo_manager: Option<&Mutex<TodoManager>>,
     cancel: Option<&CancellationToken>,
     tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
+    streaming_executor: Option<&StreamingToolExecutor>,
 ) -> Option<LoopAction>
 where
     M: TaskMonitor + ?Sized,
@@ -928,6 +997,7 @@ where
                 todo_manager,
                 cancel,
                 tool_approval_tx,
+                streaming_executor,
             )
             .await
             {
@@ -1007,7 +1077,7 @@ async fn execute_concurrent_batch(
     state: &mut LoopState,
     emitter: &IterationEmitter<'_>,
     iter_metrics: &mut IterationMetrics,
-    tool_registry: &ToolRegistry,
+    tool_registry: &Arc<ToolRegistry>,
     tool_context: &ToolContext,
     artifact_index: Option<&Mutex<ArtifactIndex>>,
     cancel: Option<&CancellationToken>,

@@ -14,6 +14,8 @@ pub use standard::StandardReactRunner;
 use async_trait::async_trait;
 use serde_json::Value;
 
+use std::sync::Arc;
+
 use crate::llm_calls::LlmCaller;
 use crate::traits::{AgentError, AgentEventCallback, AgentResult};
 use opendev_http::adapted_client::AdaptedClient;
@@ -26,7 +28,7 @@ pub struct RunnerContext<'a> {
     pub caller: &'a LlmCaller,
     pub http_client: &'a AdaptedClient,
     pub tool_schemas: &'a [Value],
-    pub tool_registry: &'a ToolRegistry,
+    pub tool_registry: &'a Arc<ToolRegistry>,
     pub tool_context: &'a ToolContext,
     pub event_callback: Option<&'a dyn AgentEventCallback>,
     pub cancel: Option<&'a CancellationToken>,
