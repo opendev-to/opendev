@@ -165,9 +165,31 @@ pub fn save_config(config: &McpConfig, config_path: &Path) -> McpResult<()> {
     }
 
     let content = serde_json::to_string_pretty(config)?;
-    std::fs::write(config_path, content).map_err(|e| {
+
+    let tmp_path = config_path.with_extension("json.tmp");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true).mode(0o600);
+
+        let mut file = opts
+            .open(&tmp_path)
+            .map_err(|e| McpError::Config(format!("Failed to open tmp config file: {}", e)))?;
+        std::io::Write::write_all(&mut file, content.as_bytes())
+            .map_err(|e| McpError::Config(format!("Failed to write tmp config file: {}", e)))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp_path, content)
+            .map_err(|e| McpError::Config(format!("Failed to write tmp config file: {}", e)))?;
+    }
+
+    std::fs::rename(&tmp_path, config_path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
         McpError::Config(format!(
-            "Failed to write MCP config to {}: {}",
+            "Failed to rename config file {}: {}",
             config_path.display(),
             e
         ))
