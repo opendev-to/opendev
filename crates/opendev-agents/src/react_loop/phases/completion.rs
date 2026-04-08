@@ -92,8 +92,8 @@ where
             .count();
         if bg_completed < state.bg_tasks_spawned {
             let pending = state.bg_tasks_spawned - bg_completed;
-            // Limit nudges to avoid infinite loops (max 3 background wait nudges)
-            if state.bg_wait_nudge_count < 3 {
+            // Limit nudges to avoid infinite loops (max 10 background wait nudges)
+            if state.bg_wait_nudge_count < 10 {
                 state.bg_wait_nudge_count += 1;
                 info!(
                     spawned = state.bg_tasks_spawned,
@@ -125,7 +125,7 @@ where
         info!(
             iteration = state.iteration,
             content_len = content.len(),
-            content_preview = &content[..content.len().min(80)],
+            content_preview = opendev_runtime::safe_truncate(&content, 80),
             "Completion nudge firing — pre-nudge content"
         );
         let nudge = get_reminder("implicit_completion_nudge", &[("original_task", task)]);
@@ -151,7 +151,7 @@ where
         info!(
             iteration = state.iteration,
             content_len = content.len(),
-            content_preview = &content[..content.len().min(120)],
+            content_preview = opendev_runtime::safe_truncate(&content, 120),
             "Post-nudge acceptance — emitting suppressed content"
         );
         if !content.is_empty()

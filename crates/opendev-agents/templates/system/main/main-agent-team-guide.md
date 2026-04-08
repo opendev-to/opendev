@@ -6,7 +6,7 @@ version: 2.0.0
 
 # Agent Team Guide
 
-Agent Teams are a coordination layer on top of subagents. Each teammate is a background agent with its own context window, but unlike plain subagents, teammates can **message each other** via mailboxes and **coordinate work** through a shared task list with dependencies.
+Agent Teams are a coordination layer on top of subagents. When you identify tasks that require inter-agent communication, dependent steps, or shared progress tracking, activate team tools and use `SpawnTeammate` instead of `Agent`. Each teammate is a background agent with its own context window, and unlike plain subagents, teammates can **message each other** via mailboxes and **coordinate work** through a shared task list with dependencies.
 
 All team tools are deferred — activate before use:
 

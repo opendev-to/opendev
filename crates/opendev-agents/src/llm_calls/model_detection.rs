@@ -10,7 +10,7 @@ use serde_json::Value;
 const MAX_COMPLETION_TOKENS_PREFIXES: &[&str] = &["o1", "o3", "o4", "gpt-5"];
 
 /// Model prefixes that do not support the `temperature` parameter.
-const NO_TEMPERATURE_PREFIXES: &[&str] = &["o1", "o3", "o4", "codex"];
+const NO_TEMPERATURE_PREFIXES: &[&str] = &["o1", "o3", "o4", "codex", "gpt-5"];
 
 /// Check if a model is a reasoning model (o1, o3, o4, codex families).
 pub fn is_reasoning_model(model: &str) -> bool {
