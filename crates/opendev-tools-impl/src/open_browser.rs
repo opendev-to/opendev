@@ -31,6 +31,10 @@ impl BaseTool for OpenBrowserTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Web
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

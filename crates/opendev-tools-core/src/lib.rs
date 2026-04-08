@@ -26,6 +26,7 @@ pub use policy::ToolPolicy;
 pub use registry::ToolRegistry;
 pub use sanitizer::{ToolResultSanitizer, cleanup_overflow_dir};
 pub use traits::{
-    BaseTool, DiagnosticProvider, FileDiagnostic, ToolContext, ToolDisplayMeta, ToolError,
-    ToolResult, ToolTimeoutConfig, ValidationError,
+    BaseTool, DiagnosticProvider, FileDiagnostic, InterruptBehavior, ToolCategory, ToolContext,
+    ToolDisplayMeta, ToolError, ToolResult, ToolTimeoutConfig, TruncationRule, TruncationStrategy,
+    ValidationError,
 };

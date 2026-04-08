@@ -61,6 +61,22 @@ impl BaseTool for PastSessionsTool {
         })
     }
 
+    fn is_read_only(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn is_concurrent_safe(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Session
+    }
+
+    fn truncation_rule(&self) -> Option<opendev_tools_core::TruncationRule> {
+        Some(opendev_tools_core::TruncationRule::tail(15000))
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

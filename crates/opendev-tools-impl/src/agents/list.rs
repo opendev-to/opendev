@@ -69,6 +69,18 @@ impl BaseTool for AgentsTool {
         })
     }
 
+    fn is_read_only(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn is_concurrent_safe(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Session
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

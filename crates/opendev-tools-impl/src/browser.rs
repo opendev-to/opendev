@@ -80,6 +80,14 @@ impl BaseTool for BrowserTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Web
+    }
+
+    fn truncation_rule(&self) -> Option<opendev_tools_core::TruncationRule> {
+        Some(opendev_tools_core::TruncationRule::head(5000))
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

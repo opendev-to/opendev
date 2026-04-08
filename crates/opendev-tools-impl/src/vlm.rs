@@ -69,6 +69,22 @@ impl BaseTool for VlmTool {
         })
     }
 
+    fn is_read_only(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn is_concurrent_safe(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Read
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("analyze image with vision language model")
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

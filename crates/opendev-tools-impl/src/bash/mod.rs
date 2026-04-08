@@ -11,6 +11,167 @@ pub fn is_dangerous_command(command: &str) -> bool {
     patterns::is_dangerous(command)
 }
 
+/// Check if a shell command is likely read-only (no side effects).
+///
+/// Enables automatic parallel execution of safe Bash commands — something
+/// Claude Code cannot do since its `isReadOnly` doesn't inspect commands.
+fn is_likely_read_only_command(command: &str) -> bool {
+    // Get the first token (the base command), stripping any leading env vars
+    let trimmed = command.trim();
+
+    // Skip pipe chains and subshells — if any segment writes, it's not read-only
+    if trimmed.contains('|') || trimmed.contains('>') || trimmed.contains("&&") {
+        // Check each segment of a pipe chain
+        return trimmed
+            .split('|')
+            .all(|segment| is_single_command_read_only(segment.trim()));
+    }
+
+    is_single_command_read_only(trimmed)
+}
+
+/// Check if a single command (no pipes) is read-only.
+fn is_single_command_read_only(cmd: &str) -> bool {
+    // Redirect operators mean writing
+    if cmd.contains('>') {
+        return false;
+    }
+
+    // Strip leading env var assignments (FOO=bar cmd ...)
+    let base = cmd
+        .split_whitespace()
+        .find(|token| !token.contains('='))
+        .unwrap_or("");
+
+    // Extract just the command name (strip path)
+    let cmd_name = base.rsplit('/').next().unwrap_or(base);
+
+    matches!(
+        cmd_name,
+        "ls"
+            | "cat"
+            | "head"
+            | "tail"
+            | "wc"
+            | "grep"
+            | "rg"
+            | "find"
+            | "which"
+            | "whereis"
+            | "whoami"
+            | "pwd"
+            | "echo"
+            | "printf"
+            | "date"
+            | "uname"
+            | "hostname"
+            | "env"
+            | "printenv"
+            | "id"
+            | "df"
+            | "du"
+            | "free"
+            | "uptime"
+            | "ps"
+            | "top"
+            | "htop"
+            | "file"
+            | "stat"
+            | "readlink"
+            | "realpath"
+            | "basename"
+            | "dirname"
+            | "diff"
+            | "md5sum"
+            | "sha256sum"
+            | "shasum"
+            | "cksum"
+            | "tree"
+            | "less"
+            | "more"
+            | "sort"
+            | "uniq"
+            | "cut"
+            | "tr"
+            | "awk"
+            | "sed" // sed without -i is read-only (piped sed)
+            | "jq"
+            | "yq"
+            | "xargs"
+            | "tee" // tee in a pipe is ambiguous, but usually safe in this context
+            | "test"
+            | "["
+            | "true"
+            | "false"
+            | "git" // git subcommands checked below
+            | "cargo"
+            | "rustc"
+            | "node"
+            | "python"
+            | "python3"
+            | "ruby"
+            | "go"
+    ) && !is_write_subcommand(cmd)
+}
+
+/// Check if a command has a write-oriented subcommand.
+fn is_write_subcommand(cmd: &str) -> bool {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.len() < 2 {
+        return false;
+    }
+
+    let base = parts[0].rsplit('/').next().unwrap_or(parts[0]);
+    let sub = parts[1];
+
+    match base {
+        "git" => !matches!(
+            sub,
+            "status"
+                | "log"
+                | "diff"
+                | "show"
+                | "branch"
+                | "tag"
+                | "remote"
+                | "stash"
+                | "blame"
+                | "shortlog"
+                | "describe"
+                | "rev-parse"
+                | "rev-list"
+                | "ls-files"
+                | "ls-tree"
+                | "ls-remote"
+                | "cat-file"
+                | "name-rev"
+                | "for-each-ref"
+                | "config"
+                | "help"
+                | "version"
+        ),
+        "cargo" => !matches!(
+            sub,
+            "check"
+                | "clippy"
+                | "test"
+                | "bench"
+                | "doc"
+                | "metadata"
+                | "tree"
+                | "search"
+                | "version"
+                | "help"
+                | "locate-project"
+                | "pkgid"
+                | "verify-project"
+                | "read-manifest"
+        ),
+        "sed" => cmd.contains(" -i"),
+        _ => false,
+    }
+}
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -95,6 +256,34 @@ impl BaseTool for BashTool {
             },
             "required": ["command"]
         })
+    }
+
+    fn is_read_only(&self, args: &HashMap<String, serde_json::Value>) -> bool {
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            is_likely_read_only_command(cmd)
+        } else {
+            false
+        }
+    }
+
+    fn is_destructive(&self, args: &HashMap<String, serde_json::Value>) -> bool {
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            patterns::is_dangerous(cmd)
+        } else {
+            false
+        }
+    }
+
+    fn is_concurrent_safe(&self, args: &HashMap<String, serde_json::Value>) -> bool {
+        self.is_read_only(args)
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Process
+    }
+
+    fn truncation_rule(&self) -> Option<opendev_tools_core::TruncationRule> {
+        Some(opendev_tools_core::TruncationRule::tail(8000))
     }
 
     async fn execute(

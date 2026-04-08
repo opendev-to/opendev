@@ -64,6 +64,14 @@ impl BaseTool for NotebookEditTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Write
+    }
+
+    fn should_defer(&self) -> bool {
+        true
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

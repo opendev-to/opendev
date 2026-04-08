@@ -297,6 +297,19 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Build a map of `ToolCategory` → tool names from all registered tools.
+    ///
+    /// Used by `ToolPolicy::resolve_from_registry()` to dynamically derive
+    /// groups from `BaseTool::category()` instead of hardcoded lists.
+    pub fn build_category_map(&self) -> HashMap<crate::traits::ToolCategory, Vec<String>> {
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        let mut map: HashMap<crate::traits::ToolCategory, Vec<String>> = HashMap::new();
+        for (name, tool) in tools.iter() {
+            map.entry(tool.category()).or_default().push(name.clone());
+        }
+        map
+    }
+
     /// Get OpenAI-compatible function schemas for all registered tools.
     pub fn get_schemas(&self) -> Vec<serde_json::Value> {
         let tools = self.tools.read().expect("ToolRegistry lock poisoned");

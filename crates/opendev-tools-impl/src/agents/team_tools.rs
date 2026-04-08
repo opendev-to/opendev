@@ -84,6 +84,10 @@ impl BaseTool for CreateTeamTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Messaging
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,
@@ -235,6 +239,14 @@ impl BaseTool for SendMessageTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Messaging
+    }
+
+    fn skip_dedup(&self) -> bool {
+        true
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,
@@ -383,6 +395,10 @@ impl BaseTool for DeleteTeamTool {
             },
             "required": ["team_name"]
         })
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Messaging
     }
 
     async fn execute(

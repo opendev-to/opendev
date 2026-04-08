@@ -63,19 +63,45 @@ pub struct ToolDisplayEntry {
 /// Map a category name string to a `ToolCategory` enum variant.
 pub(crate) fn category_from_name(name: &str) -> ToolCategory {
     match name {
-        "FileRead" => ToolCategory::FileRead,
-        "FileWrite" => ToolCategory::FileWrite,
-        "Bash" => ToolCategory::Bash,
+        "FileRead" | "Read" => ToolCategory::FileRead,
+        "FileWrite" | "Write" => ToolCategory::FileWrite,
+        "Bash" | "Process" => ToolCategory::Bash,
         "Search" => ToolCategory::Search,
         "Web" => ToolCategory::Web,
-        "Agent" => ToolCategory::Agent,
+        "Agent" | "Session" => ToolCategory::Agent,
         "Symbol" => ToolCategory::Symbol,
         "Mcp" => ToolCategory::Mcp,
-        "Plan" => ToolCategory::Plan,
+        "Plan" | "Meta" => ToolCategory::Plan,
         "Docker" => ToolCategory::Docker,
         "UserInteraction" => ToolCategory::UserInteraction,
         "Notebook" => ToolCategory::Notebook,
+        "Memory" => ToolCategory::Other,
+        "Messaging" => ToolCategory::Agent,
+        "Automation" => ToolCategory::Plan,
         _ => ToolCategory::Other,
+    }
+}
+
+/// Convert from the core `ToolCategory` enum to the TUI-specific one.
+///
+/// The core enum has coarser granularity (e.g., `Read` covers both file-read
+/// and search). The TUI enum has display-oriented splits.
+impl From<opendev_tools_core::ToolCategory> for ToolCategory {
+    fn from(core: opendev_tools_core::ToolCategory) -> Self {
+        match core {
+            opendev_tools_core::ToolCategory::Read => ToolCategory::FileRead,
+            opendev_tools_core::ToolCategory::Write => ToolCategory::FileWrite,
+            opendev_tools_core::ToolCategory::Process => ToolCategory::Bash,
+            opendev_tools_core::ToolCategory::Web => ToolCategory::Web,
+            opendev_tools_core::ToolCategory::Session => ToolCategory::Agent,
+            opendev_tools_core::ToolCategory::Memory => ToolCategory::Other,
+            opendev_tools_core::ToolCategory::Meta => ToolCategory::Plan,
+            opendev_tools_core::ToolCategory::Messaging => ToolCategory::Agent,
+            opendev_tools_core::ToolCategory::Automation => ToolCategory::Plan,
+            opendev_tools_core::ToolCategory::Symbol => ToolCategory::Symbol,
+            opendev_tools_core::ToolCategory::Mcp => ToolCategory::Mcp,
+            opendev_tools_core::ToolCategory::Other => ToolCategory::Other,
+        }
     }
 }
 

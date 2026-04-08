@@ -122,6 +122,160 @@ fn test_tool_context_default_no_timeout_config() {
     assert!(ctx.timeout_config.is_none());
 }
 
+// --- ToolCategory tests ---
+
+#[test]
+fn test_tool_category_serde_roundtrip() {
+    let cat = ToolCategory::Read;
+    let json = serde_json::to_string(&cat).unwrap();
+    assert_eq!(json, "\"Read\"");
+    let deserialized: ToolCategory = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized, ToolCategory::Read);
+}
+
+#[test]
+fn test_tool_category_all_variants_serialize() {
+    let variants = [
+        (ToolCategory::Read, "\"Read\""),
+        (ToolCategory::Write, "\"Write\""),
+        (ToolCategory::Process, "\"Process\""),
+        (ToolCategory::Web, "\"Web\""),
+        (ToolCategory::Session, "\"Session\""),
+        (ToolCategory::Memory, "\"Memory\""),
+        (ToolCategory::Meta, "\"Meta\""),
+        (ToolCategory::Messaging, "\"Messaging\""),
+        (ToolCategory::Automation, "\"Automation\""),
+        (ToolCategory::Symbol, "\"Symbol\""),
+        (ToolCategory::Mcp, "\"Mcp\""),
+        (ToolCategory::Other, "\"Other\""),
+    ];
+    for (cat, expected) in variants {
+        assert_eq!(serde_json::to_string(&cat).unwrap(), expected);
+    }
+}
+
+#[test]
+fn test_tool_category_display() {
+    assert_eq!(ToolCategory::Read.to_string(), "Read");
+    assert_eq!(ToolCategory::Process.to_string(), "Process");
+    assert_eq!(ToolCategory::Other.to_string(), "Other");
+}
+
+#[test]
+fn test_tool_category_hash_eq() {
+    use std::collections::HashSet;
+    let mut set = HashSet::new();
+    set.insert(ToolCategory::Read);
+    set.insert(ToolCategory::Read);
+    set.insert(ToolCategory::Write);
+    assert_eq!(set.len(), 2);
+}
+
+// --- InterruptBehavior tests ---
+
+#[test]
+fn test_interrupt_behavior_default_is_cancel() {
+    assert_eq!(InterruptBehavior::default(), InterruptBehavior::Cancel);
+}
+
+#[test]
+fn test_interrupt_behavior_variants() {
+    assert_ne!(InterruptBehavior::Cancel, InterruptBehavior::Block);
+    assert_ne!(InterruptBehavior::Block, InterruptBehavior::Ignore);
+}
+
+// --- BaseTool default method tests ---
+
+#[derive(Debug)]
+struct DefaultTestTool;
+
+#[async_trait::async_trait]
+impl BaseTool for DefaultTestTool {
+    fn name(&self) -> &str {
+        "test"
+    }
+    fn description(&self) -> &str {
+        "A test tool"
+    }
+    fn parameter_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    async fn execute(
+        &self,
+        _args: HashMap<String, serde_json::Value>,
+        _ctx: &ToolContext,
+    ) -> ToolResult {
+        ToolResult::ok("ok")
+    }
+}
+
+#[test]
+fn test_default_is_read_only() {
+    assert!(!DefaultTestTool.is_read_only(&HashMap::new()));
+}
+
+#[test]
+fn test_default_is_destructive() {
+    assert!(!DefaultTestTool.is_destructive(&HashMap::new()));
+}
+
+#[test]
+fn test_default_is_concurrent_safe_delegates_to_is_read_only() {
+    let args = HashMap::new();
+    assert_eq!(
+        DefaultTestTool.is_concurrent_safe(&args),
+        DefaultTestTool.is_read_only(&args)
+    );
+}
+
+#[test]
+fn test_default_category() {
+    assert_eq!(DefaultTestTool.category(), ToolCategory::Other);
+}
+
+#[test]
+fn test_default_skip_dedup() {
+    assert!(!DefaultTestTool.skip_dedup());
+}
+
+#[test]
+fn test_default_is_search_or_read() {
+    assert!(!DefaultTestTool.is_search_or_read(&HashMap::new()));
+}
+
+#[test]
+fn test_default_is_enabled() {
+    assert!(DefaultTestTool.is_enabled());
+}
+
+#[test]
+fn test_default_interrupt_behavior() {
+    assert_eq!(
+        DefaultTestTool.interrupt_behavior(),
+        InterruptBehavior::Cancel
+    );
+}
+
+#[test]
+fn test_default_truncation_rule() {
+    assert!(DefaultTestTool.truncation_rule().is_none());
+}
+
+#[test]
+fn test_default_search_hint() {
+    assert!(DefaultTestTool.search_hint().is_none());
+}
+
+#[test]
+fn test_default_should_defer() {
+    assert!(!DefaultTestTool.should_defer());
+}
+
+#[test]
+fn test_default_prompt_contribution() {
+    assert!(DefaultTestTool.prompt_contribution().is_none());
+}
+
 // --- ValidationError tests ---
 
 #[test]
