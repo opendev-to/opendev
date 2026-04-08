@@ -37,7 +37,6 @@ struct CompletedToolCall {
 
 /// Pre-parsed arguments for write tools (avoids re-parsing after streaming).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(super) struct PreparsedArgs {
     pub args_map: HashMap<String, Value>,
 }
@@ -211,7 +210,6 @@ impl StreamingToolExecutor {
     }
 
     /// Take pre-parsed arguments for a write tool, if available.
-    #[allow(dead_code)]
     pub fn take_preparsed_args(&self, call_id: &str) -> Option<PreparsedArgs> {
         self.preparsed_write_args
             .lock()

@@ -105,21 +105,44 @@ where
             .and_then(|n| n.as_str())
             .unwrap_or("unknown");
 
-        let args_str = tc
-            .get("function")
-            .and_then(|f| f.get("arguments"))
-            .and_then(|a| a.as_str())
-            .unwrap_or("{}");
-
-        let args_value: Value = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-        let args_map: std::collections::HashMap<String, Value> = args_value
-            .as_object()
-            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
-
-        let wd_str = tool_context.working_dir.to_string_lossy().to_string();
-        let mut args_map =
-            opendev_tools_core::normalizer::normalize_params(tool_name, args_map, Some(&wd_str));
+        // Use pre-parsed arguments from the streaming executor when available,
+        // skipping redundant JSON parsing and normalization.
+        let (args_value, mut args_map) = if let Some(executor) = streaming_executor
+            && let Some(preparsed) =
+                executor.take_preparsed_args(tc.get("id").and_then(|id| id.as_str()).unwrap_or(""))
+        {
+            debug!(
+                tool = tool_name,
+                "Using pre-parsed args from streaming executor"
+            );
+            // Reconstruct args_value from pre-parsed map for record_artifact()
+            let value = Value::Object(
+                preparsed
+                    .args_map
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            );
+            (value, preparsed.args_map)
+        } else {
+            let args_str = tc
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|a| a.as_str())
+                .unwrap_or("{}");
+            let args_value: Value = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+            let args_map: std::collections::HashMap<String, Value> = args_value
+                .as_object()
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+            let wd_str = tool_context.working_dir.to_string_lossy().to_string();
+            let args_map = opendev_tools_core::normalizer::normalize_params(
+                tool_name,
+                args_map,
+                Some(&wd_str),
+            );
+            (args_value, args_map)
+        };
 
         let tool_call_id_str = tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
 
