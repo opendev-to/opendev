@@ -14,6 +14,7 @@ pub mod team_tools;
 pub mod spawn_teammate;
 pub mod check_mailbox;
 pub mod task_list_tools;
+pub mod tool_search;
 
 pub use events::{ChannelProgressCallback, SubagentEvent};
 pub use list::AgentsTool;
@@ -22,3 +23,4 @@ pub use team_tools::{CreateTeamTool, DeleteTeamTool, SendMessageTool};
 pub use spawn_teammate::SpawnTeammateTool;
 pub use check_mailbox::CheckMailboxTool;
 pub use task_list_tools::{TeamAddTaskTool, TeamClaimTaskTool, TeamCompleteTaskTool, TeamListTasksTool};
+pub use tool_search::ToolSearchTool;

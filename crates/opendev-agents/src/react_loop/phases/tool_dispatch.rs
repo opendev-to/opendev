@@ -501,6 +501,20 @@ where
             state.skill_model_override = Some(model.to_string());
         }
 
+        // Activate deferred tools returned by ToolSearch
+        if tool_name == "ToolSearch"
+            && tool_result.success
+            && let Some(tools) = tool_result
+                .metadata
+                .get("activated_tools")
+                .and_then(|v| v.as_array())
+        {
+            for name in tools.iter().filter_map(|v| v.as_str()) {
+                state.activated_tools.insert(name.to_string());
+                info!(tool = %name, "Deferred tool activated via ToolSearch");
+            }
+        }
+
         // Reset proactive reminder counters on relevant tool use
         if tool_result.success {
             // Any successful tool resets the general task reminder

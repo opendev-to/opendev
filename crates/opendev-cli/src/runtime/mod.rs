@@ -485,9 +485,31 @@ impl AgentRuntime {
             Arc::clone(&team_task_list),
         )));
 
+        // Register ToolSearchTool for on-demand schema fetching (deferred tools)
+        tool_registry.register(Arc::new(ToolSearchTool::new(Arc::clone(&tool_registry))));
+
+        // Mark core tools — always included in every LLM API call.
+        // All other tools are deferred and loaded on-demand via ToolSearch.
+        tool_registry.mark_core_tools(&[
+            // File operations (most common)
+            "Bash",
+            "Read",
+            "Write",
+            "Edit",
+            "Glob",
+            "Grep",
+            // User interaction
+            "AskUser",
+            // Task lifecycle
+            "TaskComplete",
+            // Tool deferral meta-tool (must always be available)
+            "ToolSearch",
+        ]);
+
         channel_receivers.subagent_event_rx = Some(subagent_event_rx);
         info!(
             tool_count = tool_registry.tool_names().len(),
+            core_tools = tool_registry.core_tool_names().len(),
             "Registered all tools including spawn_subagent and team tools"
         );
 
@@ -515,7 +537,36 @@ impl AgentRuntime {
         let topic_detector = TopicDetector::new(&provider);
 
         // Create per-turn prompt composer with section caching
-        let (prompt_composer, prompt_context) = tools::create_prompt_composer(working_dir, &config);
+        let (mut prompt_composer, prompt_context) =
+            tools::create_prompt_composer(working_dir, &config);
+
+        // Register deferred tools list as a Cached dynamic section.
+        // This tells the LLM which tools are available via ToolSearch.
+        let registry_for_deferred = Arc::clone(&tool_registry);
+        prompt_composer.register_dynamic_section(
+            "deferred_tools",
+            opendev_agents::prompts::CachePolicy::Cached,
+            46, // right after tool_selection (45)
+            None,
+            Box::new(move || {
+                let summaries = registry_for_deferred.get_deferred_summaries();
+                if summaries.is_empty() {
+                    return None;
+                }
+                let mut lines = Vec::with_capacity(summaries.len() + 3);
+                lines.push(
+                    "The following deferred tools are available via ToolSearch. \
+                     Call ToolSearch with the tool name to activate it before use:"
+                        .to_string(),
+                );
+                let mut sorted = summaries;
+                sorted.sort_by(|a, b| a.0.cmp(&b.0));
+                for (name, _desc) in &sorted {
+                    lines.push(format!("- {name}"));
+                }
+                Some(lines.join("\n"))
+            }),
+        );
 
         Ok(Self {
             config,

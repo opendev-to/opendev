@@ -50,6 +50,10 @@ pub(super) struct LoopState {
     pub bg_tasks_spawned: usize,
     /// How many times we've nudged the agent about pending background tasks.
     pub bg_wait_nudge_count: usize,
+
+    /// Tool names activated via ToolSearch (deferred tools become callable).
+    /// Core tools are always active; this tracks additionally activated ones.
+    pub activated_tools: HashSet<String>,
     pub proactive_reminders: ProactiveReminderScheduler,
 
     /// Per-turn context attachment collectors.
@@ -97,6 +101,7 @@ impl LoopState {
             consecutive_reads: 0,
             bg_tasks_spawned: 0,
             bg_wait_nudge_count: 0,
+            activated_tools: HashSet::new(),
             collector_runner: CollectorRunner::new(collectors),
             compaction_flag,
             // Note: todo reminders are handled by TodoStateCollector (live data).

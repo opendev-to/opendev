@@ -69,6 +69,7 @@ pub mod write_todos;
 pub use agents::{
     AgentsTool, ChannelProgressCallback, CheckMailboxTool, SpawnSubagentTool, SpawnTeammateTool,
     SubagentEvent, TeamAddTaskTool, TeamClaimTaskTool, TeamCompleteTaskTool, TeamListTasksTool,
+    ToolSearchTool,
 };
 pub use ask_user::AskUserTool;
 pub use bash::BashTool;
