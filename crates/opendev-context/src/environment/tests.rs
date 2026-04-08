@@ -133,7 +133,7 @@ fn test_discover_agents_md() {
     // Add .git so discovery stops here
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].scope, "project");
     assert!(files[0].content.contains("Do X."));
@@ -146,7 +146,7 @@ fn test_discover_claude_md() {
     std::fs::write(dir_path.join("CLAUDE.md"), "# Claude\nBe helpful.").unwrap();
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert_eq!(files.len(), 1);
     assert!(files[0].content.contains("Be helpful."));
 }
@@ -163,7 +163,7 @@ fn test_discover_opendev_instructions() {
     .unwrap();
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert_eq!(files.len(), 1);
     assert!(files[0].content.contains("Custom instructions"));
 }
@@ -176,7 +176,7 @@ fn test_discover_multiple_instruction_files() {
     std::fs::write(dir_path.join("CLAUDE.md"), "claude").unwrap();
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert_eq!(files.len(), 2);
 }
 
@@ -191,7 +191,7 @@ fn test_discover_walks_up_to_git_root() {
     let child = dir_path.join("sub");
     std::fs::create_dir(&child).unwrap();
 
-    let files = discover_instruction_files(&child);
+    let files = discover_instruction_files(&child, &[], &[]);
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].scope, "parent");
     assert!(files[0].content.contains("parent rules"));
@@ -204,7 +204,7 @@ fn test_discover_empty_file_skipped() {
     std::fs::write(dir_path.join("AGENTS.md"), "  \n  ").unwrap();
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert!(files.is_empty());
 }
 
@@ -216,7 +216,7 @@ fn test_discover_no_duplicates() {
     // No .git, so it would walk up — but the same file shouldn't appear twice
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert_eq!(files.len(), 1);
 }
 
@@ -232,7 +232,7 @@ fn test_claude_instructions_dir_not_loaded() {
     .unwrap();
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     // .claude/instructions.md should not be loaded
     assert_eq!(files.len(), 0);
 }
@@ -247,7 +247,7 @@ fn test_only_opendev_instructions_loaded() {
     std::fs::write(dir_path.join(".claude/instructions.md"), "Claude rules").unwrap();
     std::fs::create_dir(dir_path.join(".git")).unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert_eq!(files.len(), 1);
     assert!(files[0].content.contains("OpenDev rules"));
 }
@@ -257,11 +257,11 @@ fn test_instruction_in_prompt_block() {
     let ctx = EnvironmentContext {
         platform: "test".to_string(),
         current_date: "2026-03-15".to_string(),
-        instruction_files: vec![InstructionFile {
-            scope: "project".to_string(),
-            path: std::path::PathBuf::from("/project/AGENTS.md"),
-            content: "# Build rules\nRun cargo test.".to_string(),
-        }],
+        instruction_files: vec![InstructionFile::new(
+            "project",
+            std::path::PathBuf::from("/project/AGENTS.md"),
+            "# Build rules\nRun cargo test.".to_string(),
+        )],
         ..Default::default()
     };
 
@@ -400,11 +400,11 @@ fn test_remote_instruction_scope_is_remote() {
     // Verify that if we had a successful fetch, the scope would be "remote".
     // We can't easily test a real URL in unit tests, but we test the function contract:
     // scope for remote files is "remote", path is the URL.
-    let file = InstructionFile {
-        scope: "remote".to_string(),
-        path: std::path::PathBuf::from("https://example.com/rules.md"),
-        content: "test content".to_string(),
-    };
+    let file = InstructionFile::new(
+        "remote",
+        std::path::PathBuf::from("https://example.com/rules.md"),
+        "test content".to_string(),
+    );
     assert_eq!(file.scope, "remote");
     assert_eq!(file.path.to_string_lossy(), "https://example.com/rules.md");
 }
@@ -420,7 +420,7 @@ fn test_discover_cursorrules() {
     // Create .cursorrules file
     std::fs::write(dir_path.join(".cursorrules"), "Use strict TypeScript").unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert!(
         files
             .iter()
@@ -448,7 +448,7 @@ fn test_discover_copilot_instructions() {
     )
     .unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert!(
         files
             .iter()
@@ -472,7 +472,7 @@ fn test_discover_cursor_rules_directory() {
     // Non-rule file should be ignored
     std::fs::write(rules_dir.join("README"), "Ignore this").unwrap();
 
-    let files = discover_instruction_files(&dir_path);
+    let files = discover_instruction_files(&dir_path, &[], &[]);
     assert!(
         files.iter().any(|f| f.content.contains("validate input")),
         "Should discover .cursor/rules/security.md"
@@ -481,4 +481,199 @@ fn test_discover_cursor_rules_directory() {
         files.iter().any(|f| f.content.contains("4-space")),
         "Should discover .cursor/rules/style.md"
     );
+}
+
+// --- New features ---
+
+#[test]
+fn test_discover_opendev_rules_directory() {
+    let dir = TempDir::new().unwrap();
+    let dir_path = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(dir_path.join(".git")).unwrap();
+
+    let rules_dir = dir_path.join(".opendev").join("rules");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    std::fs::write(rules_dir.join("rust.md"), "Use snake_case").unwrap();
+    std::fs::write(rules_dir.join("testing.md"), "Write unit tests").unwrap();
+
+    let files = discover_instruction_files(&dir_path, &[], &[]);
+    assert!(
+        files.iter().any(|f| f.content.contains("snake_case")),
+        "Should discover .opendev/rules/rust.md"
+    );
+    assert!(
+        files.iter().any(|f| f.content.contains("unit tests")),
+        "Should discover .opendev/rules/testing.md"
+    );
+}
+
+#[test]
+fn test_discover_opendev_rules_with_frontmatter() {
+    let dir = TempDir::new().unwrap();
+    let dir_path = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(dir_path.join(".git")).unwrap();
+
+    let rules_dir = dir_path.join(".opendev").join("rules");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    std::fs::write(
+        rules_dir.join("rust.md"),
+        "---\npaths:\n  - \"src/**/*.rs\"\n---\nUse snake_case",
+    )
+    .unwrap();
+
+    let files = discover_instruction_files(&dir_path, &[], &[]);
+    let rust_rule = files.iter().find(|f| f.content.contains("snake_case"));
+    assert!(rust_rule.is_some());
+    let rust_rule = rust_rule.unwrap();
+    assert!(rust_rule.path_globs.is_some());
+    assert_eq!(rust_rule.path_globs.as_ref().unwrap()[0], "src/**/*.rs");
+    assert_eq!(rust_rule.source, InstructionSource::Rules);
+}
+
+#[test]
+fn test_discover_local_overrides() {
+    let dir = TempDir::new().unwrap();
+    let dir_path = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(dir_path.join(".git")).unwrap();
+
+    std::fs::write(dir_path.join("AGENTS.md"), "shared rules").unwrap();
+    std::fs::write(dir_path.join("AGENTS.local.md"), "my local overrides").unwrap();
+
+    let files = discover_instruction_files(&dir_path, &[], &[]);
+    assert!(
+        files.iter().any(|f| f.content.contains("shared rules")),
+        "Should discover AGENTS.md"
+    );
+    assert!(
+        files
+            .iter()
+            .any(|f| f.content.contains("my local overrides")),
+        "Should discover AGENTS.local.md"
+    );
+    let local = files
+        .iter()
+        .find(|f| f.content.contains("my local overrides"))
+        .unwrap();
+    assert_eq!(local.scope, "local");
+    assert_eq!(local.source, InstructionSource::Local);
+}
+
+#[test]
+fn test_discover_with_exclusion() {
+    let dir = TempDir::new().unwrap();
+    let dir_path = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(dir_path.join(".git")).unwrap();
+
+    std::fs::write(dir_path.join("AGENTS.md"), "included").unwrap();
+    std::fs::write(dir_path.join("CLAUDE.md"), "excluded").unwrap();
+
+    let files = discover_instruction_files(&dir_path, &["CLAUDE.md".to_string()], &[]);
+    assert!(files.iter().any(|f| f.content.contains("included")));
+    assert!(
+        !files.iter().any(|f| f.content.contains("excluded")),
+        "CLAUDE.md should be excluded"
+    );
+}
+
+#[test]
+fn test_discover_additional_dirs() {
+    let dir1 = TempDir::new().unwrap();
+    let dir1_path = dir1.path().canonicalize().unwrap();
+    std::fs::create_dir(dir1_path.join(".git")).unwrap();
+    std::fs::write(dir1_path.join("AGENTS.md"), "dir1 rules").unwrap();
+
+    let dir2 = TempDir::new().unwrap();
+    let dir2_path = dir2.path().canonicalize().unwrap();
+    std::fs::create_dir(dir2_path.join(".git")).unwrap();
+    std::fs::write(dir2_path.join("AGENTS.md"), "dir2 rules").unwrap();
+
+    let files = discover_instruction_files(&dir1_path, &[], &[dir2_path]);
+    assert!(files.iter().any(|f| f.content.contains("dir1 rules")));
+    assert!(files.iter().any(|f| f.content.contains("dir2 rules")));
+}
+
+#[test]
+fn test_html_comments_stripped_from_discovered_files() {
+    let dir = TempDir::new().unwrap();
+    let dir_path = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(dir_path.join(".git")).unwrap();
+
+    std::fs::write(
+        dir_path.join("AGENTS.md"),
+        "Visible content\n<!-- Hidden comment -->\nMore visible",
+    )
+    .unwrap();
+
+    let files = discover_instruction_files(&dir_path, &[], &[]);
+    assert_eq!(files.len(), 1);
+    assert!(files[0].content.contains("Visible content"));
+    assert!(files[0].content.contains("More visible"));
+    assert!(!files[0].content.contains("Hidden comment"));
+}
+
+#[test]
+fn test_includes_processed_in_discovered_files() {
+    let dir = TempDir::new().unwrap();
+    let dir_path = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(dir_path.join(".git")).unwrap();
+
+    std::fs::write(dir_path.join("shared.md"), "Shared rules").unwrap();
+    std::fs::write(
+        dir_path.join("AGENTS.md"),
+        "@./shared.md\nMain agents rules",
+    )
+    .unwrap();
+
+    let files = discover_instruction_files(&dir_path, &[], &[]);
+    // Should have both the included file and the AGENTS.md
+    assert!(files.iter().any(|f| f.content.contains("Shared rules")));
+    assert!(
+        files
+            .iter()
+            .any(|f| f.content.contains("Main agents rules"))
+    );
+}
+
+#[test]
+fn test_conditional_rules_filtered_in_prompt() {
+    let dir = TempDir::new().unwrap();
+    let dir_path = dir.path().canonicalize().unwrap();
+
+    let ctx = EnvironmentContext {
+        working_dir: dir_path.display().to_string(),
+        platform: "test".to_string(),
+        current_date: "2026-04-09".to_string(),
+        instruction_files: vec![
+            InstructionFile {
+                scope: "project".to_string(),
+                path: std::path::PathBuf::from("unconditional.md"),
+                content: "Always shown".to_string(),
+                source: InstructionSource::Rules,
+                path_globs: None,
+                included_from: None,
+            },
+            InstructionFile {
+                scope: "project".to_string(),
+                path: std::path::PathBuf::from("rust-only.md"),
+                content: "Rust rules".to_string(),
+                source: InstructionSource::Rules,
+                path_globs: Some(vec!["**/*.rs".to_string()]),
+                included_from: None,
+            },
+        ],
+        ..Default::default()
+    };
+
+    // Without active files, conditional rule should be excluded
+    let block = ctx.format_prompt_block_with_context(&[]);
+    assert!(block.contains("Always shown"));
+    assert!(!block.contains("Rust rules"));
+
+    // With matching active file, conditional rule should be included
+    let rust_file = dir_path.join("src/main.rs");
+    std::fs::create_dir_all(rust_file.parent().unwrap()).unwrap();
+    std::fs::write(&rust_file, "fn main() {}").unwrap();
+    let block = ctx.format_prompt_block_with_context(&[rust_file]);
+    assert!(block.contains("Always shown"));
+    assert!(block.contains("Rust rules"));
 }

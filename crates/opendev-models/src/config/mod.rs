@@ -170,6 +170,10 @@ pub struct AppConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instructions: Vec<String>,
 
+    // Glob patterns for instruction files to exclude from discovery
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instruction_excludes: Vec<String>,
+
     // Additional skill directories -- file paths or `~/` paths
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skill_paths: Vec<String>,
@@ -280,6 +284,7 @@ impl Default for AppConfig {
             plan_mode_plan_agent_count: 1,
             plan_mode_explore_variant: "enabled".to_string(),
             instructions: Vec::new(),
+            instruction_excludes: Vec::new(),
             skill_paths: Vec::new(),
             skill_urls: Vec::new(),
             default_agent: None,

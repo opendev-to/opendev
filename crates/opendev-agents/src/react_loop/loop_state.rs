@@ -56,10 +56,11 @@ pub(super) struct LoopState {
 impl LoopState {
     /// Create a new `LoopState` for a fresh react loop execution.
     pub fn new(working_dir: &std::path::Path) -> Self {
-        let startup_paths: Vec<PathBuf> = opendev_context::discover_instruction_files(working_dir)
-            .into_iter()
-            .map(|f| f.path)
-            .collect();
+        let startup_paths: Vec<PathBuf> =
+            opendev_context::discover_instruction_files(working_dir, &[], &[])
+                .into_iter()
+                .map(|f| f.path)
+                .collect();
         let subdir_tracker = opendev_context::SubdirInstructionTracker::new(
             working_dir.to_path_buf(),
             &startup_paths,

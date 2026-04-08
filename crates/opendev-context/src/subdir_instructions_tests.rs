@@ -264,3 +264,77 @@ fn test_copilot_instructions_discovered() {
     assert_eq!(results.len(), 1);
     assert!(results[0].content.contains("conventional commits"));
 }
+
+#[test]
+fn test_opendev_rules_directory_discovered() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+
+    let rules_dir = root.join(".opendev").join("rules");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    std::fs::write(rules_dir.join("style.md"), "Use 4 spaces").unwrap();
+
+    let file = root.join("main.rs");
+    std::fs::write(&file, "").unwrap();
+
+    let mut tracker = SubdirInstructionTracker::new(root.clone(), &[]);
+
+    let results = tracker.check_file_read(&file);
+    assert!(
+        results.iter().any(|r| r.content.contains("4 spaces")),
+        "Should discover .opendev/rules/style.md"
+    );
+}
+
+#[test]
+fn test_opendev_rules_with_frontmatter_paths() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+
+    let rules_dir = root.join(".opendev").join("rules");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    std::fs::write(
+        rules_dir.join("rust.md"),
+        "---\npaths:\n  - \"**/*.rs\"\n---\nUse snake_case",
+    )
+    .unwrap();
+
+    let file = root.join("main.rs");
+    std::fs::write(&file, "").unwrap();
+
+    let mut tracker = SubdirInstructionTracker::new(root.clone(), &[]);
+
+    let results = tracker.check_file_read(&file);
+    let rust_rule = results.iter().find(|r| r.content.contains("snake_case"));
+    assert!(rust_rule.is_some());
+    assert!(rust_rule.unwrap().path_globs.is_some());
+    assert_eq!(
+        rust_rule.unwrap().path_globs.as_ref().unwrap()[0],
+        "**/*.rs"
+    );
+}
+
+#[test]
+fn test_html_comments_stripped_in_subdir() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+
+    let subdir = root.join("src");
+    std::fs::create_dir_all(&subdir).unwrap();
+    std::fs::write(
+        subdir.join("AGENTS.md"),
+        "Visible\n<!-- hidden -->\nAlso visible",
+    )
+    .unwrap();
+
+    let file = subdir.join("main.rs");
+    std::fs::write(&file, "").unwrap();
+
+    let mut tracker = SubdirInstructionTracker::new(root.clone(), &[]);
+
+    let results = tracker.check_file_read(&file);
+    assert_eq!(results.len(), 1);
+    assert!(results[0].content.contains("Visible"));
+    assert!(results[0].content.contains("Also visible"));
+    assert!(!results[0].content.contains("hidden"));
+}

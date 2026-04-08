@@ -4,12 +4,39 @@
 //! Collects git status, tech stack, and project structure at startup,
 //! then formats it for inclusion in the system prompt.
 
+mod conditional;
+mod exclusions;
+pub(crate) mod frontmatter;
+mod include_parser;
 mod instructions;
 mod project;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+pub use conditional::rule_applies;
+pub use exclusions::is_excluded;
+pub use frontmatter::{Frontmatter, parse_frontmatter, strip_html_comments};
+pub use include_parser::process_includes;
 pub use instructions::{discover_instruction_files, resolve_instruction_paths};
+
+/// How an instruction file was loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstructionSource {
+    /// Found via directory walk (AGENTS.md, CLAUDE.md, etc.).
+    Discovery,
+    /// From settings.json `instructions` array.
+    Config,
+    /// Fetched via HTTP(S) URL.
+    Remote,
+    /// Loaded via @include directive inside another instruction file.
+    Include,
+    /// Enterprise managed instruction (/etc/opendev/).
+    Managed,
+    /// Local override (AGENTS.local.md / CLAUDE.local.md), gitignored.
+    Local,
+    /// From .opendev/rules/*.md directory.
+    Rules,
+}
 
 /// A project instruction file discovered from the hierarchy.
 #[derive(Debug, Clone)]
@@ -20,6 +47,27 @@ pub struct InstructionFile {
     pub path: std::path::PathBuf,
     /// File contents (truncated to 50 KB to avoid prompt bloat).
     pub content: String,
+    /// How this file was loaded.
+    pub source: InstructionSource,
+    /// For conditional rules: glob patterns from frontmatter `paths` field.
+    /// `None` means the rule always applies.
+    pub path_globs: Option<Vec<String>>,
+    /// The parent file that @included this file, if any.
+    pub included_from: Option<PathBuf>,
+}
+
+impl InstructionFile {
+    /// Create a new instruction file with default source fields.
+    pub fn new(scope: impl Into<String>, path: PathBuf, content: String) -> Self {
+        Self {
+            scope: scope.into(),
+            path,
+            content,
+            source: InstructionSource::Discovery,
+            path_globs: None,
+            included_from: None,
+        }
+    }
 }
 
 /// Maximum memory content size to inject (25 KB).
@@ -66,7 +114,18 @@ impl EnvironmentContext {
     /// Collect environment context from the working directory.
     ///
     /// Git commands and directory scanning run in parallel to minimize startup latency.
+    /// `exclude_patterns` filters out instruction files matching any glob pattern.
+    /// `additional_dirs` adds extra directories for instruction discovery.
     pub fn collect(working_dir: &Path) -> Self {
+        Self::collect_with_options(working_dir, &[], &[])
+    }
+
+    /// Collect with instruction filtering options.
+    pub fn collect_with_options(
+        working_dir: &Path,
+        exclude_patterns: &[String],
+        additional_dirs: &[PathBuf],
+    ) -> Self {
         let is_git = working_dir.join(".git").exists();
 
         // Run all git commands and directory scanning in parallel using scoped threads.
@@ -92,7 +151,13 @@ impl EnvironmentContext {
                 let h_remote =
                     s.spawn(|| project::git_cmd(working_dir, &["remote", "get-url", "origin"]));
                 let h_tree = s.spawn(|| project::build_directory_tree(working_dir, 2));
-                let h_instr = s.spawn(|| instructions::discover_instruction_files(working_dir));
+                let h_instr = s.spawn(|| {
+                    instructions::discover_instruction_files(
+                        working_dir,
+                        exclude_patterns,
+                        additional_dirs,
+                    )
+                });
                 let h_memory = s.spawn(|| load_project_memory(working_dir));
 
                 (
@@ -108,7 +173,11 @@ impl EnvironmentContext {
             })
         } else {
             let directory_tree = project::build_directory_tree(working_dir, 2);
-            let instruction_files = instructions::discover_instruction_files(working_dir);
+            let instruction_files = instructions::discover_instruction_files(
+                working_dir,
+                exclude_patterns,
+                additional_dirs,
+            );
             let memory_content = load_project_memory(working_dir);
             (
                 None,
@@ -150,6 +219,14 @@ impl EnvironmentContext {
 
     /// Format the environment context as a system prompt block.
     pub fn format_prompt_block(&self) -> String {
+        self.format_prompt_block_with_context(&[])
+    }
+
+    /// Format the environment context, filtering conditional rules by active files.
+    ///
+    /// Instructions with `path_globs` are only included if at least one active file
+    /// matches their glob patterns. Instructions without `path_globs` are always included.
+    pub fn format_prompt_block_with_context(&self, active_files: &[PathBuf]) -> String {
         let mut sections = Vec::new();
 
         // Environment section
@@ -225,14 +302,23 @@ impl EnvironmentContext {
         }
 
         // Project instructions section
-        if !self.instruction_files.is_empty() {
+        // Filter conditional rules by active files.
+        let working_dir = PathBuf::from(&self.working_dir);
+        let applicable: Vec<_> = self
+            .instruction_files
+            .iter()
+            .filter(|instr| {
+                conditional::rule_applies(instr.path_globs.as_deref(), active_files, &working_dir)
+            })
+            .collect();
+        if !applicable.is_empty() {
             let mut instr_lines = vec!["# Project Instructions".to_string()];
             instr_lines.push(
                 "The following instruction files were found in the project hierarchy. \
                  Follow these instructions when working in this project."
                     .to_string(),
             );
-            for instr in &self.instruction_files {
+            for instr in &applicable {
                 instr_lines.push(String::new());
                 instr_lines.push(format!(
                     "## {} ({})",
