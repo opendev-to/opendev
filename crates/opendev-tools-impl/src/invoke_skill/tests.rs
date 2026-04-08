@@ -282,3 +282,113 @@ async fn test_load_namespaced_skill() {
     assert!(result.output.unwrap().contains("Loaded skill: rebase"));
     assert_eq!(result.metadata.get("skill_namespace").unwrap(), "git");
 }
+
+// ---- Forked execution context ----
+
+#[tokio::test]
+async fn test_forked_skill_returns_fork_metadata() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(
+        skill_dir.join("heavy.md"),
+        "---\nname: heavy\ndescription: Heavy analysis\ncontext: fork\neffort: high\nallowed-tools: [Read, Grep]\n---\n\n# Heavy Analysis\nDo heavy work.\n",
+    ).unwrap();
+    let loader = create_test_loader(Some(&skill_dir));
+    let tool = InvokeSkillTool::new(loader);
+    let ctx = ToolContext::new("/tmp/test");
+    let mut args = HashMap::new();
+    args.insert("skill_name".to_string(), serde_json::json!("heavy"));
+    let result = tool.execute(args, &ctx).await;
+    assert!(result.success);
+    let output = result.output.unwrap();
+    assert!(output.contains("Forked skill: heavy"));
+    assert!(output.contains("<skill_fork"));
+    assert_eq!(result.metadata.get("skill_fork").unwrap(), true);
+    assert_eq!(result.metadata.get("skill_effort").unwrap(), "high");
+    assert_eq!(result.metadata.get("skill_max_steps").unwrap(), 50);
+    let tools = result.metadata.get("skill_allowed_tools").unwrap();
+    assert_eq!(tools, &serde_json::json!(["Read", "Grep"]));
+}
+
+#[tokio::test]
+async fn test_inline_skill_has_no_fork_metadata() {
+    let loader = create_test_loader(None);
+    let tool = InvokeSkillTool::new(loader);
+    let ctx = ToolContext::new("/tmp/test");
+    let mut args = HashMap::new();
+    args.insert("skill_name".to_string(), serde_json::json!("commit"));
+    let result = tool.execute(args, &ctx).await;
+    assert!(result.success);
+    assert!(result.metadata.get("skill_fork").is_none());
+}
+
+// ---- Visibility controls ----
+
+#[tokio::test]
+async fn test_disable_model_invocation_blocks_model() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(
+        skill_dir.join("secret.md"),
+        "---\nname: secret\ndescription: Secret\ndisable-model-invocation: true\n---\n\nSecret content.\n",
+    ).unwrap();
+    let loader = create_test_loader(Some(&skill_dir));
+    let tool = InvokeSkillTool::new(loader);
+    let ctx = ToolContext::new("/tmp/test");
+    // No invocation_source = model invocation (default)
+    let mut args = HashMap::new();
+    args.insert("skill_name".to_string(), serde_json::json!("secret"));
+    let result = tool.execute(args, &ctx).await;
+    assert!(!result.success);
+    assert!(result.error.unwrap().contains("slash command"));
+}
+
+#[tokio::test]
+async fn test_disable_model_invocation_allows_user() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(
+        skill_dir.join("secret.md"),
+        "---\nname: secret\ndescription: Secret\ndisable-model-invocation: true\n---\n\nSecret content.\n",
+    ).unwrap();
+    let loader = create_test_loader(Some(&skill_dir));
+    let tool = InvokeSkillTool::new(loader);
+    let mut ctx = ToolContext::new("/tmp/test");
+    ctx.values
+        .insert("invocation_source".into(), serde_json::json!("user"));
+    let mut args = HashMap::new();
+    args.insert("skill_name".to_string(), serde_json::json!("secret"));
+    let result = tool.execute(args, &ctx).await;
+    assert!(result.success);
+    assert!(result.output.unwrap().contains("Secret content."));
+}
+
+// ---- Embedded hooks ----
+
+#[tokio::test]
+async fn test_skill_with_hooks_includes_metadata() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(
+        skill_dir.join("checked.md"),
+        "---\nname: checked\ndescription: Checked\nhooks: [\"PreToolUse:Edit:npx tsc --noEmit\"]\n---\n\nChecked content.\n",
+    ).unwrap();
+    let loader = create_test_loader(Some(&skill_dir));
+    let tool = InvokeSkillTool::new(loader);
+    let ctx = ToolContext::new("/tmp/test");
+    let mut args = HashMap::new();
+    args.insert("skill_name".to_string(), serde_json::json!("checked"));
+    let result = tool.execute(args, &ctx).await;
+    assert!(result.success);
+    let hooks = result.metadata.get("skill_hooks").unwrap();
+    assert!(hooks.is_array());
+    let arr = hooks.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["event"], "PreToolUse");
+    assert_eq!(arr[0]["matcher"], "Edit");
+    assert_eq!(arr[0]["command"], "npx tsc --noEmit");
+}

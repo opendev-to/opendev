@@ -1,7 +1,9 @@
 //! invoke_skill tool — loads skill content into conversation context on demand.
 //!
 //! Supports listing available skills, loading by name (with namespace),
-//! and session-scoped deduplication to avoid re-loading the same skill.
+//! session-scoped deduplication, forked execution as sub-agents, conditional
+//! activation via path globs, visibility controls, embedded hooks, and
+//! runtime variable substitution.
 
 mod arguments;
 mod mcp;
@@ -12,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use opendev_mcp::McpManager;
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
 
-use opendev_agents::skills::SkillLoader;
+use opendev_agents::skills::{SkillContext, SkillLoader};
 
 use arguments::expand_skill_arguments;
 
@@ -22,6 +24,16 @@ use arguments::expand_skill_arguments;
 /// - `<project>/.opendev/skills/` (highest priority)
 /// - `~/.opendev/skills/`
 /// - Built-in skills embedded in the binary
+///
+/// Supports:
+/// - **Conditional activation**: Skills with `paths` globs are hidden until
+///   matching files are touched.
+/// - **Forked execution**: Skills with `context: fork` execute as isolated
+///   sub-agents with separate token budgets and tool restrictions.
+/// - **Visibility controls**: `disable-model-invocation` hides from model,
+///   `user-invocable` controls slash command access.
+/// - **Embedded hooks**: Skills can define lifecycle hooks.
+/// - **Runtime variables**: `${SKILL_DIR}`, `${SESSION_ID}`, `${WORKING_DIR}`.
 ///
 /// Also surfaces MCP prompts as invokable commands using `server:prompt` syntax.
 pub struct InvokeSkillTool {
@@ -99,7 +111,7 @@ impl BaseTool for InvokeSkillTool {
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> ToolResult {
         let skill_name = args
             .get("skill_name")
@@ -219,6 +231,17 @@ impl BaseTool for InvokeSkillTool {
             unreachable!()
         };
 
+        // Check visibility: model cannot invoke skills with disable_model_invocation.
+        let is_user_invocation =
+            ctx.values.get("invocation_source").and_then(|v| v.as_str()) == Some("user");
+        if skill.metadata.disable_model_invocation && !is_user_invocation {
+            return ToolResult::fail(format!(
+                "Skill '{}' can only be invoked via slash command (e.g. /{}). \
+                 It has disable-model-invocation: true.",
+                skill.metadata.name, skill.metadata.name
+            ));
+        }
+
         // Dedup: if already invoked this session, return a short reminder.
         if let Ok(mut invoked) = self.invoked_skills.lock() {
             if invoked.contains(skill_name) {
@@ -250,13 +273,19 @@ impl BaseTool for InvokeSkillTool {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim();
-        let skill_content = if !arguments.is_empty() {
+        let mut skill_content = if !arguments.is_empty() {
             expand_skill_arguments(&skill.content, arguments)
         } else {
             skill.content.clone()
         };
 
-        // Return the full skill content with metadata.
+        // Apply runtime variable substitution.
+        let session_id = ctx.session_id.as_deref().unwrap_or("unknown");
+        let runtime_vars = SkillLoader::build_runtime_variables(&skill, session_id);
+        skill_content = SkillLoader::expand_variables(&skill_content, &runtime_vars);
+        skill_content = SkillLoader::expand_dollar_variables(&skill_content, &runtime_vars);
+
+        // Build base metadata.
         let mut meta = HashMap::new();
         meta.insert(
             "skill_name".to_string(),
@@ -273,8 +302,67 @@ impl BaseTool for InvokeSkillTool {
             meta.insert("skill_agent".to_string(), serde_json::json!(agent));
         }
 
+        // Handle forked execution context.
+        if skill.metadata.context == SkillContext::Fork {
+            meta.insert("skill_fork".into(), serde_json::json!(true));
+            meta.insert(
+                "skill_effort".into(),
+                serde_json::json!(skill.metadata.effort.reasoning_effort()),
+            );
+            meta.insert(
+                "skill_max_steps".into(),
+                serde_json::json!(skill.metadata.effort.max_steps()),
+            );
+            if !skill.metadata.allowed_tools.is_empty() {
+                meta.insert(
+                    "skill_allowed_tools".into(),
+                    serde_json::json!(skill.metadata.allowed_tools),
+                );
+            }
+
+            let token_estimate = skill_content.len() / 4;
+            meta.insert("token_estimate".into(), serde_json::json!(token_estimate));
+
+            // For forked skills, return the content as a sub-agent prompt.
+            // The ReAct loop will detect `skill_fork: true` in metadata and
+            // spawn a sub-agent instead of injecting the content inline.
+            let output = format!(
+                "Forked skill: {} (effort: {}, max_steps: {})\n\n\
+                 <skill_fork name=\"{}\" effort=\"{}\" max_steps=\"{}\">\n{}\n</skill_fork>\n\n\
+                 This skill should be executed as an isolated sub-agent. \
+                 Use spawn_subagent with the content above as the prompt.",
+                skill.metadata.name,
+                skill.metadata.effort.reasoning_effort(),
+                skill.metadata.effort.max_steps(),
+                skill.metadata.name,
+                skill.metadata.effort.reasoning_effort(),
+                skill.metadata.effort.max_steps(),
+                skill_content,
+            );
+
+            return ToolResult::ok_with_metadata(output, meta);
+        }
+
+        // Inline execution: inject content into conversation.
         let token_estimate = skill_content.len() / 4;
         meta.insert("token_estimate".into(), serde_json::json!(token_estimate));
+
+        // Include embedded hooks in metadata for the runtime to register.
+        if !skill.metadata.hooks.is_empty() {
+            let hooks_json: Vec<serde_json::Value> = skill
+                .metadata
+                .hooks
+                .iter()
+                .map(|h| {
+                    serde_json::json!({
+                        "event": h.event,
+                        "matcher": h.matcher,
+                        "command": h.command,
+                    })
+                })
+                .collect();
+            meta.insert("skill_hooks".into(), serde_json::json!(hooks_json));
+        }
 
         let mut output = format!(
             "Loaded skill: {} (~{} tokens)\n\n<skill_content name=\"{}\">\n{}\n</skill_content>",
