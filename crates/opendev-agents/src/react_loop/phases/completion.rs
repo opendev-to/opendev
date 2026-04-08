@@ -116,9 +116,10 @@ where
     }
 
     // Implicit completion nudge — verify original task before finishing
-    // Skip on first iteration: text-only response = conversational reply
+    // Skip when no tools were used: pure conversational replies don't need verification
+    let has_used_tools = state.iteration > state.consecutive_no_tool_calls;
     if !state.completion_nudge_sent
-        && state.iteration > 0
+        && has_used_tools
         && let Some(task) = react_loop.config.original_task.as_deref()
     {
         state.completion_nudge_sent = true;
