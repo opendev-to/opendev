@@ -27,6 +27,12 @@ pub struct TurnContext<'a> {
         Option<&'a std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>>,
     /// The user's most recent query text, used for semantic memory selection.
     pub last_user_query: Option<&'a str>,
+    /// Cumulative input tokens used so far in this session.
+    pub cumulative_input_tokens: Option<u64>,
+    /// Current session identifier.
+    pub session_id: Option<&'a str>,
+    /// Recent messages for session memory extraction (last N messages).
+    pub recent_messages: Option<&'a [serde_json::Value]>,
 }
 
 /// Output produced when a collector fires.
@@ -67,6 +73,13 @@ pub trait ContextCollector: Send + Sync {
 
     /// Reset internal state (e.g., after context compaction).
     fn reset(&self) {}
+
+    /// Optional pre-fire hook: start async work early so `collect()` can
+    /// await a ready result instead of blocking. Called for all collectors
+    /// whose `should_fire()` returns true, before any `collect()` calls.
+    ///
+    /// Default implementation is a no-op.
+    async fn pre_fire(&self, _ctx: &TurnContext<'_>) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -123,18 +136,33 @@ impl CollectorRunner {
     }
 
     /// Run all collectors for this turn, injecting attachments into messages.
+    ///
+    /// Two-phase execution: first call `pre_fire()` on all eligible collectors
+    /// (allows async prefetch to start), then call `collect()` to await results.
     pub async fn run(&self, ctx: &TurnContext<'_>, messages: &mut Vec<serde_json::Value>) {
-        for collector in &self.collectors {
-            if collector.should_fire(ctx)
-                && let Some(attachment) = collector.collect(ctx).await
-            {
+        // Phase 1: determine eligibility and kick off prefetch
+        let eligible: Vec<usize> = self
+            .collectors
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.should_fire(ctx))
+            .map(|(i, _)| i)
+            .collect();
+
+        for &i in &eligible {
+            self.collectors[i].pre_fire(ctx).await;
+        }
+
+        // Phase 2: collect and inject
+        for &i in &eligible {
+            if let Some(attachment) = self.collectors[i].collect(ctx).await {
                 tracing::debug!(
-                    collector = collector.name(),
+                    collector = self.collectors[i].name(),
                     attachment = attachment.name,
                     "Injecting context attachment"
                 );
                 inject_system_message(messages, &attachment.content, attachment.class);
-                collector.did_fire(ctx.turn_number);
+                self.collectors[i].did_fire(ctx.turn_number);
             }
         }
     }

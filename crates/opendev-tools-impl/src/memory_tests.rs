@@ -39,11 +39,11 @@ fn test_memory_search() {
     .unwrap();
     std::fs::write(tmp.path().join("other.md"), "unrelated content").unwrap();
 
-    let result = memory_search(tmp.path(), "rust systems");
-    assert!(result.success);
-    let out = result.output.unwrap();
-    assert!(out.contains("notes.md"));
-    assert!(!out.contains("other.md"));
+    // keyword_search is synchronous, test it directly
+    let results = keyword_search(tmp.path(), "rust systems");
+    assert!(!results.is_empty());
+    assert!(results.iter().any(|(_, name, _)| name == "notes.md"));
+    assert!(!results.iter().any(|(_, name, _)| name == "other.md"));
 }
 
 #[test]

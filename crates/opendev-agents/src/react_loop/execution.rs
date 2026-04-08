@@ -132,12 +132,43 @@ impl ReactLoop {
                     .and_then(|m| m.get("content").and_then(|v| v.as_str()))
                     .map(String::from);
 
+                // Snapshot recent messages for session memory extraction
+                // (clone avoids borrow conflict with the mutable `messages` below)
+                let recent_snapshot: Vec<serde_json::Value> = messages
+                    .iter()
+                    .rev()
+                    .take(30)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+
+                // Read cumulative input tokens from cost tracker for session memory thresholds
+                let cumulative_tokens = cost_tracker
+                    .and_then(|ct| ct.lock().ok())
+                    .map(|ct| ct.total_input_tokens);
+
+                // Read session ID from tool context shared state
+                let session_id_owned: Option<String> = tool_context
+                    .shared_state
+                    .as_ref()
+                    .and_then(|ss| ss.lock().ok())
+                    .and_then(|ss| {
+                        ss.get("session_id")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                    });
+
                 let turn_ctx = crate::attachments::TurnContext {
                     turn_number: state.iteration,
                     working_dir: &tool_context.working_dir,
                     todo_manager,
                     shared_state: tool_context.shared_state.as_ref().map(|arc| arc.as_ref()),
                     last_user_query: last_user_query.as_deref(),
+                    cumulative_input_tokens: cumulative_tokens,
+                    session_id: session_id_owned.as_deref(),
+                    recent_messages: Some(&recent_snapshot),
                 };
                 state.collector_runner.run(&turn_ctx, messages).await;
             }

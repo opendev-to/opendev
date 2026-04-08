@@ -263,6 +263,21 @@ impl Paths {
         self.project_memory_dir().join("MEMORY.md")
     }
 
+    /// Get the consolidation metadata file path.
+    pub fn consolidation_meta_path(&self) -> PathBuf {
+        self.project_memory_dir().join(".consolidation-meta.json")
+    }
+
+    /// Get the consolidation lock file path.
+    pub fn consolidation_lock_path(&self) -> PathBuf {
+        self.project_memory_dir().join(".consolidation.lock")
+    }
+
+    /// Get the memory backup directory path.
+    pub fn memory_backup_dir(&self) -> PathBuf {
+        self.project_memory_dir().join(".backup")
+    }
+
     /// Get the project-scoped file history path.
     pub fn project_file_history(&self) -> PathBuf {
         let encoded = encode_project_path(&self.working_dir);

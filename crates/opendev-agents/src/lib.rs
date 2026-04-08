@@ -16,6 +16,7 @@ pub mod attachments;
 pub mod doom_loop;
 pub mod llm_calls;
 pub mod main_agent;
+pub mod memory_consolidation;
 pub mod prompts;
 pub mod react_loop;
 pub mod response;

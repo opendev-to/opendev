@@ -462,6 +462,26 @@ impl AgentRuntime {
         // Create per-turn prompt composer with section caching
         let (prompt_composer, prompt_context) = tools::create_prompt_composer(working_dir, &config);
 
+        // Check if memory consolidation should run (background, non-blocking)
+        {
+            let wd = working_dir.to_path_buf();
+            if opendev_agents::memory_consolidation::should_consolidate(&wd) {
+                tokio::spawn(async move {
+                    tracing::info!("Starting background memory consolidation");
+                    match opendev_agents::memory_consolidation::consolidate(&wd).await {
+                        Some(report) => tracing::info!(
+                            consolidated = report.files_consolidated,
+                            pruned = report.files_pruned,
+                            "Memory consolidation complete"
+                        ),
+                        None => {
+                            tracing::debug!("Memory consolidation skipped or had nothing to do")
+                        }
+                    }
+                });
+            }
+        }
+
         Ok(Self {
             config,
             working_dir: working_dir.to_path_buf(),

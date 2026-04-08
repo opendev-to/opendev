@@ -73,6 +73,11 @@ impl BaseTool for MemoryTool {
                     "type": "string",
                     "enum": ["project", "global"],
                     "description": "Memory scope: 'project' (default) or 'global'"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["keyword", "semantic", "auto"],
+                    "description": "Search mode: 'keyword' (fast text match), 'semantic' (LLM-based), 'auto' (keyword first, semantic fallback). Default: 'auto'"
                 }
             },
             "required": ["action"]
@@ -127,7 +132,8 @@ impl BaseTool for MemoryTool {
                     Some(q) => q,
                     None => return ToolResult::fail("query is required for search"),
                 };
-                memory_search(&memory_dir, query)
+                let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("auto");
+                memory_search(&memory_dir, query, mode).await
             }
             "list" => memory_list(&memory_dir),
             _ => ToolResult::fail(format!(
@@ -143,6 +149,30 @@ impl BaseTool for MemoryTool {
             category: "Other",
             primary_arg_keys: &["action", "file", "query"],
         })
+    }
+}
+
+/// Format a staleness note for a memory file based on its modification time.
+fn format_staleness(path: &Path) -> String {
+    let days_ago = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|mt| {
+            std::time::SystemTime::now()
+                .duration_since(mt)
+                .ok()
+                .map(|d| d.as_secs() / 86400)
+        });
+
+    match days_ago {
+        Some(0) | None => String::new(),
+        Some(d @ 1..=6) => format!("[Updated {d} day{} ago]", if d == 1 { "" } else { "s" }),
+        Some(d @ 7..=30) => {
+            format!("[Updated {d} days ago \u{2014} may be outdated, verify before acting]")
+        }
+        Some(d) => format!(
+            "[WARNING: Last updated {d} days ago. Verify against current code before relying on this.]"
+        ),
     }
 }
 
@@ -170,7 +200,15 @@ fn memory_read(dir: &Path, file: &str) -> ToolResult {
     }
 
     match std::fs::read_to_string(&path) {
-        Ok(content) => ToolResult::ok(content),
+        Ok(content) => {
+            let staleness = format_staleness(&path);
+            let output = if staleness.is_empty() {
+                content
+            } else {
+                format!("{staleness}\n\n{content}")
+            };
+            ToolResult::ok(output)
+        }
         Err(e) => ToolResult::fail(format!("Failed to read {file}: {e}")),
     }
 }
@@ -186,29 +224,93 @@ fn memory_write(dir: &Path, file: &str, content: &str) -> ToolResult {
 
     let path = dir.join(file);
     match std::fs::write(&path, content) {
-        Ok(_) => ToolResult::ok(format!("Written {} bytes to {file}", content.len())),
+        Ok(_) => {
+            let has_type = content.contains("type:");
+            let mut msg = format!("Written {} bytes to {file}", content.len());
+            if !has_type {
+                msg.push_str(
+                    "\n\nNote: Memory file is missing a `type:` field in YAML frontmatter. \
+                     Please include frontmatter with `type` (user/feedback/project/reference) \
+                     and `description` fields for better retrieval.",
+                );
+            }
+            ToolResult::ok(msg)
+        }
         Err(e) => ToolResult::fail(format!("Failed to write {file}: {e}")),
     }
 }
 
-fn memory_search(dir: &Path, query: &str) -> ToolResult {
-    if !dir.exists() {
-        return ToolResult::ok("No memory files found (directory does not exist)".to_string());
+/// Compute a weighted relevance score for a memory file.
+///
+/// Frontmatter fields (description, type) are weighted 3x higher than body.
+/// Filename matches are weighted 2x. Uses OR matching with percentage scoring.
+fn compute_relevance(filename: &str, content: &str, keywords: &[&str]) -> f64 {
+    if keywords.is_empty() {
+        return 0.0;
     }
 
+    let filename_lower = filename.to_lowercase();
+    let content_lower = content.to_lowercase();
+
+    // Split content into frontmatter and body
+    let (frontmatter, body) = if let Some(rest) = content_lower.strip_prefix("---") {
+        if let Some(end) = rest.find("---") {
+            let fm = &rest[..end];
+            let body = &rest[end + 3..];
+            (fm.to_string(), body.to_string())
+        } else {
+            (String::new(), content_lower.clone())
+        }
+    } else {
+        (String::new(), content_lower.clone())
+    };
+
+    let mut total_score = 0.0;
+    for kw in keywords {
+        let mut kw_score = 0.0;
+
+        // Filename match (weight: 2x)
+        if filename_lower.contains(kw) {
+            kw_score += 2.0;
+        }
+        // Frontmatter match (weight: 3x)
+        if frontmatter.contains(kw) {
+            kw_score += 3.0;
+        }
+        // Body match (weight: 1x)
+        if body.contains(kw) {
+            kw_score += 1.0;
+        }
+        // Substring similarity bonus for partial matches
+        if kw.len() >= 3 {
+            for word in body.split_whitespace() {
+                if word.starts_with(kw) || kw.starts_with(word) {
+                    kw_score += 0.5;
+                    break;
+                }
+            }
+        }
+
+        total_score += kw_score;
+    }
+
+    total_score
+}
+
+/// Run keyword-based search across memory files, returning scored results.
+fn keyword_search(dir: &Path, query: &str) -> Vec<(f64, String, Vec<String>)> {
     let query_lower = query.to_lowercase();
     let keywords: Vec<&str> = query_lower.split_whitespace().collect();
     if keywords.is_empty() {
-        return ToolResult::fail("Search query cannot be empty");
+        return Vec::new();
     }
-
-    let mut results = Vec::new();
 
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(e) => return ToolResult::fail(format!("Failed to read memory directory: {e}")),
+        Err(_) => return Vec::new(),
     };
 
+    let mut results = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
@@ -220,54 +322,170 @@ fn memory_search(dir: &Path, query: &str) -> ToolResult {
             Err(_) => continue,
         };
 
-        let content_lower = content.to_lowercase();
-        let score: usize = keywords
-            .iter()
-            .filter(|kw| content_lower.contains(*kw))
-            .count();
+        let filename = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
 
-        if score > 0 {
-            let filename = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
+        let score = compute_relevance(&filename, &content, &keywords);
 
-            // Collect matching lines
+        if score > 0.0 {
             let mut matching_lines = Vec::new();
             for (i, line) in content.lines().enumerate() {
                 let line_lower = line.to_lowercase();
-                if keywords.iter().any(|kw| line_lower.contains(*kw)) {
+                if keywords.iter().any(|kw| line_lower.contains(kw)) {
                     matching_lines.push(format!("  {}:{}: {}", filename, i + 1, line));
                     if matching_lines.len() >= 5 {
                         break;
                     }
                 }
             }
-
             results.push((score, filename, matching_lines));
         }
     }
 
+    results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    results
+}
+
+/// Run LLM-based semantic search using the shared `MemorySelector`.
+async fn semantic_search(dir: &Path, query: &str) -> Vec<(f64, String, Vec<String>)> {
+    use opendev_agents::attachments::collectors::memory_selector::MemorySelector;
+
+    let selector = match MemorySelector::try_new() {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    // Build manifest of all files
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut file_info: Vec<(String, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n.ends_with(".md") && n != "MEMORY.md" => n.to_string(),
+            _ => continue,
+        };
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let desc = extract_description(&content);
+        let desc_str = if desc.is_empty() {
+            "(no description)".to_string()
+        } else {
+            desc
+        };
+        file_info.push((name, desc_str));
+    }
+
+    if file_info.is_empty() {
+        return Vec::new();
+    }
+
+    let manifest: String = file_info
+        .iter()
+        .map(|(name, desc)| format!("- {name}: {desc}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let filenames = match selector.select(&manifest, query).await {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+
+    // Read selected files and return with synthetic score
+    let mut results = Vec::new();
+    for (rank, filename) in filenames.into_iter().take(5).enumerate() {
+        let path = dir.join(&filename);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let first_lines: Vec<String> = content
+                .lines()
+                .filter(|l| !l.trim().is_empty() && !l.starts_with("---"))
+                .take(5)
+                .enumerate()
+                .map(|(i, l)| format!("  {}:{}: {}", filename, i + 1, l))
+                .collect();
+            // Higher score for higher-ranked results
+            let score = 10.0 - rank as f64;
+            results.push((score, filename, first_lines));
+        }
+    }
+    results
+}
+
+fn format_search_results_with_prefix(
+    results: &[(f64, String, Vec<String>)],
+    query: &str,
+    prefix: &str,
+) -> ToolResult {
     if results.is_empty() {
         return ToolResult::ok(format!("No matches found for '{query}'"));
     }
 
-    // Sort by score descending
-    results.sort_by(|a, b| b.0.cmp(&a.0));
-
-    let mut output = format!("Found matches in {} files:\n\n", results.len());
-    for (score, filename, lines) in &results {
-        output.push_str(&format!(
-            "{filename} (relevance: {score}/{}):\n",
-            keywords.len()
-        ));
+    let mut output = format!("{prefix}Found matches in {} files:\n\n", results.len());
+    for (score, filename, lines) in results {
+        output.push_str(&format!("{filename} (relevance: {score:.1}):\n"));
         for line in lines {
             output.push_str(&format!("{line}\n"));
         }
         output.push('\n');
     }
-
     ToolResult::ok(output)
+}
+
+fn format_search_results(results: &[(f64, String, Vec<String>)], query: &str) -> ToolResult {
+    if results.is_empty() {
+        return ToolResult::ok(format!("No matches found for '{query}'"));
+    }
+
+    let mut output = format!("Found matches in {} files:\n\n", results.len());
+    for (score, filename, lines) in results {
+        output.push_str(&format!("{filename} (relevance: {score:.1}):\n"));
+        for line in lines {
+            output.push_str(&format!("{line}\n"));
+        }
+        output.push('\n');
+    }
+    ToolResult::ok(output)
+}
+
+async fn memory_search(dir: &Path, query: &str, mode: &str) -> ToolResult {
+    if !dir.exists() {
+        return ToolResult::ok("No memory files found (directory does not exist)".to_string());
+    }
+
+    if query.split_whitespace().next().is_none() {
+        return ToolResult::fail("Search query cannot be empty");
+    }
+
+    match mode {
+        "keyword" => {
+            let results = keyword_search(dir, query);
+            format_search_results(&results, query)
+        }
+        "semantic" => {
+            let results = semantic_search(dir, query).await;
+            format_search_results(&results, query)
+        }
+        _ => {
+            // "auto": keyword first, semantic fallback if 0 results
+            let results = keyword_search(dir, query);
+            if !results.is_empty() {
+                return format_search_results(&results, query);
+            }
+            let results = semantic_search(dir, query).await;
+            if results.is_empty() {
+                ToolResult::ok(format!("No matches found for '{query}'"))
+            } else {
+                format_search_results_with_prefix(&results, query, "(via semantic search) ")
+            }
+        }
+    }
 }
 
 fn memory_list(dir: &Path) -> ToolResult {
@@ -280,7 +498,7 @@ fn memory_list(dir: &Path) -> ToolResult {
         Err(e) => return ToolResult::fail(format!("Failed to read memory directory: {e}")),
     };
 
-    let mut files: Vec<(String, u64)> = Vec::new();
+    let mut files: Vec<(String, u64, String)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
@@ -288,8 +506,23 @@ fn memory_list(dir: &Path) -> ToolResult {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let size = path.metadata().map(|m| m.len()).unwrap_or(0);
-            files.push((name, size));
+            let meta = path.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let age = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|mt| {
+                    std::time::SystemTime::now()
+                        .duration_since(mt)
+                        .ok()
+                        .map(|d| d.as_secs() / 86400)
+                })
+                .map(|days| match days {
+                    0 => "today".to_string(),
+                    1 => "1 day ago".to_string(),
+                    d => format!("{d} days ago"),
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            files.push((name, size, age));
         }
     }
 
@@ -300,8 +533,8 @@ fn memory_list(dir: &Path) -> ToolResult {
     }
 
     let mut output = format!("Memory files ({}):\n", files.len());
-    for (name, size) in &files {
-        output.push_str(&format!("  {name} ({size} bytes)\n"));
+    for (name, size, age) in &files {
+        output.push_str(&format!("  {name} ({size} bytes, {age})\n"));
     }
 
     ToolResult::ok(output)

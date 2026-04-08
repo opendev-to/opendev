@@ -169,15 +169,16 @@ fn test_dedup_surfaced_files() {
     std::fs::write(memory_dir.join("b.md"), "Content of B").unwrap();
 
     // First call surfaces both
-    let filenames = vec!["a.md".to_string(), "b.md".to_string()];
-    let result1 = collector.format_selected_memories(&tmp_path, &filenames);
+    let now = std::time::SystemTime::now();
+    let selections = vec![("a.md".to_string(), now), ("b.md".to_string(), now)];
+    let result1 = collector.format_selected_memories(&tmp_path, &selections);
     assert!(result1.is_some());
     let content1 = result1.unwrap();
     assert!(content1.contains("Content of A"));
     assert!(content1.contains("Content of B"));
 
     // Second call with same files returns None (already surfaced)
-    let result2 = collector.format_selected_memories(&tmp_path, &filenames);
+    let result2 = collector.format_selected_memories(&tmp_path, &selections);
     assert!(result2.is_none());
 }
 
@@ -199,8 +200,8 @@ fn test_cumulative_byte_limit() {
     // Write a file that exceeds remaining budget
     std::fs::write(memory_dir.join("big.md"), "x".repeat(100)).unwrap();
 
-    let filenames = vec!["big.md".to_string()];
-    let result = collector.format_selected_memories(&tmp_path, &filenames);
+    let selections = vec![("big.md".to_string(), std::time::SystemTime::now())];
+    let result = collector.format_selected_memories(&tmp_path, &selections);
     // Should be None because 100 bytes > 10 remaining
     assert!(result.is_none());
 }

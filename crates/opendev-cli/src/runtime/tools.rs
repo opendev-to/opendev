@@ -38,6 +38,9 @@ pub(super) fn register_default_tools(
     let (ask_user_tx, ask_user_rx) = opendev_runtime::ask_user_channel();
     registry.register(Arc::new(AskUserTool::new().with_ask_tx(ask_user_tx)));
 
+    // Memory
+    registry.register(Arc::new(MemoryTool));
+
     // Scheduling & misc
     registry.register(Arc::new(ScheduleTool));
     registry.register(Arc::new(NotebookEditTool));
