@@ -477,10 +477,7 @@ where
         // SpawnTeammate always runs in background; SpawnSubagent does when
         // run_in_background=true. Both return "task_id:" on success.
         if tool_result.success
-            && matches!(
-                tool_name,
-                "SpawnTeammate" | "Agent" | "spawn_subagent"
-            )
+            && matches!(tool_name, "SpawnTeammate" | "Agent" | "spawn_subagent")
             && tool_result
                 .output
                 .as_deref()

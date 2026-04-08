@@ -110,7 +110,10 @@ impl TeamAddTaskTool {
         let teams = self.team_manager.list_teams();
         let filter = args.get("team_name").and_then(|v| v.as_str());
         if let Some(name) = filter {
-            teams.iter().find(|t| t.name == name).map(|t| t.name.clone())
+            teams
+                .iter()
+                .find(|t| t.name == name)
+                .map(|t| t.name.clone())
         } else {
             teams.first().map(|t| t.name.clone())
         }
@@ -181,9 +184,7 @@ impl BaseTool for TeamListTasksTool {
         let team_name = match team {
             Some(t) => t.name.clone(),
             None => {
-                return ToolResult::ok(
-                    "No active team. No task list available.".to_string(),
-                );
+                return ToolResult::ok("No active team. No task list available.".to_string());
             }
         };
 
@@ -198,34 +199,21 @@ impl BaseTool for TeamListTasksTool {
         };
 
         if tasks.is_empty() {
-            return ToolResult::ok(format!(
-                "Team '{team_name}' has no tasks yet."
-            ));
+            return ToolResult::ok(format!("Team '{team_name}' has no tasks yet."));
         }
 
         let filtered: Vec<_> = tasks
             .iter()
-            .filter(|t| {
-                status_filter == "all" || t.status.to_string() == status_filter
-            })
+            .filter(|t| status_filter == "all" || t.status.to_string() == status_filter)
             .collect();
 
         if filtered.is_empty() {
-            return ToolResult::ok(format!(
-                "No tasks with status '{status_filter}'."
-            ));
+            return ToolResult::ok(format!("No tasks with status '{status_filter}'."));
         }
 
-        let mut output = format!(
-            "Team '{}' tasks ({}):\n\n",
-            team_name,
-            filtered.len()
-        );
+        let mut output = format!("Team '{}' tasks ({}):\n\n", team_name, filtered.len());
         for task in &filtered {
-            let assignee = task
-                .assigned_to
-                .as_deref()
-                .unwrap_or("unassigned");
+            let assignee = task.assigned_to.as_deref().unwrap_or("unassigned");
             let deps = if task.dependencies.is_empty() {
                 String::new()
             } else {
@@ -323,7 +311,10 @@ impl BaseTool for TeamClaimTaskTool {
         let teams = self.team_manager.list_teams();
         let filter = args.get("team_name").and_then(|v| v.as_str());
         let team_name = if let Some(name) = filter {
-            teams.iter().find(|t| t.name == name).map(|t| t.name.clone())
+            teams
+                .iter()
+                .find(|t| t.name == name)
+                .map(|t| t.name.clone())
         } else {
             teams.first().map(|t| t.name.clone())
         };
@@ -417,7 +408,10 @@ impl BaseTool for TeamCompleteTaskTool {
         let teams = self.team_manager.list_teams();
         let filter = args.get("team_name").and_then(|v| v.as_str());
         let team_name = if let Some(name) = filter {
-            teams.iter().find(|t| t.name == name).map(|t| t.name.clone())
+            teams
+                .iter()
+                .find(|t| t.name == name)
+                .map(|t| t.name.clone())
         } else {
             teams.first().map(|t| t.name.clone())
         };

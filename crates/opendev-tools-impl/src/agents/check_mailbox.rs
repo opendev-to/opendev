@@ -91,10 +91,7 @@ impl BaseTool for CheckMailboxTool {
                 ToolResult::ok("No new messages in your mailbox.".to_string())
             }
             Ok(messages) => {
-                let mut output = format!(
-                    "{} new message(s) in your mailbox:\n\n",
-                    messages.len()
-                );
+                let mut output = format!("{} new message(s) in your mailbox:\n\n", messages.len());
                 for msg in &messages {
                     let type_label = match msg.msg_type {
                         MessageType::ShutdownRequest => "[SHUTDOWN REQUEST]",

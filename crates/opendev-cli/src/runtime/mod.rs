@@ -475,9 +475,9 @@ impl AgentRuntime {
                 Some(config.reasoning_effort.clone())
             })
             .with_debug_logger(Arc::clone(&debug_logger))
-            .with_worktree_manager(Arc::new(tokio::sync::Mutex::new(
-                WorktreeManager::new(working_dir),
-            ))),
+            .with_worktree_manager(Arc::new(tokio::sync::Mutex::new(WorktreeManager::new(
+                working_dir,
+            )))),
         ));
         tool_registry.register(Arc::new(TeamAddTaskTool::new(
             Arc::clone(&team_manager),
@@ -500,12 +500,10 @@ impl AgentRuntime {
                 Arc::clone(&team_task_list),
             ),
         ));
-        tool_registry.register(Arc::new(
-            opendev_tools_impl::agents::CheckMailboxTool::new(
-                Arc::clone(&team_manager),
-                "leader",
-            ),
-        ));
+        tool_registry.register(Arc::new(opendev_tools_impl::agents::CheckMailboxTool::new(
+            Arc::clone(&team_manager),
+            "leader",
+        )));
 
         // Register ToolSearchTool for on-demand schema fetching (deferred tools)
         tool_registry.register(Arc::new(ToolSearchTool::new(Arc::clone(&tool_registry))));
@@ -577,17 +575,20 @@ impl AgentRuntime {
                 }
 
                 // Group deferred tools by category for clarity
-                let subagent_tools: Vec<&str> = vec![
-                    "Agent", "spawn_subagent",
-                ];
+                let subagent_tools: Vec<&str> = vec!["Agent", "spawn_subagent"];
                 let team_tools: Vec<&str> = vec![
-                    "SpawnTeammate", "SendMessage", "TeamDelete",
-                    "TeamAddTask", "TeamListTasks", "TeamClaimTask",
-                    "TeamCompleteTask", "CheckMailbox", "CreateTeam",
+                    "SpawnTeammate",
+                    "SendMessage",
+                    "TeamDelete",
+                    "TeamAddTask",
+                    "TeamListTasks",
+                    "TeamClaimTask",
+                    "TeamCompleteTask",
+                    "CheckMailbox",
+                    "CreateTeam",
                 ];
-                let plan_todo_tools: Vec<&str> = vec![
-                    "PresentPlan", "WriteTodos", "UpdateTodo", "ListTodos",
-                ];
+                let plan_todo_tools: Vec<&str> =
+                    vec!["PresentPlan", "WriteTodos", "UpdateTodo", "ListTodos"];
                 let web_tools: Vec<&str> = vec!["WebFetch", "WebSearch"];
 
                 let mut lines = Vec::new();
@@ -606,7 +607,11 @@ impl AgentRuntime {
                     if !found.is_empty() {
                         lines.push(format!(
                             "- **{label}**: {}",
-                            found.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+                            found
+                                .iter()
+                                .map(|n| format!("`{n}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         ));
                     }
                 };
@@ -617,7 +622,8 @@ impl AgentRuntime {
                 add_group("Web", &web_tools);
 
                 // Remaining uncategorized tools
-                let categorized: std::collections::HashSet<&str> = subagent_tools.iter()
+                let categorized: std::collections::HashSet<&str> = subagent_tools
+                    .iter()
                     .chain(team_tools.iter())
                     .chain(plan_todo_tools.iter())
                     .chain(web_tools.iter())

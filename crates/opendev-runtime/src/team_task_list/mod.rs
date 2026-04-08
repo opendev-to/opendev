@@ -7,10 +7,10 @@
 //!
 //! Storage: `~/.opendev/tasks/{team-name}/tasks.json`
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::RwLock;
-use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 

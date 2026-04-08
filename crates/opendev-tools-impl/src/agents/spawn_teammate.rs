@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use opendev_runtime::{Mailbox, TeamManager, TeamMemberStatus};
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -169,7 +169,10 @@ impl BaseTool for SpawnTeammateTool {
         // Auto-create team if it doesn't exist
         if self.team_manager.get_team(team_name).is_none() {
             let session_id = ctx.session_id.as_deref().unwrap_or("unknown");
-            if let Err(e) = self.team_manager.create_team(team_name, "leader", session_id) {
+            if let Err(e) = self
+                .team_manager
+                .create_team(team_name, "leader", session_id)
+            {
                 return ToolResult::fail(format!("Failed to auto-create team: {e}"));
             }
             info!(team = %team_name, "Auto-created team");
@@ -189,7 +192,7 @@ impl BaseTool for SpawnTeammateTool {
                 None => {
                     return ToolResult::fail(
                         "New member requires 'agent_type' parameter (e.g., 'Explore', 'Planner').",
-                    )
+                    );
                 }
             };
             let task = match inline_task {
@@ -197,7 +200,7 @@ impl BaseTool for SpawnTeammateTool {
                 None => {
                     return ToolResult::fail(
                         "New member requires 'task' parameter with a detailed task description.",
-                    )
+                    );
                 }
             };
             let task_id = uuid::Uuid::new_v4().to_string()[..12].to_string();
@@ -280,7 +283,9 @@ impl BaseTool for SpawnTeammateTool {
         let session_dir = self.session_dir.clone();
         let team_manager = Arc::clone(&self.team_manager);
         let base_working_dir = if let Some(ref wd) = ctx.working_dir.to_str() {
-            if ctx.working_dir.as_os_str().is_empty() || ctx.working_dir == std::path::Path::new(".") {
+            if ctx.working_dir.as_os_str().is_empty()
+                || ctx.working_dir == std::path::Path::new(".")
+            {
                 self.working_dir.clone()
             } else {
                 wd.to_string()
@@ -293,7 +298,12 @@ impl BaseTool for SpawnTeammateTool {
         let working_dir = if use_worktree {
             if let Some(ref wt_mgr) = self.worktree_manager {
                 let wt_name = format!("{team_name}-{member_name}");
-                match wt_mgr.lock().await.create(Some(&wt_name), None, "HEAD").await {
+                match wt_mgr
+                    .lock()
+                    .await
+                    .create(Some(&wt_name), None, "HEAD")
+                    .await
+                {
                     Ok(info) => {
                         let wt_path = info.path.clone();
                         info!(
@@ -315,7 +325,9 @@ impl BaseTool for SpawnTeammateTool {
                     }
                 }
             } else {
-                tracing::warn!("worktree requested but WorktreeManager not configured, using shared working dir");
+                tracing::warn!(
+                    "worktree requested but WorktreeManager not configured, using shared working dir"
+                );
                 base_working_dir
             }
         } else {
@@ -331,7 +343,10 @@ impl BaseTool for SpawnTeammateTool {
         tokio::spawn(async move {
             let progress: Arc<dyn opendev_agents::SubagentProgressCallback> =
                 if let Some(ref tx) = event_tx {
-                    Arc::new(BackgroundProgressCallback::new(tx.clone(), task_id_clone.clone()))
+                    Arc::new(BackgroundProgressCallback::new(
+                        tx.clone(),
+                        task_id_clone.clone(),
+                    ))
                 } else {
                     Arc::new(opendev_agents::NoopProgressCallback)
                 };
@@ -359,7 +374,8 @@ impl BaseTool for SpawnTeammateTool {
             // Update team member status on completion
             let (success, summary, full_result) = match result {
                 Ok(ref run_result) => {
-                    let ok = run_result.agent_result.success && !run_result.agent_result.interrupted;
+                    let ok =
+                        run_result.agent_result.success && !run_result.agent_result.interrupted;
                     let summary = if run_result.agent_result.content.len() > 200 {
                         format!(
                             "{}...",
@@ -391,10 +407,9 @@ impl BaseTool for SpawnTeammateTool {
                         "title".to_string(),
                         serde_json::json!(format!("{member_name_owned} ({team_name_owned})")),
                     );
-                    session.metadata.insert(
-                        "team_name".to_string(),
-                        serde_json::json!(&team_name_owned),
-                    );
+                    session
+                        .metadata
+                        .insert("team_name".to_string(), serde_json::json!(&team_name_owned));
                     session.metadata.insert(
                         "member_name".to_string(),
                         serde_json::json!(&member_name_owned),
@@ -408,10 +423,7 @@ impl BaseTool for SpawnTeammateTool {
             }
 
             if let Some(ref tx) = event_tx {
-                let tool_call_count = result
-                    .as_ref()
-                    .map(|r| r.tool_call_count)
-                    .unwrap_or(0);
+                let tool_call_count = result.as_ref().map(|r| r.tool_call_count).unwrap_or(0);
                 let _ = tx.send(SubagentEvent::BackgroundCompleted {
                     task_id: task_id_clone,
                     success,
@@ -439,12 +451,7 @@ impl BaseTool for SpawnTeammateTool {
 }
 
 /// Build the full task string for a teammate, injecting team context.
-fn build_team_context(
-    team_name: &str,
-    member_name: &str,
-    leader_name: &str,
-    task: &str,
-) -> String {
+fn build_team_context(team_name: &str, member_name: &str, leader_name: &str, task: &str) -> String {
     format!(
         "You are **{member_name}**, a member of team **{team_name}**.\n\
          Team leader: {leader_name}\n\n\

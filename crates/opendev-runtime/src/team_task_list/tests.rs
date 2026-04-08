@@ -84,8 +84,11 @@ fn test_persistence() {
     let dir = TempDir::new().unwrap();
     {
         let list = TeamTaskList::new(dir.path().to_path_buf());
-        list.add_task("team-f", TeamTask::new("Persisted", "Should survive reload"))
-            .unwrap();
+        list.add_task(
+            "team-f",
+            TeamTask::new("Persisted", "Should survive reload"),
+        )
+        .unwrap();
     }
     // Re-open and check
     let list2 = TeamTaskList::new(dir.path().to_path_buf());
