@@ -73,6 +73,8 @@ pub const SYSTEM_MAIN_MAIN_SECURITY_POLICY: &str =
     include_str!("../../templates/system/main/main-security-policy.md");
 pub const SYSTEM_MAIN_MAIN_SUBAGENT_GUIDE: &str =
     include_str!("../../templates/system/main/main-subagent-guide.md");
+pub const SYSTEM_MAIN_MAIN_AGENT_TEAM_GUIDE: &str =
+    include_str!("../../templates/system/main/main-agent-team-guide.md");
 pub const SYSTEM_MAIN_MAIN_TASK_TRACKING: &str =
     include_str!("../../templates/system/main/main-task-tracking.md");
 pub const SYSTEM_MAIN_MAIN_TONE_AND_STYLE: &str =
@@ -262,6 +264,10 @@ pub static TEMPLATES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::
     m.insert(
         "system/main/main-subagent-guide.md",
         SYSTEM_MAIN_MAIN_SUBAGENT_GUIDE,
+    );
+    m.insert(
+        "system/main/main-agent-team-guide.md",
+        SYSTEM_MAIN_MAIN_AGENT_TEAM_GUIDE,
     );
     m.insert(
         "system/main/main-task-tracking.md",

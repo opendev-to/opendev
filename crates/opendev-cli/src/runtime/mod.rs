@@ -553,17 +553,62 @@ impl AgentRuntime {
                 if summaries.is_empty() {
                     return None;
                 }
-                let mut lines = Vec::with_capacity(summaries.len() + 3);
+
+                // Group deferred tools by category for clarity
+                let subagent_tools: Vec<&str> = vec![
+                    "Agent", "spawn_subagent",
+                ];
+                let team_tools: Vec<&str> = vec![
+                    "SpawnTeammate", "SendMessage", "TeamDelete",
+                    "TeamAddTask", "TeamListTasks", "CreateTeam",
+                ];
+                let plan_todo_tools: Vec<&str> = vec![
+                    "PresentPlan", "WriteTodos", "UpdateTodo", "ListTodos",
+                ];
+                let web_tools: Vec<&str> = vec!["WebFetch", "WebSearch"];
+
+                let mut lines = Vec::new();
                 lines.push(
                     "The following deferred tools are available via ToolSearch. \
-                     Call ToolSearch with the tool name to activate it before use:"
+                     Call `ToolSearch(query=\"select:ToolName\")` to activate before use."
                         .to_string(),
                 );
-                let mut sorted = summaries;
-                sorted.sort_by(|a, b| a.0.cmp(&b.0));
-                for (name, _desc) in &sorted {
-                    lines.push(format!("- {name}"));
+
+                // Categorized listing
+                let mut add_group = |label: &str, group: &[&str]| {
+                    let found: Vec<_> = group
+                        .iter()
+                        .filter(|n| summaries.iter().any(|(sn, _)| sn == **n))
+                        .collect();
+                    if !found.is_empty() {
+                        lines.push(format!(
+                            "- **{label}**: {}",
+                            found.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+                        ));
+                    }
+                };
+
+                add_group("Subagents", &subagent_tools);
+                add_group("Agent Teams", &team_tools);
+                add_group("Planning & Todos", &plan_todo_tools);
+                add_group("Web", &web_tools);
+
+                // Remaining uncategorized tools
+                let categorized: std::collections::HashSet<&str> = subagent_tools.iter()
+                    .chain(team_tools.iter())
+                    .chain(plan_todo_tools.iter())
+                    .chain(web_tools.iter())
+                    .copied()
+                    .collect();
+                let other: Vec<_> = summaries
+                    .iter()
+                    .filter(|(n, _)| !categorized.contains(n.as_str()))
+                    .map(|(n, _)| format!("`{n}`"))
+                    .collect();
+                if !other.is_empty() {
+                    lines.push(format!("- **Other**: {}", other.join(", ")));
                 }
+
                 Some(lines.join("\n"))
             }),
         );
