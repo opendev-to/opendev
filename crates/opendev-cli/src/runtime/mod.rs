@@ -474,7 +474,10 @@ impl AgentRuntime {
             } else {
                 Some(config.reasoning_effort.clone())
             })
-            .with_debug_logger(Arc::clone(&debug_logger)),
+            .with_debug_logger(Arc::clone(&debug_logger))
+            .with_worktree_manager(Arc::new(tokio::sync::Mutex::new(
+                WorktreeManager::new(working_dir),
+            ))),
         ));
         tool_registry.register(Arc::new(TeamAddTaskTool::new(
             Arc::clone(&team_manager),
@@ -484,6 +487,25 @@ impl AgentRuntime {
             Arc::clone(&team_manager),
             Arc::clone(&team_task_list),
         )));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::TeamClaimTaskTool::new(
+                Arc::clone(&team_manager),
+                Arc::clone(&team_task_list),
+                "leader",
+            ),
+        ));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::TeamCompleteTaskTool::new(
+                Arc::clone(&team_manager),
+                Arc::clone(&team_task_list),
+            ),
+        ));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::CheckMailboxTool::new(
+                Arc::clone(&team_manager),
+                "leader",
+            ),
+        ));
 
         // Register ToolSearchTool for on-demand schema fetching (deferred tools)
         tool_registry.register(Arc::new(ToolSearchTool::new(Arc::clone(&tool_registry))));
@@ -560,7 +582,8 @@ impl AgentRuntime {
                 ];
                 let team_tools: Vec<&str> = vec![
                     "SpawnTeammate", "SendMessage", "TeamDelete",
-                    "TeamAddTask", "TeamListTasks", "CreateTeam",
+                    "TeamAddTask", "TeamListTasks", "TeamClaimTask",
+                    "TeamCompleteTask", "CheckMailbox", "CreateTeam",
                 ];
                 let plan_todo_tools: Vec<&str> = vec![
                     "PresentPlan", "WriteTodos", "UpdateTodo", "ListTodos",

@@ -13,9 +13,11 @@ use std::sync::Arc;
 
 use opendev_runtime::{Mailbox, TeamManager, TeamMemberStatus};
 use opendev_tools_core::{BaseTool, ToolContext, ToolResult};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+use crate::WorktreeManager;
 
 use super::events::{BackgroundProgressCallback, SubagentEvent};
 
@@ -33,6 +35,7 @@ pub struct SpawnTeammateTool {
     parent_reasoning_effort: Option<String>,
     event_tx: Option<mpsc::UnboundedSender<SubagentEvent>>,
     debug_logger: Option<Arc<opendev_runtime::SessionDebugLogger>>,
+    worktree_manager: Option<Arc<Mutex<WorktreeManager>>>,
 }
 
 impl SpawnTeammateTool {
@@ -58,6 +61,7 @@ impl SpawnTeammateTool {
             parent_reasoning_effort: None,
             event_tx: None,
             debug_logger: None,
+            worktree_manager: None,
         }
     }
 
@@ -78,6 +82,11 @@ impl SpawnTeammateTool {
 
     pub fn with_debug_logger(mut self, logger: Arc<opendev_runtime::SessionDebugLogger>) -> Self {
         self.debug_logger = Some(logger);
+        self
+    }
+
+    pub fn with_worktree_manager(mut self, manager: Arc<Mutex<WorktreeManager>>) -> Self {
+        self.worktree_manager = Some(manager);
         self
     }
 }
@@ -125,6 +134,11 @@ impl BaseTool for SpawnTeammateTool {
                 "model": {
                     "type": "string",
                     "description": "Optional model override for this teammate."
+                },
+                "worktree": {
+                    "type": "boolean",
+                    "description": "If true, create an isolated git worktree for this teammate. Recommended when the teammate modifies files to prevent conflicts.",
+                    "default": false
                 }
             },
             "required": ["team_name", "member_name"]
@@ -147,6 +161,10 @@ impl BaseTool for SpawnTeammateTool {
         let model_override = args.get("model").and_then(|v| v.as_str());
         let inline_agent_type = args.get("agent_type").and_then(|v| v.as_str());
         let inline_task = args.get("task").and_then(|v| v.as_str());
+        let use_worktree = args
+            .get("worktree")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         // Auto-create team if it doesn't exist
         if self.team_manager.get_team(team_name).is_none() {
@@ -261,7 +279,7 @@ impl BaseTool for SpawnTeammateTool {
         let debug_logger_arc = self.debug_logger.clone();
         let session_dir = self.session_dir.clone();
         let team_manager = Arc::clone(&self.team_manager);
-        let working_dir = if let Some(ref wd) = ctx.working_dir.to_str() {
+        let base_working_dir = if let Some(ref wd) = ctx.working_dir.to_str() {
             if ctx.working_dir.as_os_str().is_empty() || ctx.working_dir == std::path::Path::new(".") {
                 self.working_dir.clone()
             } else {
@@ -269,6 +287,39 @@ impl BaseTool for SpawnTeammateTool {
             }
         } else {
             self.working_dir.clone()
+        };
+
+        // Create worktree if requested
+        let working_dir = if use_worktree {
+            if let Some(ref wt_mgr) = self.worktree_manager {
+                let wt_name = format!("{team_name}-{member_name}");
+                match wt_mgr.lock().await.create(Some(&wt_name), None, "HEAD").await {
+                    Ok(info) => {
+                        let wt_path = info.path.clone();
+                        info!(
+                            team = %team_name,
+                            member = %member_name,
+                            worktree = %wt_path,
+                            "Created worktree for teammate"
+                        );
+                        wt_path
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            team = %team_name,
+                            member = %member_name,
+                            error = %e,
+                            "Failed to create worktree, falling back to shared working dir"
+                        );
+                        base_working_dir
+                    }
+                }
+            } else {
+                tracing::warn!("worktree requested but WorktreeManager not configured, using shared working dir");
+                base_working_dir
+            }
+        } else {
+            base_working_dir
         };
         let team_name_owned = team_name.to_string();
         let member_name_owned = member_name.to_string();
@@ -400,13 +451,21 @@ fn build_team_context(
          ## Your Task\n\
          {task}\n\n\
          ## Team Collaboration Guidelines\n\
-         - Use `CheckMailbox` to read messages from your team leader and teammates.\n\
+         - Use `CheckMailbox(agent_name=\"{member_name}\")` to read messages from your team leader and teammates.\n\
            Check it periodically (every few steps) to stay in sync.\n\
          - Use `SendMessage` to send updates or ask for help. Always include `team_name: \"{team_name}\"`.\n\
          - Use `TeamListTasks` to see the shared task list.\n\
-         - Use `TeamClaimTask` to claim a pending task.\n\
+         - Use `TeamClaimTask(task_id=..., claimed_by=\"{member_name}\")` to claim a pending task.\n\
          - Use `TeamCompleteTask` to mark your task done when finished.\n\
          - If you receive a shutdown request via CheckMailbox, wrap up and stop.\n\n\
+         ## Progress Tracking\n\
+         - Use `TeamClaimTask` / `TeamCompleteTask` to track your progress on team tasks.\n\
+         - Use `SendMessage` to report detailed status updates to the team leader.\n\
+         - Do NOT call `TodoWrite` — only the team leader manages the master todo list.\n\
+         - If the leader asks you to update a specific todo, use `TaskUpdate(id, status=\"in_progress\")` or `TaskUpdate(id, status=\"completed\")`.\n\n\
+         ## Planning\n\
+         - For complex tasks, if the leader requests a plan via SendMessage, use `EnterPlanMode` to present it for approval.\n\
+         - For simple tasks, proceed directly with implementation.\n\n\
          Complete your task, then report your results via SendMessage to the leader.",
         member_name = member_name,
         team_name = team_name,

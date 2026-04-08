@@ -40,3 +40,12 @@ When a task involves many steps (especially after receiving a plan), **always us
 ## Formatting
 
 Todo content must be plain text — no markdown (no bold, italic, backticks, or links). The system strips markdown automatically, so formatting is wasted tokens.
+
+## Agent Team Integration
+
+When using Agent Teams, the TodoWrite list serves as the **leader's master plan**:
+
+- Create todos for the overall workflow (not per-teammate)
+- As teammates complete their work (reported via SendMessage), update the corresponding todo with `TaskUpdate`
+- Do NOT have teammates call TodoWrite — it replaces the entire list
+- Teammates track their own progress via the shared TeamTaskList (TeamClaimTask/TeamCompleteTask)

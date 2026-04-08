@@ -294,6 +294,10 @@ impl BaseTool for TeamClaimTaskTool {
                 "team_name": {
                     "type": "string",
                     "description": "Team name (optional when only one team is active)."
+                },
+                "claimed_by": {
+                    "type": "string",
+                    "description": "Your teammate name. Required when calling as a teammate so the task is assigned to you."
                 }
             },
             "required": ["task_id"]
@@ -310,6 +314,12 @@ impl BaseTool for TeamClaimTaskTool {
             None => return ToolResult::fail("Missing required parameter: task_id"),
         };
 
+        // Use explicit claimed_by from args if provided, fallback to self.agent_name
+        let claimer = args
+            .get("claimed_by")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.agent_name);
+
         let teams = self.team_manager.list_teams();
         let filter = args.get("team_name").and_then(|v| v.as_str());
         let team_name = if let Some(name) = filter {
@@ -323,10 +333,10 @@ impl BaseTool for TeamClaimTaskTool {
             None => return ToolResult::fail("No active team found."),
         };
 
-        match self.task_list.claim_task(&team_name, task_id, &self.agent_name) {
+        match self.task_list.claim_task(&team_name, task_id, claimer) {
             Ok(Some(task)) => ToolResult::ok(format!(
                 "Task claimed successfully.\n  ID: {}\n  Title: {}\n  Status: in_progress\n  Assigned to: {}",
-                task.id, task.title, self.agent_name
+                task.id, task.title, claimer
             )),
             Ok(None) => ToolResult::fail(format!(
                 "Task '{task_id}' could not be claimed. It may already be in progress, \

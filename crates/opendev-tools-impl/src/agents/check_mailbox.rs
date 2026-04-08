@@ -45,6 +45,10 @@ impl BaseTool for CheckMailboxTool {
                 "team_name": {
                     "type": "string",
                     "description": "Team name (optional when only one team is active)."
+                },
+                "agent_name": {
+                    "type": "string",
+                    "description": "Your teammate name. Required when calling as a teammate so the mailbox can be resolved correctly."
                 }
             }
         })
@@ -55,6 +59,12 @@ impl BaseTool for CheckMailboxTool {
         args: HashMap<String, serde_json::Value>,
         _ctx: &ToolContext,
     ) -> ToolResult {
+        // Use explicit agent_name from args if provided, fallback to self.agent_name
+        let agent_name = args
+            .get("agent_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.agent_name);
+
         // Resolve the team
         let teams = self.team_manager.list_teams();
         let team_name_filter = args.get("team_name").and_then(|v| v.as_str());
@@ -74,7 +84,7 @@ impl BaseTool for CheckMailboxTool {
         };
 
         let team_dir = self.team_manager.team_dir(&team.name);
-        let mailbox = Mailbox::new(&team_dir, &self.agent_name);
+        let mailbox = Mailbox::new(&team_dir, agent_name);
 
         match mailbox.receive() {
             Ok(messages) if messages.is_empty() => {

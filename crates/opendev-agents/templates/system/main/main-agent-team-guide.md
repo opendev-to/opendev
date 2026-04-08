@@ -138,8 +138,63 @@ This sends shutdown requests via mailbox and cleans up team files. Cannot be cal
 
 Each teammate is a full background agent that can use all standard tools (Bash, Read, Write, Edit, Grep, Glob). Additionally, they have team-specific capabilities described in their system prompt:
 
-- `CheckMailbox` — read messages from leader and other teammates
+- `CheckMailbox(agent_name="<their_name>")` — read messages from leader and other teammates
 - `SendMessage` — send updates or ask for help
 - `TeamListTasks` — view the shared task list
-- `TeamClaimTask` — claim a pending task
+- `TeamClaimTask(task_id=..., claimed_by="<their_name>")` — claim a pending task
 - `TeamCompleteTask` — mark a task as done or failed
+
+**Note**: `CheckMailbox` and `TeamClaimTask` require the teammate's name as a parameter (`agent_name` and `claimed_by` respectively) so the system routes to the correct mailbox and assigns the correct owner.
+
+## Task Tracking Integration
+
+Agent teams have TWO task systems that serve different purposes:
+
+1. **TodoWrite** (leader only) — the master progress tracker visible in the TUI panel.
+   Create your overall plan with TodoWrite, then delegate sub-tasks to teammates.
+
+2. **TeamTaskList** (shared) — the team's coordination layer.
+   Use TeamAddTask to create claimable work items. Teammates claim and complete them.
+
+**Workflow**:
+
+- Leader creates TodoWrite items for the overall plan
+- Leader creates TeamAddTask items for delegated work
+- Teammates use TeamClaimTask/TeamCompleteTask for team tasks
+- Leader uses TaskUpdate on TodoWrite items as teammates report completion via SendMessage
+
+**IMPORTANT**: Do NOT have teammates call `TodoWrite` — it replaces the entire list. Only the leader manages the master todo list. Teammates track their own progress via the shared TeamTaskList.
+
+## Worktree Isolation
+
+When multiple teammates modify files, use git worktrees to prevent conflicts:
+
+1. Before spawning, create a worktree:
+
+   ```text
+   Bash("git worktree add ~/.opendev/data/worktree/{name} -b worktree-{name}")
+   ```
+
+2. In the task description, specify the worktree path as the working directory
+3. Each teammate works in its own branch — no merge conflicts during execution
+4. After completion, merge results back to the main branch
+
+**Use worktrees when**: Multiple teammates modify overlapping files or the same codebase area.
+**Skip worktrees when**: Teammates only read files (e.g., research/exploration tasks).
+
+## Best Practices
+
+- **Team size**: 3-5 teammates is optimal. More than 5 increases coordination overhead without proportional benefit.
+- **Task granularity**: Give each teammate 1 focused task. If a teammate needs many sub-tasks, consider splitting into multiple teammates.
+- **File ownership**: Assign each teammate distinct files or directories. Overlapping file changes cause conflicts.
+- **Spawn in parallel**: Always spawn all teammates in a SINGLE response for concurrent execution.
+- **Monitor via mailbox**: Use SendMessage to check progress. Teammates check their mailbox every few steps.
+- **Start simple**: Begin with research and review tasks that have clear boundaries and no write conflicts before attempting parallel implementation.
+
+## Known Limitations
+
+- **No session resumption**: If the main session is interrupted, running teammates are lost. You must re-spawn them.
+- **No nested teams**: A teammate cannot spawn its own sub-team.
+- **Shared tool registry**: Teammates share the same tool set as the leader. Tool restrictions are defined by the agent type.
+- **TodoWrite is global**: There is one shared todo list. Only the leader should call TodoWrite. Teammates use TeamClaimTask/TeamCompleteTask instead.
+- **One team at a time**: Clean up the current team with TeamDelete before starting a new one.
