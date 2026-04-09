@@ -78,6 +78,7 @@ impl std::fmt::Display for WorktreeInfo {
 // ── WorktreeManager ─────────────────────────────────────────────────────────
 
 /// Manages git worktrees for a project.
+#[derive(Debug)]
 pub struct WorktreeManager {
     /// Root directory of the git repository.
     project_dir: PathBuf,

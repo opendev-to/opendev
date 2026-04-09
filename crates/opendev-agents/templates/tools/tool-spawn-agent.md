@@ -17,3 +17,5 @@ Usage notes:
 - The agent's outputs are not visible to the user — you must present findings in your response
 - Clearly tell the agent whether you expect it to write code or just do research
 - If the user specifies that they want you to run agents "in parallel", you MUST make all Agent tool calls in a single response
+
+**Note**: For tasks requiring inter-agent coordination, shared task lists, or dependent steps, use Agent Teams (`SpawnTeammate`) instead. Activate via `ToolSearch(query="select:SpawnTeammate,SendMessage")`.

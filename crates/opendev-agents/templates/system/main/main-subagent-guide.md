@@ -54,3 +54,22 @@ When **multiple subagents** return results (parallel execution), do NOT summariz
 - Synthesize all results into a single unified response organized by topic, not by agent
 - Merge overlapping findings and eliminate redundancy
 - Present the combined knowledge as if it came from one source
+
+## When to Use Agent Teams Instead
+
+If you recognize ANY of these patterns, activate team tools and use `SpawnTeammate` instead of `Agent`:
+
+- **Dependent tasks**: Agent B needs Agent A's output before it can start
+- **Shared findings**: Agents need to share discoveries with each other mid-flight
+- **Coordinated implementation**: Multiple agents edit related files and need to avoid conflicts
+- **Long-running parallel work**: 3+ agents working for extended periods where progress monitoring matters
+- **Task assignment**: Work items need to be claimed, tracked, and completed across agents
+
+To activate team tools:
+
+```text
+ToolSearch(query="select:SpawnTeammate,SendMessage,TeamDelete,TeamAddTask,TeamListTasks")
+```
+
+**Use subagents (`Agent`) when** tasks are independent and you just need results back.
+**Use agent teams (`SpawnTeammate`) when** agents need to share findings, coordinate, or work on dependent tasks.

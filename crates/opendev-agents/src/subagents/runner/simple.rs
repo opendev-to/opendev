@@ -498,8 +498,10 @@ impl SubagentRunner for SimpleReactRunner {
                     );
                 }
 
-                // Retry on transient failures (stream timeouts, rate limits, server errors)
-                if http_result.retryable || status == 429 || status >= 500 {
+                // Retry on transient failures (connection errors, rate limits, server errors)
+                if http_result.retryable || status == 0 || status == 429 || status >= 500 {
+                    // Brief backoff to avoid hammering the API
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     continue;
                 }
 
