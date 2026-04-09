@@ -164,9 +164,8 @@ impl App {
         self.state.dirty = true;
     }
 
-    pub(super) fn handle_snapshot_taken(&mut self, hash: String) {
-        self.state.undo_stack.push(hash);
-        self.state.redo_stack.clear();
+    pub(super) fn handle_turn_checkpointed(&mut self, undo_depth: usize) {
+        self.state.undo_depth = undo_depth;
     }
 
     pub(super) fn handle_undo_result(&mut self, success: bool, message: String) {

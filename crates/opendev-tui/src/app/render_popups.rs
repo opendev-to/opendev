@@ -552,7 +552,7 @@ impl App {
                     self.state.terminal_width, self.state.terminal_height
                 ),
             ),
-            ("Undo stack", format!("{}", self.state.undo_stack.len())),
+            ("Undo depth", format!("{}", self.state.undo_depth)),
         ];
 
         for (label, value) in &stats {
