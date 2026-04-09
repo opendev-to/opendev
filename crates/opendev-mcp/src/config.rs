@@ -165,9 +165,32 @@ pub fn save_config(config: &McpConfig, config_path: &Path) -> McpResult<()> {
     }
 
     let content = serde_json::to_string_pretty(config)?;
-    std::fs::write(config_path, content).map_err(|e| {
+
+    let tmp_path = config_path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true).mode(0o600);
+        let mut file = opts.open(&tmp_path).map_err(|e| {
+            McpError::Config(format!("Failed to open temp config {}: {}", tmp_path.display(), e))
+        })?;
+        std::io::Write::write_all(&mut file, content.as_bytes()).map_err(|e| {
+            McpError::Config(format!("Failed to write temp config {}: {}", tmp_path.display(), e))
+        })?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp_path, content).map_err(|e| {
+            McpError::Config(format!("Failed to write temp config {}: {}", tmp_path.display(), e))
+        })?;
+    }
+
+    std::fs::rename(&tmp_path, config_path).map_err(|e| {
         McpError::Config(format!(
-            "Failed to write MCP config to {}: {}",
+            "Failed to rename temp config to {}: {}",
             config_path.display(),
             e
         ))
