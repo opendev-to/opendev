@@ -202,6 +202,7 @@ impl TuiRunner {
     }
 
     /// Attach a Telegram remote control session.
+    #[allow(dead_code)]
     pub fn with_remote_control(
         mut self,
         event_tx: RemoteEventSender,
