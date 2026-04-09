@@ -402,49 +402,11 @@ pub async fn run_interactive(
             ));
     }
 
-    // Start Telegram channel in remote-control mode if configured
-    let _telegram_shutdown;
-    let mut tui_runner =
+    // Telegram remote-control is only enabled via `opendev remote`, not in
+    // normal TUI mode.  This avoids the remote session claim killing other
+    // TUI instances that share the same bot token.
+    let tui_runner =
         crate::tui_runner::TuiRunner::new(agent_runtime).with_initial_message(initial_message);
-
-    {
-        let tg_config = &config.channels.telegram;
-        if tg_config.as_ref().is_some_and(|tg| tg.enabled) {
-            let tg = tg_config.as_ref().unwrap();
-
-            let telegram_config = opendev_channels::telegram::TelegramConfig {
-                bot_token: tg.bot_token.clone(),
-                enabled: true,
-                group_mention_only: tg.group_mention_only,
-                dm_policy: match tg.dm_policy {
-                    opendev_models::DmPolicy::Open => opendev_channels::telegram::DmPolicy::Open,
-                    opendev_models::DmPolicy::Pairing => {
-                        opendev_channels::telegram::DmPolicy::Pairing
-                    }
-                    opendev_models::DmPolicy::Allowlist => {
-                        opendev_channels::telegram::DmPolicy::Allowlist
-                    }
-                },
-                allowed_users: tg.allowed_users.clone(),
-            };
-
-            match opendev_channels::telegram::start_telegram_remote(Some(&telegram_config)).await {
-                Ok((_adapter, shutdown, bridge, event_tx, command_rx)) => {
-                    info!("Telegram remote-control bot started");
-                    _telegram_shutdown = Some(shutdown);
-                    tui_runner = tui_runner.with_remote_control(event_tx, command_rx, bridge);
-                }
-                Err(e) => {
-                    tracing::warn!("Telegram remote channel not started: {e}");
-                    _telegram_shutdown = None;
-                }
-            }
-        } else {
-            _telegram_shutdown = None;
-        }
-    }
-
-    let tui_runner = tui_runner;
 
     match tui_runner.run(app_state).await {
         Ok(exit_info) => {

@@ -26,8 +26,10 @@ pub enum DmPolicy {
 pub struct TelegramChannelConfig {
     /// Bot token from @BotFather.
     pub bot_token: String,
-    /// Whether the Telegram channel is enabled.
-    #[serde(default = "default_true")]
+    /// Whether the Telegram channel is enabled (default: false).
+    /// Must be explicitly set to `true` to activate — prevents the remote
+    /// session claim from killing other TUI instances sharing the same token.
+    #[serde(default)]
     pub enabled: bool,
     /// Only respond in groups when @mentioned or replied to.
     #[serde(default = "default_true")]
