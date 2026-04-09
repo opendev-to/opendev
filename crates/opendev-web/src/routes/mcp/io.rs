@@ -80,7 +80,8 @@ pub(super) fn save_server_to_config(
         use std::os::unix::fs::OpenOptionsExt;
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create_new(true).mode(0o600);
-        let mut file = opts.open(&tmp_path)
+        let mut file = opts
+            .open(&tmp_path)
             .map_err(|e| WebError::Internal(format!("Failed to open temp config: {}", e)))?;
         std::io::Write::write_all(&mut file, content.as_bytes())
             .map_err(|e| WebError::Internal(format!("Failed to write temp config: {}", e)))?;
@@ -123,7 +124,8 @@ pub(super) fn remove_server_from_config(name: &str, config_path: &Path) -> Resul
             use std::os::unix::fs::OpenOptionsExt;
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create_new(true).mode(0o600);
-            let mut file = opts.open(&tmp_path)
+            let mut file = opts
+                .open(&tmp_path)
                 .map_err(|e| WebError::Internal(format!("Failed to open temp config: {}", e)))?;
             std::io::Write::write_all(&mut file, content.as_bytes())
                 .map_err(|e| WebError::Internal(format!("Failed to write temp config: {}", e)))?;
