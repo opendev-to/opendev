@@ -438,7 +438,7 @@ impl App {
             AppEvent::TeamDeleted { team_id } => self.handle_team_deleted(team_id),
 
             // Undo/Redo/Share events
-            AppEvent::SnapshotTaken { hash } => self.handle_snapshot_taken(hash),
+            AppEvent::TurnCheckpointed { undo_depth } => self.handle_turn_checkpointed(undo_depth),
             AppEvent::UndoResult { success, message } => self.handle_undo_result(success, message),
             AppEvent::RedoResult { success, message } => self.handle_redo_result(success, message),
             AppEvent::ShareResult { path } => self.handle_share_result(path),

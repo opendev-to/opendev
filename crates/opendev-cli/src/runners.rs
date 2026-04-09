@@ -56,6 +56,7 @@ pub async fn run_non_interactive(
             std::process::exit(1);
         }
     };
+    session_manager.write_project_marker(working_dir);
 
     // Handle session resume: --continue or --resume ID work in non-interactive mode too
     if continue_session {
@@ -168,7 +169,10 @@ pub async fn run_interactive(
     }
 
     let mut session_manager = match SessionManager::new(session_dir.clone()) {
-        Ok(sm) => sm.with_event_store(create_event_store(&session_dir)),
+        Ok(sm) => {
+            sm.write_project_marker(working_dir);
+            sm.with_event_store(create_event_store(&session_dir))
+        }
         Err(e) => {
             eprintln!("Failed to initialize session manager: {}", e);
             std::process::exit(1);

@@ -244,12 +244,10 @@ impl AgentRuntime {
         // Step 6: Set original task for completion nudge context
         self.react_loop.set_original_task(Some(query.to_string()));
 
-        // Step 6b: Snapshot workspace state before the react loop
-        let pre_snapshot = if let Ok(mut mgr) = self.snapshot_manager.lock() {
-            mgr.track()
-        } else {
-            None
-        };
+        // Step 6b: Begin a new checkpoint turn for file-level tracking
+        if let Ok(mut mgr) = self.checkpoint_manager.lock() {
+            mgr.begin_turn();
+        }
 
         // Step 7: Run the ReAct loop
         let pre_count = messages.len();
@@ -284,51 +282,43 @@ impl AgentRuntime {
             return Ok(result);
         }
 
-        // Step 7b: Snapshot workspace state after the react loop and compute file changes
-        if let Some(ref pre_hash) = pre_snapshot
-            && let Ok(mut mgr) = self.snapshot_manager.lock()
-        {
-            let post_hash = mgr.track();
-            if let Some(ref post_hash) = post_hash
-                && pre_hash != post_hash
-            {
-                let stats = mgr.diff_numstat(pre_hash, post_hash);
-                if !stats.is_empty() {
-                    let total_additions: u64 = stats.iter().map(|s| s.additions).sum();
-                    let total_deletions: u64 = stats.iter().map(|s| s.deletions).sum();
-                    let total_files = stats.len();
+        // Step 7b: End checkpoint turn and compute file changes from captured snapshots
+        if let Ok(mut mgr) = self.checkpoint_manager.lock() {
+            let stats = mgr.end_turn_with_stats();
+            if !stats.is_empty() {
+                let total_additions: u64 = stats.iter().map(|s| s.additions).sum();
+                let total_deletions: u64 = stats.iter().map(|s| s.deletions).sum();
+                let total_files = stats.len();
 
-                    // Populate session file_changes
-                    if let Some(session) = self.session_manager.current_session_mut() {
-                        use opendev_models::file_change::{FileChange, FileChangeType};
-                        for stat in &stats {
-                            let change_type = if stat.additions > 0 && stat.deletions == 0 {
-                                // Could be a new file or pure addition
-                                FileChangeType::Created
-                            } else if stat.additions == 0 && stat.deletions > 0 {
-                                FileChangeType::Deleted
-                            } else {
-                                FileChangeType::Modified
-                            };
-                            let mut fc = FileChange::new(change_type, stat.file_path.clone());
-                            fc.lines_added = stat.additions;
-                            fc.lines_removed = stat.deletions;
-                            session.add_file_change(fc);
-                        }
+                // Populate session file_changes
+                if let Some(session) = self.session_manager.current_session_mut() {
+                    use opendev_models::file_change::{FileChange, FileChangeType};
+                    for stat in &stats {
+                        let change_type = if stat.additions > 0 && stat.deletions == 0 {
+                            FileChangeType::Created
+                        } else if stat.additions == 0 && stat.deletions > 0 {
+                            FileChangeType::Deleted
+                        } else {
+                            FileChangeType::Modified
+                        };
+                        let mut fc = FileChange::new(change_type, stat.file_path.clone());
+                        fc.lines_added = stat.additions;
+                        fc.lines_removed = stat.deletions;
+                        session.add_file_change(fc);
                     }
-
-                    // Emit file change callback to TUI
-                    if let Some(cb) = event_callback {
-                        cb.on_file_changed(total_files, total_additions, total_deletions);
-                    }
-
-                    info!(
-                        files = total_files,
-                        additions = total_additions,
-                        deletions = total_deletions,
-                        "File changes detected after query"
-                    );
                 }
+
+                // Emit file change callback to TUI
+                if let Some(cb) = event_callback {
+                    cb.on_file_changed(total_files, total_additions, total_deletions);
+                }
+
+                info!(
+                    files = total_files,
+                    additions = total_additions,
+                    deletions = total_deletions,
+                    "File changes detected after query"
+                );
             }
         }
 

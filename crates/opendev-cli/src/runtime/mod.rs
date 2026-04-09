@@ -5,6 +5,7 @@
 
 pub mod background;
 mod channel_executor;
+mod checkpoint_middleware;
 mod query;
 mod tools;
 
@@ -76,8 +77,8 @@ pub struct AgentRuntime {
     pub(super) skill_loader: Arc<Mutex<opendev_agents::SkillLoader>>,
     /// LLM-based topic detector for auto-generating session titles.
     pub(super) topic_detector: TopicDetector,
-    /// Shadow git snapshot manager for tracking file changes per query.
-    pub(super) snapshot_manager: Arc<Mutex<opendev_history::SnapshotManager>>,
+    /// File-level checkpoint manager for per-turn undo and file change tracking.
+    pub(super) checkpoint_manager: Arc<Mutex<opendev_history::FileCheckpointManager>>,
     /// Per-session debug logger for LLM interactions (noop when debug_logging is off).
     pub debug_logger: Arc<SessionDebugLogger>,
     /// Prompt composer for per-turn system prompt composition with section caching.
@@ -106,6 +107,28 @@ impl AgentRuntime {
         let overflow_dir = working_dir.join(".opendev").join("tool-output");
         // Clean up overflow files older than 7 days on startup.
         opendev_tools_core::cleanup_overflow_dir(&overflow_dir);
+
+        // Background cleanup: remove stale project entries and old checkpoints.
+        // Also cleans up legacy snapshot dirs from the old git-based system.
+        let cleanup_paths = opendev_config::Paths::new(Some(working_dir.to_path_buf()));
+        std::thread::spawn(move || {
+            let projects_dir = cleanup_paths.global_projects_dir();
+            opendev_history::SessionListing::cleanup_stale_projects(&projects_dir);
+            opendev_history::FileCheckpointManager::cleanup_old_sessions();
+            // Legacy: clean up old git shadow snapshot dirs
+            opendev_history::SnapshotManager::cleanup_all();
+        });
+
+        // Create file checkpoint manager for per-turn undo
+        let session_id = session_manager
+            .current_session()
+            .map(|s| s.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let checkpoint_manager = Arc::new(Mutex::new(opendev_history::FileCheckpointManager::new(
+            &session_id,
+            working_dir,
+        )));
+
         let tool_registry = Arc::new(ToolRegistry::with_overflow_dir(overflow_dir));
         let (todo_manager, mut channel_receivers, tool_approval_tx) =
             tools::register_default_tools(&tool_registry);
@@ -168,6 +191,11 @@ impl AgentRuntime {
             tool_count = tool_registry.tool_names().len(),
             "Registered default tools (before subagent)"
         );
+
+        // Register file checkpoint middleware for pre-edit snapshots
+        tool_registry.add_middleware(Box::new(
+            checkpoint_middleware::FileCheckpointMiddleware::new(checkpoint_manager.clone()),
+        ));
 
         let handler_registry = HandlerRegistry::new();
         let query_enhancer = QueryEnhancer::new(working_dir.to_path_buf());
@@ -661,9 +689,7 @@ impl AgentRuntime {
             mcp_manager: None,
             skill_loader,
             topic_detector,
-            snapshot_manager: Arc::new(Mutex::new(opendev_history::SnapshotManager::new(
-                &working_dir.to_string_lossy(),
-            ))),
+            checkpoint_manager,
             debug_logger,
             prompt_composer: Mutex::new(prompt_composer),
             prompt_context: Mutex::new(prompt_context),
