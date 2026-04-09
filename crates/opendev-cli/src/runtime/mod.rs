@@ -106,6 +106,16 @@ impl AgentRuntime {
         let overflow_dir = working_dir.join(".opendev").join("tool-output");
         // Clean up overflow files older than 7 days on startup.
         opendev_tools_core::cleanup_overflow_dir(&overflow_dir);
+
+        // Background cleanup: gc snapshot repos and remove stale project entries.
+        // This runs in a background thread so it doesn't slow down startup.
+        let cleanup_paths = opendev_config::Paths::new(Some(working_dir.to_path_buf()));
+        std::thread::spawn(move || {
+            let projects_dir = cleanup_paths.global_projects_dir();
+            opendev_history::SessionListing::cleanup_stale_projects(&projects_dir);
+            opendev_history::SnapshotManager::cleanup_all();
+        });
+
         let tool_registry = Arc::new(ToolRegistry::with_overflow_dir(overflow_dir));
         let (todo_manager, mut channel_receivers, tool_approval_tx) =
             tools::register_default_tools(&tool_registry);

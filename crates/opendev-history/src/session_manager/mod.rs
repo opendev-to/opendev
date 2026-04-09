@@ -61,6 +61,15 @@ impl SessionManager {
         &self.session_dir
     }
 
+    /// Write a marker file recording the original working directory.
+    ///
+    /// Used by cleanup routines to detect stale project entries
+    /// whose original working directory has been deleted.
+    pub fn write_project_marker(&self, working_dir: &Path) {
+        let marker = self.session_dir.join("OPENDEV_PROJECT_PATH");
+        let _ = std::fs::write(&marker, working_dir.to_string_lossy().as_bytes());
+    }
+
     /// Get the current session (if any).
     pub fn current_session(&self) -> Option<&Session> {
         self.current_session.as_ref()
