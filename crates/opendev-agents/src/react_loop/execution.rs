@@ -109,10 +109,6 @@ impl ReactLoop {
     {
         let mut state = LoopState::new(&tool_context.working_dir);
 
-        // Cache tool schemas as Value::Array on first entry to avoid
-        // re-cloning &[Value] into json!() on every iteration.
-        state.cached_tool_schemas = Some(Value::Array(tool_schemas.to_vec()));
-
         // Tool schema deferral: if core tools are marked, only send core +
         // activated tool schemas to the LLM. This mirrors Claude Code's
         // ToolSearch pattern, reducing input tokens from ~13k to ~6k.

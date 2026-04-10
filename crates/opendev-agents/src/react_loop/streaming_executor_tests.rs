@@ -3,9 +3,9 @@
 use super::*;
 use std::sync::Arc;
 
-/// Test that FunctionCallStart events are queued correctly.
+/// Test that FunctionCallStart events are stored by index.
 #[test]
-fn test_function_call_start_queued() {
+fn test_function_call_start_stored() {
     let registry = Arc::new(ToolRegistry::new());
     let context = ToolContext {
         working_dir: std::path::PathBuf::from("/tmp"),
@@ -20,11 +20,11 @@ fn test_function_call_start_queued() {
         name: "Read".to_string(),
     });
 
-    // Verify it was queued
-    let queue = executor.completed_calls.lock().unwrap();
-    assert_eq!(queue.len(), 1);
-    assert_eq!(queue[0].call_id, "call_123");
-    assert_eq!(queue[0].name, "Read");
+    // Verify it was stored by index
+    let map = executor.call_metadata.lock().unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map[&0].call_id, "call_123");
+    assert_eq!(map[&0].name, "Read");
 }
 
 /// Test that write tools get pre-parsed args instead of early execution.

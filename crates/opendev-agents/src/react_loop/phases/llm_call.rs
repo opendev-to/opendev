@@ -54,14 +54,10 @@ pub(in crate::react_loop) async fn execute_llm_call<M>(
 where
     M: TaskMonitor + ?Sized,
 {
-    // Build payload with cached tool schemas when available, falling back to
-    // fresh clone. The caller caches `Value::Array(tool_schemas)` in LoopState
-    // to avoid re-cloning every iteration.
-    let mut payload = if let Some(ref cached) = state.cached_tool_schemas {
-        caller.build_action_payload_with_cached_tools(messages, cached.clone())
-    } else {
-        caller.build_action_payload(messages, tool_schemas)
-    };
+    // Build payload from the (possibly deferral-filtered) tool_schemas slice.
+    // Tool schema deferral filters the set each iteration based on
+    // activated_tools, so caching the full set would bypass deferral.
+    let mut payload = caller.build_action_payload(messages, tool_schemas);
     if let Some(ref override_model) = state.skill_model_override {
         payload["model"] = serde_json::json!(override_model);
         debug!(iteration = state.iteration, model = %override_model, "Using skill model override");

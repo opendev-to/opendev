@@ -5,7 +5,7 @@
 //! tool execution with the remaining LLM generation, reducing per-iteration
 //! latency by 30-60% on tool-heavy turns.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use opendev_http::streaming::{StreamCallback, StreamEvent};
@@ -26,13 +26,11 @@ pub(super) struct EarlyToolResult {
     pub duration_ms: u64,
 }
 
-/// A completed tool call parsed from stream events, ready for execution.
+/// Metadata from a FunctionCallStart event, keyed by stream index.
 #[derive(Debug, Clone)]
-struct CompletedToolCall {
+struct ToolCallMeta {
     call_id: String,
     name: String,
-    #[allow(dead_code)]
-    arguments: String,
 }
 
 /// Pre-parsed arguments for write tools (avoids re-parsing after streaming).
@@ -48,10 +46,11 @@ pub(super) struct PreparsedArgs {
 /// execute it immediately. Write tools have their arguments pre-parsed
 /// and stored for later use.
 pub(super) struct StreamingToolExecutor {
-    /// Queue of completed tool calls from stream events.
-    completed_calls: Arc<Mutex<VecDeque<CompletedToolCall>>>,
+    /// Metadata from FunctionCallStart events, keyed by stream index.
+    /// Used to look up call_id/name when FunctionCallDone arrives.
+    call_metadata: Arc<Mutex<HashMap<usize, ToolCallMeta>>>,
     /// Handles to running early-execution tasks.
-    running_tasks: Arc<Mutex<Vec<JoinHandle<EarlyToolResult>>>>,
+    running_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Completed early results, keyed by tool_call_id.
     finished_results: Arc<Mutex<HashMap<String, EarlyToolResult>>>,
     /// Pre-parsed args for write tools (keyed by tool_call_id).
@@ -79,7 +78,7 @@ impl StreamingToolExecutor {
         cancel: Option<CancellationToken>,
     ) -> Self {
         Self {
-            completed_calls: Arc::new(Mutex::new(VecDeque::new())),
+            call_metadata: Arc::new(Mutex::new(HashMap::new())),
             running_tasks: Arc::new(Mutex::new(Vec::new())),
             finished_results: Arc::new(Mutex::new(HashMap::new())),
             preparsed_write_args: Arc::new(Mutex::new(HashMap::new())),
@@ -119,7 +118,9 @@ impl StreamingToolExecutor {
             let tc_id = call_id.clone();
 
             let handle = tokio::spawn(async move {
-                let _permit = sem.acquire().await;
+                // Acquire semaphore permit to cap concurrency; ignore error
+                // (only happens if semaphore is closed, which we never do).
+                let _permit = sem.acquire().await.ok();
                 let start = std::time::Instant::now();
 
                 // Parse arguments
@@ -142,32 +143,15 @@ impl StreamingToolExecutor {
 
                 let early_result = EarlyToolResult {
                     call_id: tc_id.clone(),
-                    tool_name: tool_name.clone(),
+                    tool_name,
                     result,
                     duration_ms,
                 };
 
-                // Store in finished results
+                // Store in finished results for take_result()
                 if let Ok(mut map) = finished.lock() {
-                    map.insert(
-                        tc_id.clone(),
-                        EarlyToolResult {
-                            call_id: tc_id.clone(),
-                            tool_name: tool_name.clone(),
-                            result: opendev_tools_core::ToolResult {
-                                success: early_result.result.success,
-                                output: early_result.result.output.clone(),
-                                error: early_result.result.error.clone(),
-                                metadata: early_result.result.metadata.clone(),
-                                duration_ms: Some(duration_ms),
-                                llm_suffix: early_result.result.llm_suffix.clone(),
-                            },
-                            duration_ms,
-                        },
-                    );
+                    map.insert(tc_id, early_result);
                 }
-
-                early_result
             });
 
             if let Ok(mut tasks) = self.running_tasks.lock() {
@@ -222,7 +206,7 @@ impl StreamingToolExecutor {
     /// Should be called after streaming ends but before consuming results,
     /// to ensure all early-started tools have finished.
     pub async fn wait_for_completion(&self) {
-        let handles: Vec<JoinHandle<EarlyToolResult>> = {
+        let handles: Vec<JoinHandle<()>> = {
             let mut tasks = match self.running_tasks.lock() {
                 Ok(t) => t,
                 Err(_) => return,
@@ -231,11 +215,8 @@ impl StreamingToolExecutor {
         };
 
         for handle in handles {
-            match handle.await {
-                Ok(_) => {} // Result already stored in finished_results via the task
-                Err(e) => {
-                    warn!(error = %e, "Early tool execution task panicked");
-                }
+            if let Err(e) = handle.await {
+                warn!(error = %e, "Early tool execution task panicked");
             }
         }
     }
@@ -260,35 +241,35 @@ impl StreamingToolExecutor {
 
 impl StreamCallback for StreamingToolExecutor {
     fn on_event(&self, event: &StreamEvent) {
-        // We track FunctionCallStart to build up the call_id → name mapping,
-        // and FunctionCallDone to trigger execution.
+        // We track FunctionCallStart to build up the index → (call_id, name)
+        // mapping, and FunctionCallDone to trigger execution.
         match event {
-            StreamEvent::FunctionCallDone {
-                index: _,
-                arguments,
-            } => {
-                // FunctionCallDone doesn't carry call_id/name directly.
-                // We need to get them from the completed_calls queue which
-                // was populated by FunctionCallStart events.
-                if let Ok(mut queue) = self.completed_calls.lock() {
-                    // Match by order: FunctionCallStart always precedes FunctionCallDone
-                    if let Some(call) = queue.pop_front() {
-                        self.handle_function_done(call.call_id, call.name, arguments.clone());
-                    }
-                }
-            }
             StreamEvent::FunctionCallStart {
-                index: _,
+                index,
                 call_id,
                 name,
             } => {
-                // Queue the metadata for when FunctionCallDone arrives
-                if let Ok(mut queue) = self.completed_calls.lock() {
-                    queue.push_back(CompletedToolCall {
-                        call_id: call_id.clone(),
-                        name: name.clone(),
-                        arguments: String::new(), // filled by FunctionCallDone
-                    });
+                // Store metadata keyed by stream index for later lookup.
+                if let Ok(mut map) = self.call_metadata.lock() {
+                    map.insert(
+                        *index,
+                        ToolCallMeta {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                        },
+                    );
+                }
+            }
+            StreamEvent::FunctionCallDone { index, arguments } => {
+                // Look up call_id/name by index (not FIFO order) so
+                // interleaved Done events are matched correctly.
+                let meta = self
+                    .call_metadata
+                    .lock()
+                    .ok()
+                    .and_then(|mut map| map.remove(index));
+                if let Some(meta) = meta {
+                    self.handle_function_done(meta.call_id, meta.name, arguments.clone());
                 }
             }
             _ => {} // Ignore text, reasoning, usage events
