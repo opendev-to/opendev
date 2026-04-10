@@ -158,6 +158,14 @@ impl BaseTool for SpawnSubagentTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Session
+    }
+
+    fn skip_dedup(&self) -> bool {
+        true
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

@@ -58,6 +58,26 @@ impl BaseTool for WebSearchTool {
         })
     }
 
+    fn is_read_only(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn is_concurrent_safe(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Web
+    }
+
+    fn truncation_rule(&self) -> Option<opendev_tools_core::TruncationRule> {
+        Some(opendev_tools_core::TruncationRule::head(10000))
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("search the web for information")
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

@@ -67,6 +67,10 @@ impl BaseTool for AskUserTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Meta
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

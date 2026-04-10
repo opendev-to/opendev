@@ -92,6 +92,14 @@ impl BaseTool for MultiEditTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Write
+    }
+
+    fn interrupt_behavior(&self) -> opendev_tools_core::InterruptBehavior {
+        opendev_tools_core::InterruptBehavior::Block
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

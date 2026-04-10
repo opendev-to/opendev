@@ -36,6 +36,18 @@ impl BaseTool for ListTodosTool {
         })
     }
 
+    fn is_read_only(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn is_concurrent_safe(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Meta
+    }
+
     async fn execute(
         &self,
         _args: HashMap<String, serde_json::Value>,

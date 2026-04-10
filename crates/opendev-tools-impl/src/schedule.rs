@@ -77,6 +77,14 @@ impl BaseTool for ScheduleTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Automation
+    }
+
+    fn should_defer(&self) -> bool {
+        true
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

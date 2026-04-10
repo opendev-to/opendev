@@ -181,6 +181,26 @@ impl BaseTool for GrepTool {
         })
     }
 
+    fn is_read_only(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn is_concurrent_safe(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Read
+    }
+
+    fn truncation_rule(&self) -> Option<opendev_tools_core::TruncationRule> {
+        Some(opendev_tools_core::TruncationRule::head(10000))
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("search file contents with regex pattern")
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,
