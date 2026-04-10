@@ -165,7 +165,50 @@ pub fn save_config(config: &McpConfig, config_path: &Path) -> McpResult<()> {
     }
 
     let content = serde_json::to_string_pretty(config)?;
-    std::fs::write(config_path, content).map_err(|e| {
+
+    // Atomic write: write to .tmp then rename, enforcing strict permissions
+    let tmp_path = config_path.with_extension(format!("{}.json.tmp", uuid::Uuid::new_v4()));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true).mode(0o600);
+
+        let mut file = opts.open(&tmp_path).map_err(|e| {
+            McpError::Config(format!(
+                "Failed to write MCP config to {}: {}",
+                tmp_path.display(),
+                e
+            ))
+        })?;
+        std::io::Write::write_all(&mut file, content.as_bytes()).map_err(|e| {
+            McpError::Config(format!(
+                "Failed to write MCP config to {}: {}",
+                tmp_path.display(),
+                e
+            ))
+        })?;
+        file.sync_all().map_err(|e| {
+            McpError::Config(format!(
+                "Failed to sync MCP config to {}: {}",
+                tmp_path.display(),
+                e
+            ))
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp_path, &content).map_err(|e| {
+            McpError::Config(format!(
+                "Failed to write MCP config to {}: {}",
+                tmp_path.display(),
+                e
+            ))
+        })?;
+    }
+
+    std::fs::rename(&tmp_path, config_path).map_err(|e| {
         McpError::Config(format!(
             "Failed to write MCP config to {}: {}",
             config_path.display(),

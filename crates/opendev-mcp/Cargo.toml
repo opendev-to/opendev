@@ -15,6 +15,7 @@ async-trait = { workspace = true }
 reqwest = { workspace = true }
 regex = { workspace = true }
 opendev-models = { workspace = true }
+uuid = { workspace = true }
 opendev-config = { workspace = true }
 futures = { workspace = true }
 
