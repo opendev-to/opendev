@@ -873,7 +873,20 @@ where
         })
         .collect();
 
-    let batches = ParallelPolicy::partition(&parallel_calls);
+    // Look up tool instances for input-dependent concurrency decisions
+    let tool_instances: Vec<_> = parallel_calls
+        .iter()
+        .filter_map(|tc| tool_registry.get(&tc.name))
+        .collect();
+    let tool_refs: Vec<&dyn opendev_tools_core::BaseTool> =
+        tool_instances.iter().map(|t| t.as_ref()).collect();
+
+    let batches = if tool_refs.len() == parallel_calls.len() {
+        ParallelPolicy::partition_with_tools(&parallel_calls, &tool_refs)
+    } else {
+        // Fallback if some tools weren't found in registry
+        ParallelPolicy::partition(&parallel_calls)
+    };
 
     // If no batch has >1 element, fall through to sequential execution
     if !ParallelPolicy::has_parallel_batches(&batches) {
