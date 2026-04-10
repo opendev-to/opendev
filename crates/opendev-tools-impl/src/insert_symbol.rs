@@ -342,6 +342,14 @@ impl BaseTool for InsertBeforeSymbolTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Symbol
+    }
+
+    fn interrupt_behavior(&self) -> opendev_tools_core::InterruptBehavior {
+        opendev_tools_core::InterruptBehavior::Block
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,
@@ -389,6 +397,14 @@ impl BaseTool for InsertAfterSymbolTool {
             },
             "required": ["file_path", "symbol_name", "content"]
         })
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Symbol
+    }
+
+    fn interrupt_behavior(&self) -> opendev_tools_core::InterruptBehavior {
+        opendev_tools_core::InterruptBehavior::Block
     }
 
     async fn execute(

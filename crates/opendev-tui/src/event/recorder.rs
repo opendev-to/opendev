@@ -288,9 +288,9 @@ impl RecordedEvent {
                 "SetBackgroundAgentToken".to_string(),
                 serde_json::json!({"task_id": task_id}),
             ),
-            AppEvent::SnapshotTaken { hash } => (
-                "SnapshotTaken".to_string(),
-                serde_json::json!({"hash": hash}),
+            AppEvent::TurnCheckpointed { undo_depth } => (
+                "TurnCheckpointed".to_string(),
+                serde_json::json!({"undo_depth": undo_depth}),
             ),
             AppEvent::UndoResult { success, message } => (
                 "UndoResult".to_string(),

@@ -1,11 +1,20 @@
 //! Parallel execution policy for tool calls.
 //!
 //! Determines which tool calls can be safely executed in parallel and partitions
-//! them into ordered execution groups.
+//! them into ordered execution groups. Uses `BaseTool::is_concurrent_safe()` to
+//! make input-dependent decisions (e.g., `Bash` with `ls` is safe, `Bash` with
+//! `rm` is not).
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::traits::BaseTool;
+
 /// Tools that are always safe to parallelize (read-only operations).
+///
+/// **Deprecated:** This hardcoded list is kept as a fallback for the legacy
+/// `partition()` method. New callers should use `partition_with_tools()` which
+/// consults `BaseTool::is_concurrent_safe()` instead.
 pub fn read_only_tools() -> HashSet<&'static str> {
     HashSet::from([
         // File reading
@@ -52,19 +61,67 @@ impl ToolCall {
 
 /// Partitions tool calls into ordered execution batches.
 ///
-/// Consecutive read-only tools are grouped into a single batch (safe to run in
-/// parallel). Non-read-only tools each get their own batch (run serially).
-/// Batches execute in strict positional order, preserving the LLM's intended
-/// tool call sequence.
+/// Consecutive concurrent-safe tools are grouped into a single batch (safe to
+/// run in parallel). Non-concurrent tools each get their own batch (run
+/// serially). Batches execute in strict positional order, preserving the LLM's
+/// intended tool call sequence.
 ///
 /// Example: `[Read, Grep, Edit, Read, Glob]` → `[[0,1], [2], [3,4]]`
 pub struct ParallelPolicy;
 
 impl ParallelPolicy {
-    /// Partition tool calls into ordered execution batches.
+    /// Partition tool calls using `BaseTool::is_concurrent_safe()`.
     ///
-    /// Each batch can be executed in parallel internally. Batches must execute
-    /// in order. Batches with a single element run serially.
+    /// This is the preferred method — it consults each tool's trait method,
+    /// enabling input-dependent concurrency decisions.
+    pub fn partition_with_tools(
+        tool_calls: &[ToolCall],
+        tools: &[&dyn BaseTool],
+    ) -> Vec<Vec<usize>> {
+        if tool_calls.len() <= 1 {
+            return if tool_calls.is_empty() {
+                vec![]
+            } else {
+                vec![vec![0]]
+            };
+        }
+
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut current_concurrent: Vec<usize> = Vec::new();
+
+        for (i, tc) in tool_calls.iter().enumerate() {
+            let args: HashMap<String, serde_json::Value> =
+                if let Some(obj) = tc.arguments.as_object() {
+                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                } else {
+                    HashMap::new()
+                };
+
+            let is_safe = tools
+                .get(i)
+                .map(|t| t.is_concurrent_safe(&args))
+                .unwrap_or(false);
+
+            if is_safe {
+                current_concurrent.push(i);
+            } else {
+                if !current_concurrent.is_empty() {
+                    groups.push(std::mem::take(&mut current_concurrent));
+                }
+                groups.push(vec![i]);
+            }
+        }
+
+        if !current_concurrent.is_empty() {
+            groups.push(current_concurrent);
+        }
+
+        groups
+    }
+
+    /// Partition tool calls using the hardcoded read-only tool list.
+    ///
+    /// **Deprecated:** Prefer `partition_with_tools()` which uses trait methods.
     pub fn partition(tool_calls: &[ToolCall]) -> Vec<Vec<usize>> {
         if tool_calls.len() <= 1 {
             return if tool_calls.is_empty() {

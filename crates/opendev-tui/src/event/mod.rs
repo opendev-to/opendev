@@ -243,8 +243,8 @@ pub enum AppEvent {
     TeamDeleted { team_id: String },
 
     // -- Undo/Redo events --
-    /// Snapshot was taken (stores tree hash for undo stack).
-    SnapshotTaken { hash: String },
+    /// A checkpoint turn was completed (tracks undo depth).
+    TurnCheckpointed { undo_depth: usize },
     /// Undo result from the runtime.
     UndoResult { success: bool, message: String },
     /// Redo result from the runtime.

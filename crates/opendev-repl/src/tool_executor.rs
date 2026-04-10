@@ -136,7 +136,19 @@ impl ToolExecutor {
             })
             .collect();
 
-        let groups = ParallelPolicy::partition(&policy_calls);
+        // Look up tool instances for input-dependent concurrency decisions
+        let tool_instances: Vec<_> = policy_calls
+            .iter()
+            .filter_map(|tc| registry.get(&tc.name))
+            .collect();
+        let tool_refs: Vec<&dyn opendev_tools_core::BaseTool> =
+            tool_instances.iter().map(|t| t.as_ref()).collect();
+
+        let groups = if tool_refs.len() == policy_calls.len() {
+            ParallelPolicy::partition_with_tools(&policy_calls, &tool_refs)
+        } else {
+            ParallelPolicy::partition(&policy_calls)
+        };
 
         // Pre-allocate result slots (filled out-of-order for parallel groups).
         let mut results: Vec<Option<Result<ToolExecutionResult, ReplError>>> =

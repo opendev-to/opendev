@@ -302,6 +302,96 @@ impl ToolResultSanitizer {
         self.sanitize(tool_name, success, output, error)
     }
 
+    /// Sanitize using an explicit truncation rule (from `BaseTool::truncation_rule()`).
+    ///
+    /// This bypasses the built-in rule map entirely, using only the provided rule.
+    pub fn sanitize_with_rule(
+        &self,
+        tool_name: &str,
+        rule: &TruncationRule,
+        success: bool,
+        output: Option<&str>,
+        error: Option<&str>,
+    ) -> SanitizedResult {
+        // Truncate error messages
+        if !success {
+            let truncated_error = error.map(|e| {
+                if e.len() > ERROR_MAX_CHARS {
+                    truncate_head(e, ERROR_MAX_CHARS)
+                } else {
+                    e.to_string()
+                }
+            });
+            return SanitizedResult {
+                output: output.map(String::from),
+                error: truncated_error,
+                was_truncated: false,
+                overflow_path: None,
+            };
+        }
+
+        let output_str = match output {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                return SanitizedResult {
+                    output: output.map(String::from),
+                    error: error.map(String::from),
+                    was_truncated: false,
+                    overflow_path: None,
+                };
+            }
+        };
+
+        if output_str.len() <= rule.max_chars {
+            return SanitizedResult {
+                output: Some(output_str.to_string()),
+                error: None,
+                was_truncated: false,
+                overflow_path: None,
+            };
+        }
+
+        let truncated = apply_strategy(output_str, rule);
+        let strategy_name = match &rule.strategy {
+            TruncationStrategy::Head => "head",
+            TruncationStrategy::Tail => "tail",
+            TruncationStrategy::HeadTail { .. } => "head_tail",
+        };
+
+        let overflow_path = self.save_overflow(tool_name, output_str);
+
+        let mut marker = format!(
+            "\n\n[truncated: showing {} of {} chars, strategy={}]",
+            truncated.len(),
+            output_str.len(),
+            strategy_name
+        );
+
+        if let Some(ref path) = overflow_path {
+            marker.push_str(&format!(
+                "\nFull output saved to: {}\n\
+                 Use read_file with offset/limit or search to access specific sections.",
+                path.display()
+            ));
+        }
+
+        debug!(
+            tool = tool_name,
+            original = output_str.len(),
+            truncated = truncated.len(),
+            strategy = strategy_name,
+            overflow = ?overflow_path,
+            "Truncated tool result via trait rule"
+        );
+
+        SanitizedResult {
+            output: Some(format!("{truncated}{marker}")),
+            error: None,
+            was_truncated: true,
+            overflow_path,
+        }
+    }
+
     /// Save full output to an overflow file. Returns the path if successful.
     fn save_overflow(&self, tool_name: &str, content: &str) -> Option<PathBuf> {
         let dir = self.overflow_dir.as_ref()?;

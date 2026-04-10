@@ -141,6 +141,61 @@ impl SessionListing {
         workspaces.sort();
         workspaces
     }
+
+    /// Remove project directories whose original working directory no longer exists.
+    ///
+    /// Each project directory may contain an `OPENDEV_PROJECT_PATH` marker file
+    /// recording the original absolute path. If the marker exists and the path is
+    /// gone, the project entry is removed. Also removes empty project directories
+    /// that contain no session files.
+    pub fn cleanup_stale_projects(projects_dir: &Path) {
+        if !projects_dir.exists() {
+            return;
+        }
+
+        let entries = match std::fs::read_dir(projects_dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            // Check project path marker
+            let marker = path.join("OPENDEV_PROJECT_PATH");
+            if let Ok(project_path) = std::fs::read_to_string(&marker) {
+                let project_path = project_path.trim();
+                if !project_path.is_empty() && !Path::new(project_path).exists() {
+                    tracing::info!(
+                        "Removing stale project entry for deleted directory: {}",
+                        project_path
+                    );
+                    let _ = std::fs::remove_dir_all(&path);
+                    continue;
+                }
+            }
+
+            // Remove empty project directories (no session files at all)
+            if let Ok(files) = std::fs::read_dir(&path) {
+                let has_sessions = files.flatten().any(|f| {
+                    f.path()
+                        .extension()
+                        .is_some_and(|e| e == "json" || e == "jsonl")
+                });
+                if !has_sessions {
+                    // Check if directory is truly empty (only marker or index files)
+                    let file_count = std::fs::read_dir(&path).map(|d| d.count()).unwrap_or(1);
+                    if file_count <= 2 {
+                        tracing::info!("Removing empty project directory: {}", path.display());
+                        let _ = std::fs::remove_dir_all(&path);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

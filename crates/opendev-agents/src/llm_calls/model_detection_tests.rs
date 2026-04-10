@@ -7,8 +7,9 @@ fn test_is_reasoning_model() {
     assert!(is_reasoning_model("o3-mini"));
     assert!(is_reasoning_model("o4-mini"));
     assert!(is_reasoning_model("codex-mini"));
+    assert!(is_reasoning_model("gpt-5-turbo"));
+    assert!(is_reasoning_model("gpt-5.4-mini"));
     assert!(!is_reasoning_model("gpt-4o"));
-    assert!(!is_reasoning_model("gpt-5-turbo"));
     assert!(!is_reasoning_model("claude-3-opus"));
 }
 
@@ -26,11 +27,12 @@ fn test_uses_max_completion_tokens() {
 #[test]
 fn test_supports_temperature() {
     assert!(supports_temperature("gpt-4o"));
-    assert!(supports_temperature("gpt-5-turbo"));
     assert!(supports_temperature("claude-3-opus"));
     assert!(!supports_temperature("o1-preview"));
     assert!(!supports_temperature("o3-mini"));
     assert!(!supports_temperature("codex-mini"));
+    assert!(!supports_temperature("gpt-5-turbo"));
+    assert!(!supports_temperature("gpt-5.4-mini"));
 }
 
 #[test]

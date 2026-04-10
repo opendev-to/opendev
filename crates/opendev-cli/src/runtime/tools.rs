@@ -158,6 +158,7 @@ pub fn create_prompt_composer(
         serde_json::Value::Bool(working_dir.join(".git").exists()),
     );
     context.insert("has_subagents".to_string(), serde_json::Value::Bool(true));
+    context.insert("has_agent_teams".to_string(), serde_json::Value::Bool(true));
     context.insert(
         "todo_tracking_enabled".to_string(),
         serde_json::Value::Bool(true),

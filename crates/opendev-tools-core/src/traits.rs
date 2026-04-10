@@ -321,6 +321,74 @@ impl Default for ToolContext {
     }
 }
 
+// Re-export truncation types from sanitizer so tools can return them from trait methods.
+pub use crate::sanitizer::{TruncationRule, TruncationStrategy};
+
+/// Tool category for grouping, policy, and permission purposes.
+///
+/// Replaces hardcoded `tool_groups()` in `policy.rs`. Using an enum enables
+/// compile-time exhaustive matching — adding a new category forces updates
+/// everywhere it is matched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ToolCategory {
+    /// File reading, search, listing (Glob, Grep, Read).
+    Read,
+    /// File editing, writing (Edit, Write).
+    Write,
+    /// Bash/command execution.
+    Process,
+    /// Web operations (WebFetch, WebSearch, screenshots).
+    Web,
+    /// Session management, subagents.
+    Session,
+    /// Memory read/write.
+    Memory,
+    /// Todos, planning, task management.
+    Meta,
+    /// Inter-agent messaging (SendMessage).
+    Messaging,
+    /// Scheduling, cron.
+    Automation,
+    /// LSP, AST symbol operations.
+    Symbol,
+    /// MCP bridge tools.
+    Mcp,
+    /// Default fallback.
+    Other,
+}
+
+impl std::fmt::Display for ToolCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Read => "Read",
+            Self::Write => "Write",
+            Self::Process => "Process",
+            Self::Web => "Web",
+            Self::Session => "Session",
+            Self::Memory => "Memory",
+            Self::Meta => "Meta",
+            Self::Messaging => "Messaging",
+            Self::Automation => "Automation",
+            Self::Symbol => "Symbol",
+            Self::Mcp => "Mcp",
+            Self::Other => "Other",
+        };
+        write!(f, "{name}")
+    }
+}
+
+/// What happens when the user interrupts during this tool's execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InterruptBehavior {
+    /// Cancel the operation immediately (default for most tools).
+    #[default]
+    Cancel,
+    /// Block interruption until the tool completes (e.g., critical file writes).
+    Block,
+    /// Ignore the interrupt signal entirely.
+    Ignore,
+}
+
 /// Metadata describing how a tool should appear in the TUI.
 ///
 /// Tools return this from `display_meta()` so the display registry can
@@ -383,6 +451,126 @@ pub trait BaseTool: Send + Sync + std::fmt::Debug {
     /// Tools that override this allow the display registry to auto-discover
     /// their formatting. Returns `None` by default (falls back to static registry).
     fn display_meta(&self) -> Option<ToolDisplayMeta> {
+        None
+    }
+
+    // ── Classification (replaces hardcoded lists) ──────────────────────
+
+    /// Whether this tool only reads state and never modifies it.
+    ///
+    /// Used by `ParallelPolicy` to determine safe concurrent execution.
+    /// Takes `args` so the decision can be input-dependent — e.g., `Bash`
+    /// is read-only for `ls` but not for `rm`.
+    ///
+    /// Default: `false` (conservative — assume mutation).
+    fn is_read_only(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        false
+    }
+
+    /// Whether this tool performs destructive/irreversible operations.
+    ///
+    /// Stricter than `!is_read_only()` — e.g., `Edit` is not read-only
+    /// but also not destructive (changes can be reverted).
+    ///
+    /// Default: `false`.
+    fn is_destructive(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        false
+    }
+
+    /// Whether this tool can safely run concurrently with other concurrent-safe tools.
+    ///
+    /// Default: delegates to `is_read_only(args)`.
+    fn is_concurrent_safe(&self, args: &HashMap<String, serde_json::Value>) -> bool {
+        self.is_read_only(args)
+    }
+
+    /// The category this tool belongs to, for policy grouping.
+    ///
+    /// Replaces the hardcoded `tool_groups()` in `policy.rs`.
+    ///
+    /// Default: `ToolCategory::Other`.
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Other
+    }
+
+    /// Whether to skip same-turn call deduplication.
+    ///
+    /// Replaces the hardcoded `NO_DEDUP` list in `execution.rs`.
+    /// Tools like `Agent` and `SendMessage` should return `true`.
+    ///
+    /// Default: `false` (dedup enabled).
+    fn skip_dedup(&self) -> bool {
+        false
+    }
+
+    /// Whether this is a search or read command (for TUI collapse).
+    ///
+    /// Default: delegates to `is_read_only(args)`.
+    fn is_search_or_read(&self, args: &HashMap<String, serde_json::Value>) -> bool {
+        self.is_read_only(args)
+    }
+
+    // ── Lifecycle ──────────────────────────────────────────────────────
+
+    /// Whether this tool is currently available.
+    ///
+    /// Runtime check — can depend on environment, config, or feature flags.
+    ///
+    /// Default: `true`.
+    fn is_enabled(&self) -> bool {
+        true
+    }
+
+    /// What happens when the user interrupts during this tool's execution.
+    ///
+    /// Default: `InterruptBehavior::Cancel`.
+    fn interrupt_behavior(&self) -> InterruptBehavior {
+        InterruptBehavior::default()
+    }
+
+    // ── Result handling ────────────────────────────────────────────────
+
+    /// Per-tool truncation rule for oversized outputs.
+    ///
+    /// Replaces the hardcoded `default_rules()` in `sanitizer.rs`.
+    /// When `Some`, the sanitizer uses this rule instead of its built-in map.
+    ///
+    /// Default: `None` (use sanitizer defaults).
+    fn truncation_rule(&self) -> Option<TruncationRule> {
+        None
+    }
+
+    // ── Search & discovery ─────────────────────────────────────────────
+
+    /// A short capability phrase for `ToolSearch` keyword matching.
+    ///
+    /// E.g., `"search file contents with regex"` for Grep.
+    /// Improves discovery when the model uses `ToolSearch` to find tools.
+    ///
+    /// Default: `None` (uses name + description only).
+    fn search_hint(&self) -> Option<&str> {
+        None
+    }
+
+    /// Whether this tool should be deferred (lazy-loaded via `ToolSearch`).
+    ///
+    /// Deferred tools have their schemas omitted from the initial prompt,
+    /// reducing token usage. The model discovers them via `ToolSearch`.
+    ///
+    /// Default: `false` (always loaded).
+    fn should_defer(&self) -> bool {
+        false
+    }
+
+    // ── System prompt ──────────────────────────────────────────────────
+
+    /// Optional text this tool contributes to the system prompt.
+    ///
+    /// E.g., `Bash` might add shell environment info, or `Memory` might
+    /// add instructions about memory file format.
+    ///
+    /// Default: `None`.
+    fn prompt_contribution(&self) -> Option<String> {
         None
     }
 }

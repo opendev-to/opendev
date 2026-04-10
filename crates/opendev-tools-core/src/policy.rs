@@ -2,8 +2,14 @@
 //!
 //! Defines tool groups (read, write, process, etc.) and profiles (minimal, review,
 //! coding, full) that compose groups into permission sets.
+//!
+//! The legacy `tool_groups()` function is a hardcoded tool→group mapping.
+//! `resolve_from_registry()` dynamically builds groups from `BaseTool::category()`,
+//! so newly registered tools automatically join the correct group.
 
 use std::collections::{HashMap, HashSet};
+
+use crate::traits::ToolCategory;
 
 /// Tool groups — categorize tools by function.
 fn tool_groups() -> HashMap<&'static str, HashSet<&'static str>> {
@@ -213,6 +219,94 @@ impl ToolPolicy {
             .get(group_name)
             .map(|tools| tools.iter().map(|t| (*t).to_string()).collect())
             .unwrap_or_default()
+    }
+
+    /// Resolve allowed tools using `BaseTool::category()` from the registry.
+    ///
+    /// Builds groups dynamically so newly registered tools automatically
+    /// join the correct group. Falls back to `resolve()` semantics for
+    /// profile→group mapping.
+    pub fn resolve_from_registry(
+        profile: &str,
+        registry: &crate::registry::ToolRegistry,
+        additions: Option<&[&str]>,
+        exclusions: Option<&[&str]>,
+    ) -> Result<HashSet<String>, String> {
+        let all_profiles = profiles();
+        let group_names = match all_profiles.get(profile) {
+            Some(g) => g,
+            None => {
+                let available: Vec<_> = all_profiles.keys().collect();
+                return Err(format!(
+                    "Unknown tool profile: '{}'. Available: {:?}",
+                    profile, available
+                ));
+            }
+        };
+
+        // Build category → tool names from the registry
+        let tool_categories = registry.build_category_map();
+        let mut category_map: HashMap<&str, HashSet<String>> = HashMap::new();
+        for (cat, names) in &tool_categories {
+            let group_name = Self::category_to_group(*cat);
+            category_map
+                .entry(group_name)
+                .or_default()
+                .extend(names.iter().cloned());
+        }
+
+        // Also include hardcoded groups for tools not yet migrated
+        let hardcoded = tool_groups();
+
+        let mut allowed: HashSet<String> = HashSet::new();
+
+        for group_name in group_names {
+            // Prefer dynamic groups; fall back to hardcoded
+            if let Some(tools) = category_map.get(group_name) {
+                allowed.extend(tools.iter().cloned());
+            }
+            if let Some(tools) = hardcoded.get(group_name) {
+                for tool in tools {
+                    allowed.insert((*tool).to_string());
+                }
+            }
+        }
+
+        for tool in ALWAYS_ALLOWED {
+            allowed.insert((*tool).to_string());
+        }
+
+        if let Some(adds) = additions {
+            for tool in adds {
+                allowed.insert((*tool).to_string());
+            }
+        }
+
+        if let Some(excls) = exclusions {
+            for tool in excls {
+                allowed.remove(*tool);
+            }
+        }
+
+        Ok(allowed)
+    }
+
+    /// Map a `ToolCategory` to the corresponding group name string.
+    pub fn category_to_group(category: ToolCategory) -> &'static str {
+        match category {
+            ToolCategory::Read => "group:read",
+            ToolCategory::Write => "group:write",
+            ToolCategory::Process => "group:process",
+            ToolCategory::Web => "group:web",
+            ToolCategory::Session => "group:session",
+            ToolCategory::Memory => "group:memory",
+            ToolCategory::Meta => "group:meta",
+            ToolCategory::Messaging => "group:messaging",
+            ToolCategory::Automation => "group:automation",
+            ToolCategory::Symbol => "group:read", // Symbol tools are read-friendly
+            ToolCategory::Mcp => "group:mcp",
+            ToolCategory::Other => "group:meta", // Safe default
+        }
     }
 
     /// Get a human-readable description of a profile.

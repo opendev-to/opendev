@@ -49,6 +49,14 @@ impl BaseTool for MessageTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Messaging
+    }
+
+    fn skip_dedup(&self) -> bool {
+        true
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

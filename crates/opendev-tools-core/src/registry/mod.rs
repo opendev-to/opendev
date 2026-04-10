@@ -7,7 +7,7 @@
 mod execution;
 mod helpers;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::middleware::ToolMiddleware;
@@ -38,6 +38,9 @@ pub struct ToolRegistry {
     /// Optional directory for overflow file storage.
     #[allow(dead_code)]
     overflow_dir: Option<std::path::PathBuf>,
+    /// Core tool names — always included in LLM API calls.
+    /// Non-core (deferred) tools are only included after activation via ToolSearch.
+    core_tools: RwLock<HashSet<String>>,
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -67,6 +70,7 @@ impl ToolRegistry {
             aliases: RwLock::new(HashMap::new()),
             sanitizer: ToolResultSanitizer::new(),
             overflow_dir: None,
+            core_tools: RwLock::new(HashSet::new()),
         }
     }
 
@@ -81,6 +85,7 @@ impl ToolRegistry {
             aliases: RwLock::new(HashMap::new()),
             sanitizer: ToolResultSanitizer::new().with_overflow_dir(overflow_dir.clone()),
             overflow_dir: Some(overflow_dir),
+            core_tools: RwLock::new(HashSet::new()),
         }
     }
 
@@ -224,6 +229,83 @@ impl ToolRegistry {
             if let Some(meta) = tool.display_meta() {
                 map.insert(name.clone(), meta);
             }
+        }
+        map
+    }
+
+    /// Mark a tool as "core" — always included in LLM API calls.
+    pub fn mark_as_core(&self, name: &str) {
+        let mut core = self.core_tools.write().expect("ToolRegistry lock poisoned");
+        core.insert(name.to_string());
+    }
+
+    /// Mark multiple tools as core.
+    pub fn mark_core_tools(&self, names: &[&str]) {
+        let mut core = self.core_tools.write().expect("ToolRegistry lock poisoned");
+        for name in names {
+            core.insert((*name).to_string());
+        }
+    }
+
+    /// Check if a tool is marked as core.
+    pub fn is_core(&self, name: &str) -> bool {
+        let core = self.core_tools.read().expect("ToolRegistry lock poisoned");
+        core.contains(name)
+    }
+
+    /// Get the set of core tool names.
+    pub fn core_tool_names(&self) -> HashSet<String> {
+        self.core_tools
+            .read()
+            .expect("ToolRegistry lock poisoned")
+            .clone()
+    }
+
+    /// Whether tool deferral is active (any core tools are marked).
+    pub fn has_deferred_tools(&self) -> bool {
+        let core = self.core_tools.read().expect("ToolRegistry lock poisoned");
+        !core.is_empty()
+    }
+
+    /// Get schemas only for the given tool names (core + activated).
+    pub fn get_schemas_for(&self, names: &HashSet<String>) -> Vec<serde_json::Value> {
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        tools
+            .values()
+            .filter(|tool| names.contains(tool.name()))
+            .map(|tool| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name(),
+                        "description": tool.description(),
+                        "parameters": tool.parameter_schema()
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// Get compact summaries of deferred (non-core) tools: `(name, description)`.
+    pub fn get_deferred_summaries(&self) -> Vec<(String, String)> {
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        let core = self.core_tools.read().expect("ToolRegistry lock poisoned");
+        tools
+            .values()
+            .filter(|tool| !core.contains(tool.name()))
+            .map(|tool| (tool.name().to_string(), tool.description().to_string()))
+            .collect()
+    }
+
+    /// Build a map of `ToolCategory` → tool names from all registered tools.
+    ///
+    /// Used by `ToolPolicy::resolve_from_registry()` to dynamically derive
+    /// groups from `BaseTool::category()` instead of hardcoded lists.
+    pub fn build_category_map(&self) -> HashMap<crate::traits::ToolCategory, Vec<String>> {
+        let tools = self.tools.read().expect("ToolRegistry lock poisoned");
+        let mut map: HashMap<crate::traits::ToolCategory, Vec<String>> = HashMap::new();
+        for (name, tool) in tools.iter() {
+            map.entry(tool.category()).or_default().push(name.clone());
         }
         map
     }

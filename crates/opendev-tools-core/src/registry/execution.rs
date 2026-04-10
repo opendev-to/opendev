@@ -112,6 +112,19 @@ impl ToolRegistry {
         args: HashMap<String, serde_json::Value>,
         ctx: &ToolContext,
     ) -> ToolResult {
+        // `get_background_result` is a synthetic tool injected by the system
+        // when background tasks complete. It is not a real registered tool.
+        // If the LLM tries to call it explicitly, return a helpful message
+        // instead of "Unknown tool".
+        if tool_name == "get_background_result" {
+            return ToolResult::fail(
+                "get_background_result is not callable directly. \
+                 Background task results are delivered automatically when tasks complete. \
+                 Wait for the background completion notification instead of calling this tool."
+                    .to_string(),
+            );
+        }
+
         // Clone Arc out of the read lock so we don't hold it during execution
         let (tool, resolved_name) = match self.resolve_tool(tool_name) {
             Some((t, name)) => (t, name),
@@ -134,9 +147,8 @@ impl ToolRegistry {
         let normalized = normalizer::normalize_params(tool_name, args, Some(&working_dir));
         debug!(tool = %tool_name, params = ?normalized, "Normalized tool params");
 
-        // Deduplication: check cache (skip for tools that must always run)
-        const NO_DEDUP: &[&str] = &["Agent", "spawn_subagent"];
-        let skip_dedup = NO_DEDUP.contains(&tool_name.as_str());
+        // Deduplication: check cache (skip for tools that declare skip_dedup)
+        let skip_dedup = tool.skip_dedup();
         let dedup_key = make_dedup_key(tool_name, &normalized);
         if !skip_dedup
             && let Ok(cache) = self.dedup_cache.lock()
@@ -200,13 +212,24 @@ impl ToolRegistry {
         let mut result = tool.execute(normalized, &exec_ctx).await;
         result.duration_ms = Some(start.elapsed().as_millis() as u64);
 
-        // Sanitize: truncate large outputs before they enter LLM context
-        let sanitized = self.sanitizer.sanitize_with_mcp_fallback(
-            tool_name,
-            result.success,
-            result.output.as_deref(),
-            result.error.as_deref(),
-        );
+        // Sanitize: truncate large outputs before they enter LLM context.
+        // Prefer the tool's own truncation_rule(); fall back to the sanitizer's built-in map.
+        let sanitized = if let Some(rule) = tool.truncation_rule() {
+            self.sanitizer.sanitize_with_rule(
+                tool_name,
+                &rule,
+                result.success,
+                result.output.as_deref(),
+                result.error.as_deref(),
+            )
+        } else {
+            self.sanitizer.sanitize_with_mcp_fallback(
+                tool_name,
+                result.success,
+                result.output.as_deref(),
+                result.error.as_deref(),
+            )
+        };
         if sanitized.was_truncated {
             result.output = sanitized.output;
             result.error = sanitized.error;

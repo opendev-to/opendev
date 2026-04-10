@@ -113,6 +113,12 @@ impl ReactLoop {
         // re-cloning &[Value] into json!() on every iteration.
         state.cached_tool_schemas = Some(Value::Array(tool_schemas.to_vec()));
 
+        // Tool schema deferral: if core tools are marked, only send core +
+        // activated tool schemas to the LLM. This mirrors Claude Code's
+        // ToolSearch pattern, reducing input tokens from ~13k to ~6k.
+        let core_tools = tool_registry.core_tool_names();
+        let use_deferral = !core_tools.is_empty();
+
         loop {
             state.iteration += 1;
             let iter_start = Instant::now();
@@ -163,11 +169,31 @@ impl ReactLoop {
                 return result;
             }
 
+            // Build active tool schemas: core tools + any activated via ToolSearch
+            let active_schemas: Vec<Value>;
+            let schemas_to_send = if use_deferral {
+                active_schemas = tool_schemas
+                    .iter()
+                    .filter(|s| {
+                        let name = s
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("");
+                        core_tools.contains(name) || state.activated_tools.contains(name)
+                    })
+                    .cloned()
+                    .collect();
+                &active_schemas[..]
+            } else {
+                tool_schemas
+            };
+
             let llm_result = match super::phases::execute_llm_call(
                 caller,
                 http_client,
                 messages,
-                tool_schemas,
+                schemas_to_send,
                 &state,
                 &emitter,
                 task_monitor,

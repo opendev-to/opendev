@@ -460,6 +460,7 @@ where
         };
 
         let tool_start = Instant::now();
+        let is_task_stop = matches!(tool_name, "TaskStop" | "task_complete");
         let (tool_result, was_interrupted) = {
             let exec_fut = async {
                 tool_registry
@@ -473,8 +474,11 @@ where
                 iteration = state.iteration,
             ));
 
+            // TaskStop must never be interrupted by background completion events.
+            // Cancelling TaskStop creates an orphaned tool call with no result,
+            // which triggers repeated nudge → TaskStop → interrupt cycles.
             match cancel {
-                Some(ct) => {
+                Some(ct) if !is_task_stop => {
                     tokio::select! {
                         result = exec_fut => (result, false),
                         _ = ct.cancelled() => {
@@ -482,7 +486,7 @@ where
                         }
                     }
                 }
-                None => (exec_fut.await, false),
+                _ => (exec_fut.await, false),
             }
         };
         let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
@@ -560,6 +564,19 @@ where
             "content": formatted,
         }));
 
+        // Track background task spawns for completion nudge.
+        // SpawnTeammate always runs in background; SpawnSubagent does when
+        // run_in_background=true. Both return "task_id:" on success.
+        if tool_result.success
+            && matches!(tool_name, "SpawnTeammate" | "Agent" | "spawn_subagent")
+            && tool_result
+                .output
+                .as_deref()
+                .is_some_and(|o| o.contains("task_id:") || o.contains("Running in background"))
+        {
+            state.bg_tasks_spawned += 1;
+        }
+
         // Capture skill model override from invoke_skill
         if matches!(tool_name, "Skill" | "invoke_skill")
             && tool_result.success
@@ -570,6 +587,20 @@ where
         {
             info!(model, "Skill model override activated");
             state.skill_model_override = Some(model.to_string());
+        }
+
+        // Activate deferred tools returned by ToolSearch
+        if tool_name == "ToolSearch"
+            && tool_result.success
+            && let Some(tools) = tool_result
+                .metadata
+                .get("activated_tools")
+                .and_then(|v| v.as_array())
+        {
+            for name in tools.iter().filter_map(|v| v.as_str()) {
+                state.activated_tools.insert(name.to_string());
+                info!(tool = %name, "Deferred tool activated via ToolSearch");
+            }
         }
 
         // Reset proactive reminder counters on relevant tool use
@@ -934,7 +965,20 @@ where
         })
         .collect();
 
-    let batches = ParallelPolicy::partition(&parallel_calls);
+    // Look up tool instances for input-dependent concurrency decisions
+    let tool_instances: Vec<_> = parallel_calls
+        .iter()
+        .filter_map(|tc| tool_registry.get(&tc.name))
+        .collect();
+    let tool_refs: Vec<&dyn opendev_tools_core::BaseTool> =
+        tool_instances.iter().map(|t| t.as_ref()).collect();
+
+    let batches = if tool_refs.len() == parallel_calls.len() {
+        ParallelPolicy::partition_with_tools(&parallel_calls, &tool_refs)
+    } else {
+        // Fallback if some tools weren't found in registry
+        ParallelPolicy::partition(&parallel_calls)
+    };
 
     // If no batch has >1 element, fall through to sequential execution
     if !ParallelPolicy::has_parallel_batches(&batches) {

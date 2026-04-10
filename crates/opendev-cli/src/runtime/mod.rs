@@ -5,6 +5,7 @@
 
 pub mod background;
 mod channel_executor;
+mod checkpoint_middleware;
 mod query;
 mod tools;
 
@@ -76,8 +77,8 @@ pub struct AgentRuntime {
     pub(super) skill_loader: Arc<Mutex<opendev_agents::SkillLoader>>,
     /// LLM-based topic detector for auto-generating session titles.
     pub(super) topic_detector: TopicDetector,
-    /// Shadow git snapshot manager for tracking file changes per query.
-    pub(super) snapshot_manager: Arc<Mutex<opendev_history::SnapshotManager>>,
+    /// File-level checkpoint manager for per-turn undo and file change tracking.
+    pub(super) checkpoint_manager: Arc<Mutex<opendev_history::FileCheckpointManager>>,
     /// Per-session debug logger for LLM interactions (noop when debug_logging is off).
     pub debug_logger: Arc<SessionDebugLogger>,
     /// Prompt composer for per-turn system prompt composition with section caching.
@@ -106,6 +107,28 @@ impl AgentRuntime {
         let overflow_dir = working_dir.join(".opendev").join("tool-output");
         // Clean up overflow files older than 7 days on startup.
         opendev_tools_core::cleanup_overflow_dir(&overflow_dir);
+
+        // Background cleanup: remove stale project entries and old checkpoints.
+        // Also cleans up legacy snapshot dirs from the old git-based system.
+        let cleanup_paths = opendev_config::Paths::new(Some(working_dir.to_path_buf()));
+        std::thread::spawn(move || {
+            let projects_dir = cleanup_paths.global_projects_dir();
+            opendev_history::SessionListing::cleanup_stale_projects(&projects_dir);
+            opendev_history::FileCheckpointManager::cleanup_old_sessions();
+            // Legacy: clean up old git shadow snapshot dirs
+            opendev_history::SnapshotManager::cleanup_all();
+        });
+
+        // Create file checkpoint manager for per-turn undo
+        let session_id = session_manager
+            .current_session()
+            .map(|s| s.id.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let checkpoint_manager = Arc::new(Mutex::new(opendev_history::FileCheckpointManager::new(
+            &session_id,
+            working_dir,
+        )));
+
         let tool_registry = Arc::new(ToolRegistry::with_overflow_dir(overflow_dir));
         let (todo_manager, mut channel_receivers, tool_approval_tx) =
             tools::register_default_tools(&tool_registry);
@@ -168,6 +191,11 @@ impl AgentRuntime {
             tool_count = tool_registry.tool_names().len(),
             "Registered default tools (before subagent)"
         );
+
+        // Register file checkpoint middleware for pre-edit snapshots
+        tool_registry.add_middleware(Box::new(
+            checkpoint_middleware::FileCheckpointMiddleware::new(checkpoint_manager.clone()),
+        ));
 
         let handler_registry = HandlerRegistry::new();
         let query_enhancer = QueryEnhancer::new(working_dir.to_path_buf());
@@ -412,6 +440,19 @@ impl AgentRuntime {
         // Create subagent event channel for TUI bridging
         let (subagent_event_tx, subagent_event_rx) =
             tokio::sync::mpsc::unbounded_channel::<opendev_tools_impl::SubagentEvent>();
+
+        // Create team manager and shared task list for agent team tools
+        let app_paths = opendev_config::paths::Paths::new(Some(working_dir.to_path_buf()));
+        let team_manager = Arc::new(opendev_runtime::TeamManager::new(
+            app_paths.data_dir().join("teams"),
+        ));
+        let team_task_list = Arc::new(opendev_runtime::TeamTaskList::new(
+            app_paths.data_dir().join("tasks"),
+        ));
+
+        // Register SpawnSubagentTool
+        let subagent_manager_for_teammate = Arc::clone(&subagent_manager);
+        let session_dir_for_teammate = session_dir.clone();
         tool_registry.register(Arc::new(
             SpawnSubagentTool::new(
                 subagent_manager,
@@ -421,7 +462,7 @@ impl AgentRuntime {
                 &config.model,
                 working_dir.display().to_string(),
             )
-            .with_event_sender(subagent_event_tx)
+            .with_event_sender(subagent_event_tx.clone())
             .with_parent_max_tokens(model_max_tokens)
             .with_parent_reasoning_effort(if config.reasoning_effort == "none" {
                 None
@@ -430,10 +471,94 @@ impl AgentRuntime {
             })
             .with_debug_logger(Arc::clone(&debug_logger)),
         ));
+
+        // Register agent team tools (TeamCreate, SendMessage, TeamDelete, SpawnTeammate, task list tools)
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::team_tools::CreateTeamTool::new(Arc::clone(&team_manager))
+                .with_event_sender(subagent_event_tx.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::team_tools::SendMessageTool::new(Arc::clone(&team_manager))
+                .with_event_sender(subagent_event_tx.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::team_tools::DeleteTeamTool::new(Arc::clone(&team_manager))
+                .with_event_sender(subagent_event_tx.clone()),
+        ));
+        tool_registry.register(Arc::new(
+            SpawnTeammateTool::new(
+                Arc::clone(&team_manager),
+                subagent_manager_for_teammate,
+                Arc::clone(&tool_registry),
+                Arc::clone(&http_client),
+                session_dir_for_teammate,
+                &config.model,
+                working_dir.display().to_string(),
+            )
+            .with_event_sender(subagent_event_tx.clone())
+            .with_parent_max_tokens(model_max_tokens)
+            .with_parent_reasoning_effort(if config.reasoning_effort == "none" {
+                None
+            } else {
+                Some(config.reasoning_effort.clone())
+            })
+            .with_debug_logger(Arc::clone(&debug_logger))
+            .with_worktree_manager(Arc::new(tokio::sync::Mutex::new(WorktreeManager::new(
+                working_dir,
+            )))),
+        ));
+        tool_registry.register(Arc::new(TeamAddTaskTool::new(
+            Arc::clone(&team_manager),
+            Arc::clone(&team_task_list),
+        )));
+        tool_registry.register(Arc::new(TeamListTasksTool::new(
+            Arc::clone(&team_manager),
+            Arc::clone(&team_task_list),
+        )));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::TeamClaimTaskTool::new(
+                Arc::clone(&team_manager),
+                Arc::clone(&team_task_list),
+                "leader",
+            ),
+        ));
+        tool_registry.register(Arc::new(
+            opendev_tools_impl::agents::TeamCompleteTaskTool::new(
+                Arc::clone(&team_manager),
+                Arc::clone(&team_task_list),
+            ),
+        ));
+        tool_registry.register(Arc::new(opendev_tools_impl::agents::CheckMailboxTool::new(
+            Arc::clone(&team_manager),
+            "leader",
+        )));
+
+        // Register ToolSearchTool for on-demand schema fetching (deferred tools)
+        tool_registry.register(Arc::new(ToolSearchTool::new(Arc::clone(&tool_registry))));
+
+        // Mark core tools — always included in every LLM API call.
+        // All other tools are deferred and loaded on-demand via ToolSearch.
+        tool_registry.mark_core_tools(&[
+            // File operations (most common)
+            "Bash",
+            "Read",
+            "Write",
+            "Edit",
+            "Glob",
+            "Grep",
+            // User interaction
+            "AskUser",
+            // Task lifecycle
+            "TaskComplete",
+            // Tool deferral meta-tool (must always be available)
+            "ToolSearch",
+        ]);
+
         channel_receivers.subagent_event_rx = Some(subagent_event_rx);
         info!(
             tool_count = tool_registry.tool_names().len(),
-            "Registered all tools including spawn_subagent"
+            core_tools = tool_registry.core_tool_names().len(),
+            "Registered all tools including spawn_subagent and team tools"
         );
 
         // Configure LLM caller
@@ -460,7 +585,90 @@ impl AgentRuntime {
         let topic_detector = TopicDetector::new(&provider);
 
         // Create per-turn prompt composer with section caching
-        let (prompt_composer, prompt_context) = tools::create_prompt_composer(working_dir, &config);
+        let (mut prompt_composer, prompt_context) =
+            tools::create_prompt_composer(working_dir, &config);
+
+        // Register deferred tools list as a Cached dynamic section.
+        // This tells the LLM which tools are available via ToolSearch.
+        let registry_for_deferred = Arc::clone(&tool_registry);
+        prompt_composer.register_dynamic_section(
+            "deferred_tools",
+            opendev_agents::prompts::CachePolicy::Cached,
+            46, // right after tool_selection (45)
+            None,
+            Box::new(move || {
+                let summaries = registry_for_deferred.get_deferred_summaries();
+                if summaries.is_empty() {
+                    return None;
+                }
+
+                // Group deferred tools by category for clarity
+                let subagent_tools: Vec<&str> = vec!["Agent", "spawn_subagent"];
+                let team_tools: Vec<&str> = vec![
+                    "SpawnTeammate",
+                    "SendMessage",
+                    "TeamDelete",
+                    "TeamAddTask",
+                    "TeamListTasks",
+                    "TeamClaimTask",
+                    "TeamCompleteTask",
+                    "CheckMailbox",
+                    "CreateTeam",
+                ];
+                let plan_todo_tools: Vec<&str> =
+                    vec!["PresentPlan", "WriteTodos", "UpdateTodo", "ListTodos"];
+                let web_tools: Vec<&str> = vec!["WebFetch", "WebSearch"];
+
+                let mut lines = Vec::new();
+                lines.push(
+                    "The following deferred tools are available via ToolSearch. \
+                     Call `ToolSearch(query=\"select:ToolName\")` to activate before use."
+                        .to_string(),
+                );
+
+                // Categorized listing
+                let mut add_group = |label: &str, group: &[&str]| {
+                    let found: Vec<_> = group
+                        .iter()
+                        .filter(|n| summaries.iter().any(|(sn, _)| sn == **n))
+                        .collect();
+                    if !found.is_empty() {
+                        lines.push(format!(
+                            "- **{label}**: {}",
+                            found
+                                .iter()
+                                .map(|n| format!("`{n}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                };
+
+                add_group("Subagents", &subagent_tools);
+                add_group("Agent Teams", &team_tools);
+                add_group("Planning & Todos", &plan_todo_tools);
+                add_group("Web", &web_tools);
+
+                // Remaining uncategorized tools
+                let categorized: std::collections::HashSet<&str> = subagent_tools
+                    .iter()
+                    .chain(team_tools.iter())
+                    .chain(plan_todo_tools.iter())
+                    .chain(web_tools.iter())
+                    .copied()
+                    .collect();
+                let other: Vec<_> = summaries
+                    .iter()
+                    .filter(|(n, _)| !categorized.contains(n.as_str()))
+                    .map(|(n, _)| format!("`{n}`"))
+                    .collect();
+                if !other.is_empty() {
+                    lines.push(format!("- **Other**: {}", other.join(", ")));
+                }
+
+                Some(lines.join("\n"))
+            }),
+        );
 
         Ok(Self {
             config,
@@ -481,9 +689,7 @@ impl AgentRuntime {
             mcp_manager: None,
             skill_loader,
             topic_detector,
-            snapshot_manager: Arc::new(Mutex::new(opendev_history::SnapshotManager::new(
-                &working_dir.to_string_lossy(),
-            ))),
+            checkpoint_manager,
             debug_logger,
             prompt_composer: Mutex::new(prompt_composer),
             prompt_context: Mutex::new(prompt_context),

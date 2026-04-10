@@ -11,6 +11,173 @@ pub fn is_dangerous_command(command: &str) -> bool {
     patterns::is_dangerous(command)
 }
 
+/// Check if a shell command is likely read-only (no side effects).
+///
+/// Enables automatic parallel execution of safe Bash commands — something
+/// Claude Code cannot do since its `isReadOnly` doesn't inspect commands.
+fn is_likely_read_only_command(command: &str) -> bool {
+    let trimmed = command.trim();
+
+    // Split on all shell operators (&&, ||, ;, |) and check every segment.
+    // If ANY segment is not read-only, the whole command is not read-only.
+    if trimmed.contains('|')
+        || trimmed.contains('>')
+        || trimmed.contains("&&")
+        || trimmed.contains("||")
+        || trimmed.contains(';')
+    {
+        // Replace multi-char operators with \x00, then split on \x00, |, and ;
+        let normalized = trimmed.replace("&&", "\x00").replace("||", "\x00");
+        return normalized
+            .split(['\x00', '|', ';'])
+            .all(|segment| is_single_command_read_only(segment.trim()));
+    }
+
+    is_single_command_read_only(trimmed)
+}
+
+/// Check if a single command (no pipes) is read-only.
+fn is_single_command_read_only(cmd: &str) -> bool {
+    // Redirect operators mean writing
+    if cmd.contains('>') {
+        return false;
+    }
+
+    // Strip leading env var assignments (FOO=bar cmd ...)
+    let base = cmd
+        .split_whitespace()
+        .find(|token| !token.contains('='))
+        .unwrap_or("");
+
+    // Extract just the command name (strip path)
+    let cmd_name = base.rsplit('/').next().unwrap_or(base);
+
+    matches!(
+        cmd_name,
+        "ls"
+            | "cat"
+            | "head"
+            | "tail"
+            | "wc"
+            | "grep"
+            | "rg"
+            | "find"
+            | "which"
+            | "whereis"
+            | "whoami"
+            | "pwd"
+            | "echo"
+            | "printf"
+            | "date"
+            | "uname"
+            | "hostname"
+            | "env"
+            | "printenv"
+            | "id"
+            | "df"
+            | "du"
+            | "free"
+            | "uptime"
+            | "ps"
+            | "top"
+            | "htop"
+            | "file"
+            | "stat"
+            | "readlink"
+            | "realpath"
+            | "basename"
+            | "dirname"
+            | "diff"
+            | "md5sum"
+            | "sha256sum"
+            | "shasum"
+            | "cksum"
+            | "tree"
+            | "less"
+            | "more"
+            | "sort"
+            | "uniq"
+            | "cut"
+            | "tr"
+            | "awk"
+            | "sed" // sed without -i is read-only (piped sed)
+            | "jq"
+            | "yq"
+            | "xargs"
+            | "tee" // tee in a pipe is ambiguous, but usually safe in this context
+            | "test"
+            | "["
+            | "true"
+            | "false"
+            | "git" // git subcommands checked below
+            | "cargo"
+            | "rustc"
+            | "node"
+            | "python"
+            | "python3"
+            | "ruby"
+            | "go"
+    ) && !is_write_subcommand(cmd)
+}
+
+/// Check if a command has a write-oriented subcommand.
+fn is_write_subcommand(cmd: &str) -> bool {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.len() < 2 {
+        return false;
+    }
+
+    let base = parts[0].rsplit('/').next().unwrap_or(parts[0]);
+    let sub = parts[1];
+
+    match base {
+        "git" => !matches!(
+            sub,
+            "status"
+                | "log"
+                | "diff"
+                | "show"
+                | "branch"
+                | "tag"
+                | "remote"
+                | "stash"
+                | "blame"
+                | "shortlog"
+                | "describe"
+                | "rev-parse"
+                | "rev-list"
+                | "ls-files"
+                | "ls-tree"
+                | "ls-remote"
+                | "cat-file"
+                | "name-rev"
+                | "for-each-ref"
+                | "config"
+                | "help"
+                | "version"
+        ),
+        "cargo" => !matches!(
+            sub,
+            "check"
+                | "clippy"
+                | "test"
+                | "bench"
+                | "doc"
+                | "metadata"
+                | "tree"
+                | "search"
+                | "version"
+                | "help"
+                | "locate-project"
+                | "pkgid"
+                | "verify-project"
+                | "read-manifest"
+        ),
+        "sed" => cmd.contains(" -i"),
+        _ => false,
+    }
+}
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -95,6 +262,34 @@ impl BaseTool for BashTool {
             },
             "required": ["command"]
         })
+    }
+
+    fn is_read_only(&self, args: &HashMap<String, serde_json::Value>) -> bool {
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            is_likely_read_only_command(cmd)
+        } else {
+            false
+        }
+    }
+
+    fn is_destructive(&self, args: &HashMap<String, serde_json::Value>) -> bool {
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            patterns::is_dangerous(cmd)
+        } else {
+            false
+        }
+    }
+
+    fn is_concurrent_safe(&self, args: &HashMap<String, serde_json::Value>) -> bool {
+        self.is_read_only(args)
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Process
+    }
+
+    fn truncation_rule(&self) -> Option<opendev_tools_core::TruncationRule> {
+        Some(opendev_tools_core::TruncationRule::tail(8000))
     }
 
     async fn execute(
@@ -540,5 +735,216 @@ mod tests {
         let result = tool.execute(args, &ctx).await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("does not exist"));
+    }
+
+    // -----------------------------------------------------------------------
+    // is_likely_read_only_command — unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_read_only_simple_commands() {
+        assert!(is_likely_read_only_command("ls -la"));
+        assert!(is_likely_read_only_command("cat foo.txt"));
+        assert!(is_likely_read_only_command("grep -r pattern ."));
+        assert!(is_likely_read_only_command("find . -name '*.rs'"));
+        assert!(is_likely_read_only_command("wc -l file.txt"));
+        assert!(is_likely_read_only_command("head -20 file.txt"));
+        assert!(is_likely_read_only_command("tail -f log.txt"));
+        assert!(is_likely_read_only_command("echo hello world"));
+        assert!(is_likely_read_only_command("pwd"));
+        assert!(is_likely_read_only_command("whoami"));
+        assert!(is_likely_read_only_command("tree src/"));
+        assert!(is_likely_read_only_command("diff a.txt b.txt"));
+    }
+
+    #[test]
+    fn test_read_only_git_subcommands() {
+        assert!(is_likely_read_only_command("git status"));
+        assert!(is_likely_read_only_command("git log --oneline"));
+        assert!(is_likely_read_only_command("git diff HEAD~1"));
+        assert!(is_likely_read_only_command("git show HEAD"));
+        assert!(is_likely_read_only_command("git branch -a"));
+        assert!(is_likely_read_only_command("git blame src/main.rs"));
+        assert!(is_likely_read_only_command("git ls-files"));
+        assert!(is_likely_read_only_command("git rev-parse HEAD"));
+    }
+
+    #[test]
+    fn test_not_read_only_git_write_subcommands() {
+        assert!(!is_likely_read_only_command("git add ."));
+        assert!(!is_likely_read_only_command("git commit -m 'test'"));
+        assert!(!is_likely_read_only_command("git push origin main"));
+        assert!(!is_likely_read_only_command("git checkout -b new-branch"));
+        assert!(!is_likely_read_only_command("git reset --hard HEAD~1"));
+        assert!(!is_likely_read_only_command("git merge feature"));
+    }
+
+    #[test]
+    fn test_read_only_cargo_subcommands() {
+        assert!(is_likely_read_only_command("cargo check"));
+        assert!(is_likely_read_only_command("cargo clippy"));
+        assert!(is_likely_read_only_command("cargo test --lib"));
+        assert!(is_likely_read_only_command("cargo doc"));
+        assert!(is_likely_read_only_command("cargo metadata"));
+        assert!(is_likely_read_only_command("cargo tree"));
+    }
+
+    #[test]
+    fn test_not_read_only_cargo_write_subcommands() {
+        assert!(!is_likely_read_only_command("cargo build"));
+        assert!(!is_likely_read_only_command("cargo install ripgrep"));
+        assert!(!is_likely_read_only_command("cargo clean"));
+        assert!(!is_likely_read_only_command("cargo publish"));
+    }
+
+    #[test]
+    fn test_not_read_only_write_commands() {
+        assert!(!is_likely_read_only_command("rm file.txt"));
+        assert!(!is_likely_read_only_command("mkdir new_dir"));
+        assert!(!is_likely_read_only_command("touch file.txt"));
+        assert!(!is_likely_read_only_command("cp a.txt b.txt"));
+        assert!(!is_likely_read_only_command("mv a.txt b.txt"));
+        assert!(!is_likely_read_only_command("chmod 755 script.sh"));
+    }
+
+    #[test]
+    fn test_read_only_pipe_chains() {
+        assert!(is_likely_read_only_command("cat file.txt | grep pattern"));
+        assert!(is_likely_read_only_command("ls -la | wc -l"));
+        assert!(is_likely_read_only_command("grep -r foo . | sort | uniq"));
+        assert!(is_likely_read_only_command("git log --oneline | head -10"));
+    }
+
+    #[test]
+    fn test_not_read_only_pipe_with_write() {
+        assert!(!is_likely_read_only_command(
+            "cat file.txt | tee output.txt | rm backup.txt"
+        ));
+    }
+
+    #[test]
+    fn test_not_read_only_redirect() {
+        assert!(!is_likely_read_only_command("echo hello > file.txt"));
+        assert!(!is_likely_read_only_command("ls -la > listing.txt"));
+        assert!(!is_likely_read_only_command("cat a.txt >> b.txt"));
+    }
+
+    #[test]
+    fn test_not_read_only_and_chain_with_write() {
+        assert!(!is_likely_read_only_command("ls && rm -rf /tmp/foo"));
+        assert!(!is_likely_read_only_command("echo ok && touch file.txt"));
+        assert!(!is_likely_read_only_command(
+            "git status && git add . && git commit -m 'test'"
+        ));
+        assert!(!is_likely_read_only_command("cat foo && mkdir bar"));
+    }
+
+    #[test]
+    fn test_read_only_and_chain_all_safe() {
+        assert!(is_likely_read_only_command("ls && pwd"));
+        assert!(is_likely_read_only_command("git status && git log"));
+        assert!(is_likely_read_only_command("echo hello && echo world"));
+    }
+
+    #[test]
+    fn test_not_read_only_or_chain_with_write() {
+        assert!(!is_likely_read_only_command("ls || rm file.txt"));
+        assert!(!is_likely_read_only_command("cat foo || touch bar"));
+    }
+
+    #[test]
+    fn test_read_only_or_chain_all_safe() {
+        assert!(is_likely_read_only_command("cat file || echo 'not found'"));
+    }
+
+    #[test]
+    fn test_not_read_only_semicolon_chain_with_write() {
+        assert!(!is_likely_read_only_command("ls; rm file.txt"));
+        assert!(!is_likely_read_only_command("echo hello; touch file"));
+        assert!(!is_likely_read_only_command("pwd; mkdir new_dir; ls"));
+    }
+
+    #[test]
+    fn test_read_only_semicolon_chain_all_safe() {
+        assert!(is_likely_read_only_command("ls; pwd; echo done"));
+    }
+
+    #[test]
+    fn test_not_read_only_mixed_operators_with_write() {
+        assert!(!is_likely_read_only_command("ls | grep foo && rm -rf bar"));
+        assert!(!is_likely_read_only_command("echo ok; cat f | touch x"));
+    }
+
+    #[test]
+    fn test_sed_read_only_vs_write() {
+        assert!(is_likely_read_only_command("sed 's/foo/bar/' file.txt"));
+        assert!(!is_likely_read_only_command("sed -i 's/foo/bar/' file.txt"));
+        assert!(!is_likely_read_only_command(
+            "sed -i.bak 's/foo/bar/' file.txt"
+        ));
+    }
+
+    #[test]
+    fn test_env_var_prefix_stripped() {
+        assert!(is_likely_read_only_command("FOO=bar ls -la"));
+        assert!(is_likely_read_only_command("RUST_LOG=debug cargo check"));
+    }
+
+    #[test]
+    fn test_full_path_commands() {
+        assert!(is_likely_read_only_command("/usr/bin/ls -la"));
+        assert!(is_likely_read_only_command("/bin/cat file.txt"));
+        assert!(!is_likely_read_only_command("/bin/rm file.txt"));
+    }
+
+    // -----------------------------------------------------------------------
+    // BashTool trait method integration tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_bash_is_read_only_trait() {
+        let tool = BashTool::new();
+        let safe = make_args(&[("command", serde_json::json!("ls -la"))]);
+        assert!(tool.is_read_only(&safe));
+
+        let unsafe_cmd = make_args(&[("command", serde_json::json!("rm file.txt"))]);
+        assert!(!tool.is_read_only(&unsafe_cmd));
+
+        let chain_safe = make_args(&[("command", serde_json::json!("ls && pwd"))]);
+        assert!(tool.is_read_only(&chain_safe));
+
+        let chain_unsafe = make_args(&[("command", serde_json::json!("ls && rm -rf /tmp/foo"))]);
+        assert!(!tool.is_read_only(&chain_unsafe));
+    }
+
+    #[test]
+    fn test_bash_is_concurrent_safe_trait() {
+        let tool = BashTool::new();
+        let safe = make_args(&[("command", serde_json::json!("git status"))]);
+        assert!(tool.is_concurrent_safe(&safe));
+
+        let unsafe_cmd = make_args(&[("command", serde_json::json!("git push"))]);
+        assert!(!tool.is_concurrent_safe(&unsafe_cmd));
+    }
+
+    #[test]
+    fn test_bash_category() {
+        let tool = BashTool::new();
+        assert_eq!(tool.category(), opendev_tools_core::ToolCategory::Process);
+    }
+
+    #[test]
+    fn test_bash_truncation_rule() {
+        let tool = BashTool::new();
+        let rule = tool
+            .truncation_rule()
+            .expect("BashTool should have a truncation rule");
+        assert_eq!(rule.max_chars, 8000);
+    }
+
+    #[test]
+    fn test_bash_skip_dedup_false() {
+        let tool = BashTool::new();
+        assert!(!tool.skip_dedup());
     }
 }
