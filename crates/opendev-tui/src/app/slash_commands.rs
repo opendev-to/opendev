@@ -224,7 +224,8 @@ impl App {
                         self.push_command_result("Skill creation coming soon.".to_string());
                     }
                     _ => {
-                        self.push_command_result("No custom skills configured".to_string());
+                        let listing = list_discovered_skills(&self.state.working_dir);
+                        self.push_command_result(listing);
                     }
                 }
             }
@@ -437,6 +438,99 @@ impl App {
             }
         }
     }
+}
+
+/// Scan skill directories and list discovered skills with their metadata.
+fn list_discovered_skills(working_dir: &str) -> String {
+    let wd = std::path::Path::new(working_dir);
+    let skill_dirs: Vec<std::path::PathBuf> = [
+        wd.join(".opendev/skills"),
+        dirs::home_dir()
+            .map(|h| h.join(".opendev/skills"))
+            .unwrap_or_default(),
+    ]
+    .into_iter()
+    .filter(|p| p.is_dir())
+    .collect();
+
+    if skill_dirs.is_empty() {
+        return "No custom skills configured.\n\
+                Create skills in .opendev/skills/ (project) or ~/.opendev/skills/ (global)."
+            .to_string();
+    }
+
+    let mut entries: Vec<String> = Vec::new();
+    for dir in &skill_dirs {
+        let source = if dir.starts_with(wd) {
+            "project"
+        } else {
+            "global"
+        };
+        if let Ok(read_dir) = std::fs::read_dir(dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let (name, namespace, desc, context) = parse_skill_frontmatter(&content);
+                    let display_name = if namespace != "default" {
+                        format!("{namespace}:{name}")
+                    } else {
+                        name
+                    };
+                    let fork_tag = if context == "fork" { " [fork]" } else { "" };
+                    entries.push(format!(
+                        "  /{display_name}{fork_tag} — {desc} ({source})"
+                    ));
+                }
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        "No custom skills configured.\n\
+         Create skills in .opendev/skills/ (project) or ~/.opendev/skills/ (global)."
+            .to_string()
+    } else {
+        entries.sort();
+        format!("Custom skills ({}):\n{}", entries.len(), entries.join("\n"))
+    }
+}
+
+/// Extract name, namespace, description, and context from skill frontmatter.
+fn parse_skill_frontmatter(content: &str) -> (String, String, String, String) {
+    let mut name = String::new();
+    let mut namespace = "default".to_string();
+    let mut description = String::new();
+    let mut context = "inline".to_string();
+
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return (name, namespace, description, context);
+    }
+    // Find closing ---
+    if let Some(end) = trimmed[3..].find("\n---") {
+        let frontmatter = &trimmed[3..3 + end];
+        for line in frontmatter.lines() {
+            let line = line.trim();
+            if let Some((key, value)) = line.split_once(':') {
+                let key = key.trim();
+                let value = value.trim().trim_matches('"').trim_matches('\'');
+                match key {
+                    "name" => name = value.to_string(),
+                    "namespace" => namespace = value.to_string(),
+                    "description" => description = value.to_string(),
+                    "context" => context = value.to_string(),
+                    _ => {}
+                }
+            }
+        }
+    }
+    if description.is_empty() {
+        description = format!("Skill: {name}");
+    }
+    (name, namespace, description, context)
 }
 
 #[cfg(test)]
