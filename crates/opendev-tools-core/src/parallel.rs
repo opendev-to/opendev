@@ -15,7 +15,7 @@ use crate::traits::BaseTool;
 /// **Deprecated:** This hardcoded list is kept as a fallback for the legacy
 /// `partition()` method. New callers should use `partition_with_tools()` which
 /// consults `BaseTool::is_concurrent_safe()` instead.
-fn read_only_tools() -> HashSet<&'static str> {
+pub fn read_only_tools() -> HashSet<&'static str> {
     HashSet::from([
         // File reading
         "Read",

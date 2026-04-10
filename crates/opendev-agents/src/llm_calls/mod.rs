@@ -55,34 +55,26 @@ impl LlmCaller {
     /// 3. Merge consecutive same-role messages (user or assistant)
     /// 4. Remove orphaned tool results (no matching `tool_call_id` in any assistant message)
     pub fn clean_messages(messages: &[Value]) -> Vec<Value> {
-        let filtered = Self::filter_internal_and_strip(messages);
+        // Single clone at entry — all subsequent phases operate on owned Vec<Value>
+        // to avoid redundant per-message cloning.
+        let owned = messages.to_vec();
+        let filtered = Self::filter_internal_and_strip(owned);
         let filtered = Self::filter_whitespace_only(filtered);
         let merged = Self::merge_consecutive(filtered);
         Self::remove_orphaned_tool_results(merged)
     }
 
     /// Phase 1: Filter out Internal-class messages and strip `_`-prefixed keys.
-    fn filter_internal_and_strip(messages: &[Value]) -> Vec<Value> {
+    ///
+    /// Operates in-place to avoid cloning every message.
+    fn filter_internal_and_strip(mut messages: Vec<Value>) -> Vec<Value> {
+        messages.retain(|msg| msg.get("_msg_class").and_then(|v| v.as_str()) != Some("internal"));
+        for msg in &mut messages {
+            if let Some(obj) = msg.as_object_mut() {
+                obj.retain(|k, _| !k.starts_with('_'));
+            }
+        }
         messages
-            .iter()
-            .filter(|msg| msg.get("_msg_class").and_then(|v| v.as_str()) != Some("internal"))
-            .map(|msg| {
-                if let Some(obj) = msg.as_object() {
-                    if obj.keys().any(|k| k.starts_with('_')) {
-                        let cleaned: serde_json::Map<String, Value> = obj
-                            .iter()
-                            .filter(|(k, _)| !k.starts_with('_'))
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect();
-                        Value::Object(cleaned)
-                    } else {
-                        msg.clone()
-                    }
-                } else {
-                    msg.clone()
-                }
-            })
-            .collect()
     }
 
     /// Phase 2: Remove messages with empty or whitespace-only content.
@@ -175,6 +167,14 @@ impl LlmCaller {
     /// Phase 4: Remove tool result messages whose `tool_call_id` has no matching
     /// entry in any assistant message's `tool_calls` array.
     fn remove_orphaned_tool_results(messages: Vec<Value>) -> Vec<Value> {
+        // Early exit: skip expensive HashSet building if no tool messages exist
+        let has_tool_msgs = messages
+            .iter()
+            .any(|m| m.get("role").and_then(|v| v.as_str()) == Some("tool"));
+        if !has_tool_msgs {
+            return messages;
+        }
+
         let valid_ids: std::collections::HashSet<String> = messages
             .iter()
             .filter(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"))
@@ -198,10 +198,23 @@ impl LlmCaller {
 
     /// Build an LLM payload for an action call (with tools).
     pub fn build_action_payload(&self, messages: &[Value], tool_schemas: &[Value]) -> Value {
+        let tools_value = Value::Array(tool_schemas.to_vec());
+        self.build_action_payload_with_cached_tools(messages, tools_value)
+    }
+
+    /// Build an LLM payload using a pre-built `Value::Array` of tool schemas.
+    ///
+    /// This avoids re-cloning the tool schemas slice into a `Value::Array` on
+    /// every iteration. The caller can cache the `Value::Array` across iterations.
+    pub fn build_action_payload_with_cached_tools(
+        &self,
+        messages: &[Value],
+        tools: Value,
+    ) -> Value {
         let mut payload = serde_json::json!({
             "model": self.config.model,
             "messages": Self::clean_messages(messages),
-            "tools": tool_schemas,
+            "tools": tools,
             "tool_choice": "auto",
         });
 

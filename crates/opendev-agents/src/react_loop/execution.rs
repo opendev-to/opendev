@@ -15,6 +15,7 @@ use opendev_context::{ArtifactIndex, ContextCompactor};
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_runtime::{CostTracker, SessionDebugLogger, TodoManager};
 use opendev_tools_core::{ToolContext, ToolRegistry};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use super::ReactLoop;
@@ -30,7 +31,7 @@ impl ReactLoop {
         http_client: &AdaptedClient,
         messages: &mut Vec<Value>,
         tool_schemas: &[Value],
-        tool_registry: &ToolRegistry,
+        tool_registry: &Arc<ToolRegistry>,
         tool_context: &ToolContext,
         task_monitor: Option<&M>,
         event_callback: Option<&dyn crate::traits::AgentEventCallback>,
@@ -91,7 +92,7 @@ impl ReactLoop {
         http_client: &AdaptedClient,
         messages: &mut Vec<Value>,
         tool_schemas: &[Value],
-        tool_registry: &ToolRegistry,
+        tool_registry: &Arc<ToolRegistry>,
         tool_context: &ToolContext,
         task_monitor: Option<&M>,
         event_callback: Option<&dyn crate::traits::AgentEventCallback>,
@@ -194,6 +195,8 @@ impl ReactLoop {
                 task_monitor,
                 cancel,
                 debug_logger,
+                Some(tool_registry),
+                Some(tool_context),
             )
             .await
             {
@@ -204,6 +207,7 @@ impl ReactLoop {
             let super::phases::LlmCallResult {
                 body,
                 llm_latency_ms,
+                streaming_executor,
             } = llm_result;
 
             let super::phases::ProcessedResponse {
@@ -346,6 +350,7 @@ impl ReactLoop {
                         todo_manager,
                         cancel,
                         tool_approval_tx,
+                        streaming_executor.as_ref(),
                     )
                     .await
                     {
@@ -372,6 +377,7 @@ impl ReactLoop {
                         todo_manager,
                         cancel,
                         tool_approval_tx,
+                        streaming_executor.as_ref(),
                     )
                     .await
                     {

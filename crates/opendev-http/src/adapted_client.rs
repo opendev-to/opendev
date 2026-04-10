@@ -352,6 +352,9 @@ impl AdaptedClient {
         let mut tool_call_index: std::collections::HashMap<usize, usize> =
             std::collections::HashMap::new();
         let mut stop_reason: Option<String> = None;
+        // Track which tool call indices have already received FunctionCallDone
+        // (OpenAI Responses API emits them natively; Chat Completions does not).
+        let mut done_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut line_buf = String::new();
         let mut event_type: Option<String> = None;
 
@@ -483,6 +486,7 @@ impl AdaptedClient {
                                     if let Some(&tc_idx) = tool_call_index.get(index) {
                                         current_tool_args.insert(tc_idx, arguments.clone());
                                     }
+                                    done_indices.insert(*index);
                                 }
                                 StreamEvent::UsageUpdate {
                                     usage,
@@ -493,6 +497,23 @@ impl AdaptedClient {
                                     }
                                     if let Some(r) = sr {
                                         stop_reason = Some(r.clone());
+                                    }
+                                    // Synthesize FunctionCallDone for tool calls that
+                                    // never received a native Done event (Chat Completions
+                                    // providers don't emit them). This enables the streaming
+                                    // executor to start early execution.
+                                    for (&sse_idx, &tc_idx) in &tool_call_index {
+                                        if !done_indices.contains(&sse_idx) {
+                                            done_indices.insert(sse_idx);
+                                            let args = current_tool_args
+                                                .get(&tc_idx)
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            callback.on_event(&StreamEvent::FunctionCallDone {
+                                                index: sse_idx,
+                                                arguments: args,
+                                            });
+                                        }
                                     }
                                 }
                                 StreamEvent::Error(_) => {}
