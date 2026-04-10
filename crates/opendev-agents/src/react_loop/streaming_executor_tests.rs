@@ -56,10 +56,13 @@ fn test_write_tool_preparsed() {
     let preparsed = executor.take_preparsed_args("call_456");
     assert!(preparsed.is_some());
     let args = preparsed.unwrap().args_map;
-    assert_eq!(
-        args.get("file_path").and_then(|v| v.as_str()),
-        Some("/tmp/test.rs")
-    );
+
+    // Normalize separators to be OS-agnostic on Windows vs Unix
+    let got = args
+        .get("file_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.replace('\\', "/"));
+    assert_eq!(got.as_deref(), Some("/tmp/test.rs"));
 }
 
 /// Test that non-matching events are ignored.
