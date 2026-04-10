@@ -11,6 +11,7 @@ mod execution;
 mod helpers;
 mod loop_state;
 mod phases;
+pub(crate) mod streaming_executor;
 mod types;
 
 pub use config::ReactLoopConfig;

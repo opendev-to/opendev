@@ -22,6 +22,7 @@ use super::super::ReactLoop;
 use super::super::compaction::record_artifact;
 use super::super::emitter::{IterationEmitter, tool_result_display_output};
 use super::super::loop_state::LoopState;
+use super::super::streaming_executor::StreamingToolExecutor;
 use super::super::types::{IterationMetrics, LoopAction, READ_OPS, ToolCallMetric};
 
 /// Execute tool calls sequentially, handling permissions, approval, and post-processing.
@@ -38,13 +39,14 @@ pub(in crate::react_loop) async fn execute_sequential<M>(
     emitter: &IterationEmitter<'_>,
     iter_metrics: &mut IterationMetrics,
     iter_start: Instant,
-    tool_registry: &ToolRegistry,
+    tool_registry: &Arc<ToolRegistry>,
     tool_context: &ToolContext,
     task_monitor: Option<&M>,
     artifact_index: Option<&Mutex<ArtifactIndex>>,
     todo_manager: Option<&Mutex<TodoManager>>,
     cancel: Option<&CancellationToken>,
     tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
+    streaming_executor: Option<&StreamingToolExecutor>,
 ) -> Option<LoopAction>
 where
     M: TaskMonitor + ?Sized,
@@ -103,21 +105,44 @@ where
             .and_then(|n| n.as_str())
             .unwrap_or("unknown");
 
-        let args_str = tc
-            .get("function")
-            .and_then(|f| f.get("arguments"))
-            .and_then(|a| a.as_str())
-            .unwrap_or("{}");
-
-        let args_value: Value = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
-        let args_map: std::collections::HashMap<String, Value> = args_value
-            .as_object()
-            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
-
-        let wd_str = tool_context.working_dir.to_string_lossy().to_string();
-        let mut args_map =
-            opendev_tools_core::normalizer::normalize_params(tool_name, args_map, Some(&wd_str));
+        // Use pre-parsed arguments from the streaming executor when available,
+        // skipping redundant JSON parsing and normalization.
+        let (args_value, mut args_map) = if let Some(executor) = streaming_executor
+            && let Some(preparsed) =
+                executor.take_preparsed_args(tc.get("id").and_then(|id| id.as_str()).unwrap_or(""))
+        {
+            debug!(
+                tool = tool_name,
+                "Using pre-parsed args from streaming executor"
+            );
+            // Reconstruct args_value from pre-parsed map for record_artifact()
+            let value = Value::Object(
+                preparsed
+                    .args_map
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            );
+            (value, preparsed.args_map)
+        } else {
+            let args_str = tc
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(|a| a.as_str())
+                .unwrap_or("{}");
+            let args_value: Value = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+            let args_map: std::collections::HashMap<String, Value> = args_value
+                .as_object()
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+            let wd_str = tool_context.working_dir.to_string_lossy().to_string();
+            let args_map = opendev_tools_core::normalizer::normalize_params(
+                tool_name,
+                args_map,
+                Some(&wd_str),
+            );
+            (args_value, args_map)
+        };
 
         let tool_call_id_str = tc.get("id").and_then(|id| id.as_str()).unwrap_or("unknown");
 
@@ -358,6 +383,72 @@ where
             }
         }
 
+        // Check for an early result from the streaming executor (read-only tools
+        // may have already completed during LLM streaming).
+        if let Some(executor) = streaming_executor
+            && let Some(early) = executor.take_result(tool_call_id_str)
+        {
+            debug!(
+                tool = tool_name,
+                call_id = tool_call_id_str,
+                duration_ms = early.duration_ms,
+                "Using early result from streaming executor"
+            );
+            let tool_result = early.result;
+            let tool_duration_ms = early.duration_ms;
+
+            iter_metrics.tool_calls.push(ToolCallMetric {
+                tool_name: tool_name.to_string(),
+                duration_ms: tool_duration_ms,
+                success: tool_result.success,
+            });
+
+            if tool_result.success
+                && let Some(ai) = artifact_index
+            {
+                record_artifact(ai, tool_name, &args_value, &tool_result);
+            }
+
+            let output_str = tool_result_display_output(&tool_result);
+            emitter.emit_tool_result(
+                tool_call_id_str,
+                tool_name,
+                &output_str,
+                tool_result.success,
+            );
+            emitter.emit_tool_finished(tool_call_id_str, tool_result.success);
+
+            if !tool_result.success {
+                any_tool_failed = true;
+            }
+
+            let mut result_value = if tool_result.success {
+                serde_json::json!({
+                    "success": true,
+                    "output": tool_result.output.as_deref().unwrap_or(""),
+                })
+            } else {
+                serde_json::json!({
+                    "success": false,
+                    "error": tool_result.error.as_deref().unwrap_or("Tool execution failed"),
+                })
+            };
+            if let Some(ref suffix) = tool_result.llm_suffix {
+                result_value["llm_suffix"] = serde_json::json!(suffix);
+            }
+
+            let formatted = ReactLoop::format_tool_result(tool_name, &result_value);
+            messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": tool_call_id_str,
+                "name": tool_name,
+                "content": formatted,
+            }));
+
+            completed_tool_count += 1;
+            continue;
+        }
+
         // Execute the tool
         let exec_tool_context = match cancel {
             Some(ct) => {
@@ -369,6 +460,7 @@ where
         };
 
         let tool_start = Instant::now();
+        let is_task_stop = matches!(tool_name, "TaskStop" | "task_complete");
         let (tool_result, was_interrupted) = {
             let exec_fut = async {
                 tool_registry
@@ -382,8 +474,11 @@ where
                 iteration = state.iteration,
             ));
 
+            // TaskStop must never be interrupted by background completion events.
+            // Cancelling TaskStop creates an orphaned tool call with no result,
+            // which triggers repeated nudge → TaskStop → interrupt cycles.
             match cancel {
-                Some(ct) => {
+                Some(ct) if !is_task_stop => {
                     tokio::select! {
                         result = exec_fut => (result, false),
                         _ = ct.cancelled() => {
@@ -391,7 +486,7 @@ where
                         }
                     }
                 }
-                None => (exec_fut.await, false),
+                _ => (exec_fut.await, false),
             }
         };
         let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
@@ -469,6 +564,19 @@ where
             "content": formatted,
         }));
 
+        // Track background task spawns for completion nudge.
+        // SpawnTeammate always runs in background; SpawnSubagent does when
+        // run_in_background=true. Both return "task_id:" on success.
+        if tool_result.success
+            && matches!(tool_name, "SpawnTeammate" | "Agent" | "spawn_subagent")
+            && tool_result
+                .output
+                .as_deref()
+                .is_some_and(|o| o.contains("task_id:") || o.contains("Running in background"))
+        {
+            state.bg_tasks_spawned += 1;
+        }
+
         // Capture skill model override from invoke_skill
         if matches!(tool_name, "Skill" | "invoke_skill")
             && tool_result.success
@@ -479,6 +587,20 @@ where
         {
             info!(model, "Skill model override activated");
             state.skill_model_override = Some(model.to_string());
+        }
+
+        // Activate deferred tools returned by ToolSearch
+        if tool_name == "ToolSearch"
+            && tool_result.success
+            && let Some(tools) = tool_result
+                .metadata
+                .get("activated_tools")
+                .and_then(|v| v.as_array())
+        {
+            for name in tools.iter().filter_map(|v| v.as_str()) {
+                state.activated_tools.insert(name.to_string());
+                info!(tool = %name, "Deferred tool activated via ToolSearch");
+            }
         }
 
         // Reset proactive reminder counters on relevant tool use
@@ -821,13 +943,14 @@ pub(in crate::react_loop) async fn execute_batched<M>(
     emitter: &IterationEmitter<'_>,
     iter_metrics: &mut IterationMetrics,
     iter_start: Instant,
-    tool_registry: &ToolRegistry,
+    tool_registry: &Arc<ToolRegistry>,
     tool_context: &ToolContext,
     task_monitor: Option<&M>,
     artifact_index: Option<&Mutex<ArtifactIndex>>,
     todo_manager: Option<&Mutex<TodoManager>>,
     cancel: Option<&CancellationToken>,
     tool_approval_tx: Option<&opendev_runtime::ToolApprovalSender>,
+    streaming_executor: Option<&StreamingToolExecutor>,
 ) -> Option<LoopAction>
 where
     M: TaskMonitor + ?Sized,
@@ -842,7 +965,20 @@ where
         })
         .collect();
 
-    let batches = ParallelPolicy::partition(&parallel_calls);
+    // Look up tool instances for input-dependent concurrency decisions
+    let tool_instances: Vec<_> = parallel_calls
+        .iter()
+        .filter_map(|tc| tool_registry.get(&tc.name))
+        .collect();
+    let tool_refs: Vec<&dyn opendev_tools_core::BaseTool> =
+        tool_instances.iter().map(|t| t.as_ref()).collect();
+
+    let batches = if tool_refs.len() == parallel_calls.len() {
+        ParallelPolicy::partition_with_tools(&parallel_calls, &tool_refs)
+    } else {
+        // Fallback if some tools weren't found in registry
+        ParallelPolicy::partition(&parallel_calls)
+    };
 
     // If no batch has >1 element, fall through to sequential execution
     if !ParallelPolicy::has_parallel_batches(&batches) {
@@ -928,6 +1064,7 @@ where
                 todo_manager,
                 cancel,
                 tool_approval_tx,
+                streaming_executor,
             )
             .await
             {
@@ -1007,7 +1144,7 @@ async fn execute_concurrent_batch(
     state: &mut LoopState,
     emitter: &IterationEmitter<'_>,
     iter_metrics: &mut IterationMetrics,
-    tool_registry: &ToolRegistry,
+    tool_registry: &Arc<ToolRegistry>,
     tool_context: &ToolContext,
     artifact_index: Option<&Mutex<ArtifactIndex>>,
     cancel: Option<&CancellationToken>,

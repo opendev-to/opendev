@@ -202,6 +202,7 @@ impl TuiRunner {
     }
 
     /// Attach a Telegram remote control session.
+    #[allow(dead_code)]
     pub fn with_remote_control(
         mut self,
         event_tx: RemoteEventSender,
@@ -464,8 +465,8 @@ impl TuiRunner {
                 // Handle undo sentinel
                 if msg == "\x00__UNDO__" {
                     info!("TUI: undo requested");
-                    let result = if let Ok(mut mgr) = runtime.snapshot_manager.lock() {
-                        mgr.undo_last()
+                    let result = if let Ok(mut mgr) = runtime.checkpoint_manager.lock() {
+                        mgr.undo_last_turn()
                     } else {
                         None
                     };
@@ -997,20 +998,15 @@ impl TuiRunner {
                     Ok(result) => {
                         let _ = event_tx.send(AppEvent::TaskProgressFinished);
 
-                        // Emit snapshot for undo stack after successful query.
-                        // Run on the blocking thread pool so the synchronous git
-                        // operations (git add --all, git write-tree) don't starve
-                        // the tokio runtime and freeze the TUI spinner.
+                        // Emit undo depth to TUI after successful query.
+                        // Turn was already ended in query.rs; just report the depth.
                         if !result.interrupted {
-                            let snap_mgr = runtime.snapshot_manager.clone();
-                            let snap_tx = event_tx.clone();
-                            tokio::task::spawn_blocking(move || {
-                                if let Ok(mut mgr) = snap_mgr.lock()
-                                    && let Some(hash) = mgr.track()
-                                {
-                                    let _ = snap_tx.send(AppEvent::SnapshotTaken { hash });
-                                }
-                            });
+                            let undo_depth = runtime
+                                .checkpoint_manager
+                                .lock()
+                                .map(|m| m.turn_count())
+                                .unwrap_or(0);
+                            let _ = event_tx.send(AppEvent::TurnCheckpointed { undo_depth });
                         }
 
                         // Surface session title to TUI

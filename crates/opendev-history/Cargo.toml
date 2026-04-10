@@ -19,6 +19,7 @@ regex = { workspace = true }
 fd-lock = "4"
 dirs = "6"
 uuid = { workspace = true }
+similar = "2"
 
 [dev-dependencies]
 tempfile = { workspace = true }

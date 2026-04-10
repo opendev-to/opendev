@@ -15,6 +15,7 @@ use opendev_context::{ArtifactIndex, ContextCompactor};
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_runtime::{CostTracker, SessionDebugLogger, TodoManager};
 use opendev_tools_core::{ToolContext, ToolRegistry};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use super::ReactLoop;
@@ -30,7 +31,7 @@ impl ReactLoop {
         http_client: &AdaptedClient,
         messages: &mut Vec<Value>,
         tool_schemas: &[Value],
-        tool_registry: &ToolRegistry,
+        tool_registry: &Arc<ToolRegistry>,
         tool_context: &ToolContext,
         task_monitor: Option<&M>,
         event_callback: Option<&dyn crate::traits::AgentEventCallback>,
@@ -91,7 +92,7 @@ impl ReactLoop {
         http_client: &AdaptedClient,
         messages: &mut Vec<Value>,
         tool_schemas: &[Value],
-        tool_registry: &ToolRegistry,
+        tool_registry: &Arc<ToolRegistry>,
         tool_context: &ToolContext,
         task_monitor: Option<&M>,
         event_callback: Option<&dyn crate::traits::AgentEventCallback>,
@@ -107,6 +108,12 @@ impl ReactLoop {
         M: TaskMonitor + ?Sized,
     {
         let mut state = LoopState::new(&tool_context.working_dir);
+
+        // Tool schema deferral: if core tools are marked, only send core +
+        // activated tool schemas to the LLM. This mirrors Claude Code's
+        // ToolSearch pattern, reducing input tokens from ~13k to ~6k.
+        let core_tools = tool_registry.core_tool_names();
+        let use_deferral = !core_tools.is_empty();
 
         loop {
             state.iteration += 1;
@@ -158,16 +165,38 @@ impl ReactLoop {
                 return result;
             }
 
+            // Build active tool schemas: core tools + any activated via ToolSearch
+            let active_schemas: Vec<Value>;
+            let schemas_to_send = if use_deferral {
+                active_schemas = tool_schemas
+                    .iter()
+                    .filter(|s| {
+                        let name = s
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("");
+                        core_tools.contains(name) || state.activated_tools.contains(name)
+                    })
+                    .cloned()
+                    .collect();
+                &active_schemas[..]
+            } else {
+                tool_schemas
+            };
+
             let llm_result = match super::phases::execute_llm_call(
                 caller,
                 http_client,
                 messages,
-                tool_schemas,
+                schemas_to_send,
                 &state,
                 &emitter,
                 task_monitor,
                 cancel,
                 debug_logger,
+                Some(tool_registry),
+                Some(tool_context),
             )
             .await
             {
@@ -178,6 +207,7 @@ impl ReactLoop {
             let super::phases::LlmCallResult {
                 body,
                 llm_latency_ms,
+                streaming_executor,
             } = llm_result;
 
             let super::phases::ProcessedResponse {
@@ -320,6 +350,7 @@ impl ReactLoop {
                         todo_manager,
                         cancel,
                         tool_approval_tx,
+                        streaming_executor.as_ref(),
                     )
                     .await
                     {
@@ -346,6 +377,7 @@ impl ReactLoop {
                         todo_manager,
                         cancel,
                         tool_approval_tx,
+                        streaming_executor.as_ref(),
                     )
                     .await
                     {

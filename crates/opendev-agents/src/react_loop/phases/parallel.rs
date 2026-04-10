@@ -29,7 +29,7 @@ pub(in crate::react_loop) async fn execute_parallel<M>(
     iter_metrics: &mut IterationMetrics,
     iter_start: std::time::Instant,
     response_content: Option<&str>,
-    tool_registry: &ToolRegistry,
+    tool_registry: &Arc<ToolRegistry>,
     tool_context: &ToolContext,
     task_monitor: Option<&M>,
     cancel: Option<&CancellationToken>,

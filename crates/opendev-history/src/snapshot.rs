@@ -399,6 +399,69 @@ impl SnapshotManager {
         let _ = self.git(&["gc", "--prune=7.days.ago", "--quiet"]);
     }
 
+    /// Run garbage collection on ALL snapshot directories under `~/.opendev/snapshot/`.
+    ///
+    /// Also removes orphaned snapshots whose original project directory no longer exists.
+    /// This is meant to be called once at startup (in a background thread) to reclaim
+    /// disk space that accumulates from unpacked git objects.
+    pub fn cleanup_all() {
+        let snapshot_base = opendev_config::Paths::default().data_dir().join("snapshot");
+
+        let entries = match std::fs::read_dir(&snapshot_base) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            // Check if this is a valid bare git repo
+            if !path.join("HEAD").exists() {
+                // Not a git repo — remove the stale directory
+                info!("Removing non-git snapshot dir: {}", path.display());
+                let _ = std::fs::remove_dir_all(&path);
+                continue;
+            }
+
+            // Read the project path marker to check if the project still exists
+            let marker = path.join("OPENDEV_PROJECT_PATH");
+            if let Ok(project_path) = std::fs::read_to_string(&marker) {
+                let project_path = project_path.trim();
+                if !project_path.is_empty() && !Path::new(project_path).exists() {
+                    info!(
+                        "Removing orphaned snapshot for deleted project: {}",
+                        project_path
+                    );
+                    let _ = std::fs::remove_dir_all(&path);
+                    continue;
+                }
+            }
+
+            // Run git gc to repack loose objects
+            let result = Command::new("git")
+                .arg("--git-dir")
+                .arg(path.to_string_lossy().as_ref())
+                .args(["gc", "--aggressive", "--prune=now", "--quiet"])
+                .output();
+
+            match result {
+                Ok(output) if output.status.success() => {
+                    debug!("GC completed for snapshot: {}", path.display());
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    debug!("GC failed for {}: {}", path.display(), stderr);
+                }
+                Err(e) => {
+                    debug!("Failed to run git gc on {}: {}", path.display(), e);
+                }
+            }
+        }
+    }
+
     fn ensure_initialized(&mut self) -> bool {
         if self.initialized {
             return true;
@@ -412,6 +475,11 @@ impl SnapshotManager {
         // Check if already a git repo
         if self.shadow_dir.join("HEAD").exists() {
             self.initialized = true;
+            // Ensure project path marker exists (backfill for repos created before cleanup)
+            let marker = self.shadow_dir.join("OPENDEV_PROJECT_PATH");
+            if !marker.exists() {
+                let _ = std::fs::write(&marker, &self.project_dir);
+            }
             return true;
         }
 
@@ -419,6 +487,9 @@ impl SnapshotManager {
         match self.git(&["init", "--bare"]) {
             Ok(_) => {
                 self.initialized = true;
+                // Write project path marker for orphan detection during cleanup
+                let marker = self.shadow_dir.join("OPENDEV_PROJECT_PATH");
+                let _ = std::fs::write(&marker, &self.project_dir);
                 info!(
                     "Shadow snapshot repo initialized at {}",
                     self.shadow_dir.display()

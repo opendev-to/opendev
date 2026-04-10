@@ -10,6 +10,7 @@
 pub mod event_store;
 pub mod export;
 pub mod fair_rwlock;
+pub mod file_checkpoint;
 pub mod file_locks;
 pub mod index;
 pub mod listing;
@@ -24,6 +25,7 @@ pub mod topic_detector;
 
 pub use export::export_markdown;
 pub use fair_rwlock::FairRwLock;
+pub use file_checkpoint::FileCheckpointManager;
 pub use file_locks::FileLock;
 pub use index::SessionIndex;
 pub use listing::SessionListing;

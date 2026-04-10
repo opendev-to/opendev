@@ -170,10 +170,8 @@ pub struct AppState {
     pub leader_pending: bool,
     /// Timestamp of leader key press (for timeout).
     pub leader_timestamp: Option<Instant>,
-    /// Undo stack: tree hashes from snapshot manager.
-    pub undo_stack: Vec<String>,
-    /// Redo stack: tree hashes for redo.
-    pub redo_stack: Vec<String>,
+    /// Number of checkpoint turns available for undo.
+    pub undo_depth: usize,
     /// Whether debug panel is open.
     pub debug_panel_open: bool,
     /// Session title (set by the agent).
@@ -277,8 +275,7 @@ impl Default for AppState {
             toasts: Vec::new(),
             leader_pending: false,
             leader_timestamp: None,
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
+            undo_depth: 0,
             debug_panel_open: false,
             session_title: None,
             session_id: None,

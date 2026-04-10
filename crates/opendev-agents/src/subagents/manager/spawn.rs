@@ -69,6 +69,7 @@ impl SubagentManager {
         cancel_token: Option<CancellationToken>,
         debug_logger: Option<&opendev_runtime::SessionDebugLogger>,
         model_override: Option<&str>,
+        mailbox: Option<&opendev_runtime::Mailbox>,
     ) -> Result<SubagentRunResult, AgentError> {
         let spec = self.get(subagent_name).ok_or_else(|| {
             AgentError::ConfigError(format!("Unknown subagent type: {subagent_name}"))
@@ -247,7 +248,7 @@ impl SubagentManager {
             cancel: tool_context.cancel_token.as_ref(),
             tool_approval_tx,
             debug_logger,
-            mailbox: None,
+            mailbox,
         };
 
         // Run the isolated ReAct loop via the selected runner

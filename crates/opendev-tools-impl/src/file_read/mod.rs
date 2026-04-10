@@ -115,6 +115,26 @@ impl BaseTool for FileReadTool {
         })
     }
 
+    fn is_read_only(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn is_concurrent_safe(&self, _args: &HashMap<String, serde_json::Value>) -> bool {
+        true
+    }
+
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Read
+    }
+
+    fn truncation_rule(&self) -> Option<opendev_tools_core::TruncationRule> {
+        Some(opendev_tools_core::TruncationRule::head(15000))
+    }
+
+    fn search_hint(&self) -> Option<&str> {
+        Some("read file contents by path with line ranges")
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

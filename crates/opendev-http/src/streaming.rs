@@ -52,6 +52,29 @@ impl<F: Fn(&StreamEvent) + Send + Sync> StreamCallback for FnStreamCallback<F> {
     }
 }
 
+/// A composite callback that fans out events to multiple callbacks.
+///
+/// Used to combine the UI emitter callback with the streaming tool executor,
+/// so both receive events during a single streaming LLM call.
+pub struct CompositeStreamCallback<'a> {
+    callbacks: Vec<&'a dyn StreamCallback>,
+}
+
+impl<'a> CompositeStreamCallback<'a> {
+    /// Create a composite from a list of callbacks.
+    pub fn new(callbacks: Vec<&'a dyn StreamCallback>) -> Self {
+        Self { callbacks }
+    }
+}
+
+impl StreamCallback for CompositeStreamCallback<'_> {
+    fn on_event(&self, event: &StreamEvent) {
+        for cb in &self.callbacks {
+            cb.on_event(event);
+        }
+    }
+}
+
 /// Parse a single SSE data line (after "data: " prefix) as JSON.
 pub fn parse_sse_data(line: &str) -> Option<Value> {
     let data = line.strip_prefix("data: ")?;

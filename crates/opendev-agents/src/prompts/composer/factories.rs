@@ -98,6 +98,13 @@ pub fn create_default_composer(templates_dir: impl AsRef<Path>) -> PromptCompose
         CachePolicy::Static,
     );
     composer.register_section_with_policy(
+        "agent_team_guide",
+        "system/main/main-agent-team-guide.md",
+        Some(ctx_bool("has_agent_teams")),
+        66,
+        CachePolicy::Static,
+    );
+    composer.register_section_with_policy(
         "git_workflow",
         "system/main/main-git-workflow.md",
         Some(ctx_bool("in_git_repo")),

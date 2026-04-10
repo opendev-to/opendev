@@ -79,6 +79,14 @@ impl BaseTool for MemoryTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Memory
+    }
+
+    fn truncation_rule(&self) -> Option<opendev_tools_core::TruncationRule> {
+        Some(opendev_tools_core::TruncationRule::head(10000))
+    }
+
     async fn execute(
         &self,
         args: HashMap<String, serde_json::Value>,

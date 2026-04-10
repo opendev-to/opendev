@@ -36,6 +36,10 @@ impl BaseTool for ClearTodosTool {
         })
     }
 
+    fn category(&self) -> opendev_tools_core::ToolCategory {
+        opendev_tools_core::ToolCategory::Meta
+    }
+
     async fn execute(
         &self,
         _args: HashMap<String, serde_json::Value>,
