@@ -39,6 +39,9 @@ fn test_collector_runner_empty() {
         todo_manager: None,
         shared_state: None,
         last_user_query: None,
+        cumulative_input_tokens: None,
+        session_id: None,
+        recent_messages: None,
     };
     rt.block_on(runner.run(&ctx, &mut messages));
     assert!(messages.is_empty());

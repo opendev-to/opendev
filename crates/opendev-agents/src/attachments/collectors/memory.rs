@@ -16,6 +16,7 @@ use std::time::SystemTime;
 
 use tracing::{debug, warn};
 
+use super::memory_selector::MemorySelector;
 use crate::attachments::{Attachment, CadenceGate, ContextCollector, TurnContext};
 use crate::prompts::reminders::MessageClass;
 
@@ -31,37 +32,6 @@ const MAX_FILE_BYTES: usize = 4096;
 const MAX_SELECTIONS: usize = 5;
 /// Cumulative byte limit per session (60 KB).
 const MAX_SESSION_BYTES: usize = 60 * 1024;
-
-/// Cheap models per provider for the selection side-query.
-const CHEAP_MODELS: &[(&str, &str)] = &[
-    ("openai", "gpt-4o-mini"),
-    ("anthropic", "claude-3-5-haiku-20241022"),
-    (
-        "fireworks",
-        "accounts/fireworks/models/llama-v3p1-8b-instruct",
-    ),
-];
-
-/// Env var names per provider.
-const ENV_KEYS: &[(&str, &str)] = &[
-    ("openai", "OPENAI_API_KEY"),
-    ("anthropic", "ANTHROPIC_API_KEY"),
-    ("fireworks", "FIREWORKS_API_KEY"),
-];
-
-/// API endpoint per provider.
-fn api_endpoint(provider: &str) -> &'static str {
-    match provider {
-        "fireworks" => "https://api.fireworks.ai/inference/v1/chat/completions",
-        _ => "https://api.openai.com/v1/chat/completions",
-    }
-}
-
-const SELECTION_PROMPT: &str = "\
-You select memories relevant to the current coding task. \
-Given a list of memory files with descriptions, return a JSON array of filenames \
-(max 5) that are most relevant to the user's query. Return [] if none are relevant. \
-Only return the JSON array, no other text.";
 
 // ---------------------------------------------------------------------------
 // Memory file entry & manifest scanning
@@ -211,83 +181,33 @@ fn read_memory_file(working_dir: &Path, filename: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// LLM-based memory selector
+// Staleness tracking
 // ---------------------------------------------------------------------------
 
-/// Makes a cheap LLM side-query to select relevant memory files.
-struct MemorySelector {
-    provider: String,
-    model: String,
-    api_key: String,
-    client: reqwest::Client,
-}
+/// Return a human-readable staleness annotation for a memory file.
+///
+/// - Less than 1 day: no annotation
+/// - 1–7 days: informational
+/// - 7–30 days: may be outdated
+/// - Over 30 days: warning to verify
+fn staleness_annotation(modified: SystemTime) -> Option<String> {
+    let days_ago = SystemTime::now()
+        .duration_since(modified)
+        .ok()
+        .map(|d| d.as_secs() / 86400)?;
 
-impl MemorySelector {
-    /// Try to create a selector by resolving a cheap model and API key.
-    fn try_new() -> Option<Self> {
-        // Try each provider in order
-        for &(prov, model) in CHEAP_MODELS {
-            let env_key = ENV_KEYS
-                .iter()
-                .find(|&&(p, _)| p == prov)
-                .map(|&(_, k)| k)
-                .unwrap_or("");
-            if let Ok(key) = std::env::var(env_key)
-                && !key.is_empty()
-            {
-                return Some(Self {
-                    provider: prov.to_string(),
-                    model: model.to_string(),
-                    api_key: key,
-                    client: reqwest::Client::new(),
-                });
-            }
-        }
-        None
-    }
-
-    /// Call the LLM to select relevant memory filenames.
-    async fn select(
-        &self,
-        manifest: &str,
-        user_query: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-        let endpoint = api_endpoint(&self.provider);
-
-        let user_content = format!("Memory files:\n{manifest}\n\nCurrent task: {user_query}");
-
-        let payload = serde_json::json!({
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": SELECTION_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            "max_tokens": 200,
-            "temperature": 0.0,
-        });
-
-        let resp = self
-            .client
-            .post(endpoint)
-            .bearer_auth(&self.api_key)
-            .json(&payload)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            return Err(format!("Memory selector API returned {}", resp.status()).into());
-        }
-
-        let body: serde_json::Value = resp.json().await?;
-        let content = body
-            .pointer("/choices/0/message/content")
-            .and_then(|v| v.as_str())
-            .ok_or("No content in memory selector response")?;
-
-        // Parse JSON array of filenames from the response
-        let filenames: Vec<String> = serde_json::from_str(content.trim())?;
-        Ok(filenames.into_iter().take(MAX_SELECTIONS).collect())
+    match days_ago {
+        0 => None,
+        1..=6 => Some(format!(
+            "Updated {days_ago} day{} ago",
+            if days_ago == 1 { "" } else { "s" }
+        )),
+        7..=30 => Some(format!(
+            "Updated {days_ago} days ago \u{2014} may be outdated, verify before acting on this"
+        )),
+        _ => Some(format!(
+            "WARNING: Last updated {days_ago} days ago. Verify against current code before relying on this."
+        )),
     }
 }
 
@@ -298,12 +218,18 @@ impl MemorySelector {
 /// Semantic memory collector that selects relevant memory files per query.
 ///
 /// Falls back to the full MEMORY.md index when the LLM side-query is unavailable.
+///
+/// Uses a prefetch mechanism: `pre_fire()` spawns the LLM side-query as a
+/// background task, and `collect()` awaits its result, overlapping memory
+/// retrieval with other pre-turn work.
 pub struct SemanticMemoryCollector {
     cadence: CadenceGate,
     last_query_hash: AtomicU64,
     selector: Option<MemorySelector>,
     surfaced_files: Mutex<HashSet<String>>,
     cumulative_bytes: AtomicUsize,
+    /// Prefetched result from `pre_fire()`, consumed by `collect()`.
+    prefetch_result: Mutex<Option<String>>,
 }
 
 impl SemanticMemoryCollector {
@@ -314,6 +240,7 @@ impl SemanticMemoryCollector {
             selector: MemorySelector::try_new(),
             surfaced_files: Mutex::new(HashSet::new()),
             cumulative_bytes: AtomicUsize::new(0),
+            prefetch_result: Mutex::new(None),
         }
     }
 
@@ -383,7 +310,20 @@ impl SemanticMemoryCollector {
 
         match selector.select(&manifest, user_query).await {
             Ok(filenames) if !filenames.is_empty() => {
-                self.format_selected_memories(ctx.working_dir, &filenames)
+                // Build (filename, modified) pairs for staleness tracking
+                let selections: Vec<(String, SystemTime)> = filenames
+                    .into_iter()
+                    .take(MAX_SELECTIONS)
+                    .map(|name| {
+                        let mtime = entries
+                            .iter()
+                            .find(|e| e.filename == name)
+                            .map(|e| e.modified)
+                            .unwrap_or(SystemTime::UNIX_EPOCH);
+                        (name, mtime)
+                    })
+                    .collect();
+                self.format_selected_memories(ctx.working_dir, &selections)
             }
             Ok(_) => {
                 debug!("Memory selector returned no relevant files");
@@ -398,13 +338,19 @@ impl SemanticMemoryCollector {
     }
 
     /// Read and format selected memory files, respecting dedup and byte limits.
-    fn format_selected_memories(&self, working_dir: &Path, filenames: &[String]) -> Option<String> {
+    ///
+    /// Each selection is a `(filename, modified_time)` pair for staleness tracking.
+    fn format_selected_memories(
+        &self,
+        working_dir: &Path,
+        selections: &[(String, SystemTime)],
+    ) -> Option<String> {
         let mut surfaced = self.surfaced_files.lock().unwrap();
         let cumulative = self.cumulative_bytes.load(Ordering::Relaxed);
         let mut remaining_budget = MAX_SESSION_BYTES.saturating_sub(cumulative);
 
         let mut sections = Vec::new();
-        for filename in filenames {
+        for (filename, modified) in selections {
             if surfaced.contains(filename) {
                 continue;
             }
@@ -417,7 +363,13 @@ impl SemanticMemoryCollector {
                 if bytes > remaining_budget {
                     break;
                 }
-                sections.push(format!("## Memory: {filename}\n\n{content}"));
+                let staleness = staleness_annotation(*modified);
+                let header = if let Some(ref note) = staleness {
+                    format!("## Memory: {filename}\n\n_{note}_\n\n{content}")
+                } else {
+                    format!("## Memory: {filename}\n\n{content}")
+                };
+                sections.push(header);
                 surfaced.insert(filename.clone());
                 remaining_budget -= bytes;
                 self.cumulative_bytes.fetch_add(bytes, Ordering::Relaxed);
@@ -449,8 +401,15 @@ impl ContextCollector for SemanticMemoryCollector {
         self.cadence.should_fire(ctx.turn_number)
     }
 
-    async fn collect(&self, ctx: &TurnContext<'_>) -> Option<Attachment> {
-        let content = self.collect_memories(ctx).await?;
+    async fn pre_fire(&self, ctx: &TurnContext<'_>) {
+        // Start memory collection early; result is stored for collect() to consume
+        let result = self.collect_memories(ctx).await;
+        *self.prefetch_result.lock().unwrap() = result;
+    }
+
+    async fn collect(&self, _ctx: &TurnContext<'_>) -> Option<Attachment> {
+        // Consume the prefetched result (set by pre_fire)
+        let content = self.prefetch_result.lock().unwrap().take()?;
 
         Some(Attachment {
             name: "memory",
@@ -467,6 +426,7 @@ impl ContextCollector for SemanticMemoryCollector {
         self.cadence.reset();
         self.last_query_hash.store(0, Ordering::Relaxed);
         // Don't reset surfaced_files or cumulative_bytes — they're session-scoped
+        *self.prefetch_result.lock().unwrap() = None;
     }
 }
 
