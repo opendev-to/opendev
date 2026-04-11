@@ -9,6 +9,13 @@ fn make_metadata(name: &str, namespace: &str, source: SkillSource) -> SkillMetad
         source,
         model: None,
         agent: None,
+        paths: vec![],
+        context: SkillContext::default(),
+        effort: SkillEffort::default(),
+        allowed_tools: vec![],
+        disable_model_invocation: false,
+        user_invocable: true,
+        hooks: vec![],
     }
 }
 

@@ -3999,6 +3999,7 @@ dependencies = [
  "criterion",
  "dirs 6.0.0",
  "futures",
+ "globset",
  "opendev-config",
  "opendev-context",
  "opendev-http",

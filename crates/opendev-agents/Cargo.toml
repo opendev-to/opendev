@@ -24,6 +24,7 @@ thiserror = { workspace = true }
 regex = { workspace = true }
 futures = { workspace = true }
 dirs = "6"
+globset = "0.4"
 reqwest = { workspace = true }
 
 [dev-dependencies]
