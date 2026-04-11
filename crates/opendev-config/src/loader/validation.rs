@@ -83,6 +83,7 @@ impl ConfigLoader {
             "plan_mode_plan_agent_count",
             "plan_mode_explore_variant",
             "instructions",
+            "instruction_excludes",
             "skill_paths",
             "skill_urls",
             "model_variants",

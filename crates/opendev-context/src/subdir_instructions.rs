@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 
 use tracing::debug;
 
+use crate::environment::frontmatter::{parse_frontmatter, strip_html_comments};
+
 /// Recognized instruction file names (same order as environment.rs).
 const INSTRUCTION_FILENAMES: &[&str] = &["AGENTS.md", "CLAUDE.md", "CONTEXT.md"];
 
@@ -40,6 +42,8 @@ pub struct SubdirInstruction {
     pub relative_path: String,
     /// File contents.
     pub content: String,
+    /// For conditional rules: glob patterns from frontmatter `paths` field.
+    pub path_globs: Option<Vec<String>>,
 }
 
 impl SubdirInstructionTracker {
@@ -84,94 +88,32 @@ impl SubdirInstructionTracker {
             // Check each instruction filename in this directory
             for filename in INSTRUCTION_FILENAMES {
                 let candidate = current.join(filename);
-                if let Ok(canonical) = candidate.canonicalize() {
-                    if self.injected.contains(&canonical) {
-                        continue; // Already injected
-                    }
-
-                    // Read the file
-                    if let Ok(content) = std::fs::read_to_string(&canonical) {
-                        let content = if content.len() > MAX_INSTRUCTION_SIZE {
-                            content[..MAX_INSTRUCTION_SIZE].to_string()
-                        } else {
-                            content
-                        };
-
-                        let relative = canonical
-                            .strip_prefix(&canonical_root)
-                            .unwrap_or(&canonical)
-                            .display()
-                            .to_string();
-
-                        debug!(path = %relative, "Injecting subdirectory instruction file");
-
-                        self.injected.insert(canonical.clone());
-                        results.push(SubdirInstruction {
-                            path: canonical,
-                            relative_path: relative,
-                            content,
-                        });
-                    }
-                }
+                self.try_inject(&candidate, &canonical_root, &mut results, None);
             }
 
             // Also check .opendev/instructions.md
-            for subdir in &[".opendev"] {
-                let candidate = current.join(subdir).join("instructions.md");
-                if let Ok(canonical) = candidate.canonicalize() {
-                    if self.injected.contains(&canonical) {
-                        continue;
-                    }
-                    if let Ok(content) = std::fs::read_to_string(&canonical) {
-                        let content = if content.len() > MAX_INSTRUCTION_SIZE {
-                            content[..MAX_INSTRUCTION_SIZE].to_string()
-                        } else {
-                            content
-                        };
-                        let relative = canonical
-                            .strip_prefix(&canonical_root)
-                            .unwrap_or(&canonical)
-                            .display()
-                            .to_string();
-                        debug!(path = %relative, "Injecting subdirectory instruction file");
-                        self.injected.insert(canonical.clone());
-                        results.push(SubdirInstruction {
-                            path: canonical,
-                            relative_path: relative,
-                            content,
-                        });
-                    }
-                }
-            }
+            let opendev_instr = current.join(".opendev").join("instructions.md");
+            self.try_inject(&opendev_instr, &canonical_root, &mut results, None);
+
+            // Check .opendev/rules/ directory
+            self.discover_rules_in_dir(
+                &current.join(".opendev").join("rules"),
+                &canonical_root,
+                &mut results,
+            );
 
             // Check compatibility instruction files (.cursorrules, copilot, etc.)
             for compat_path in COMPAT_INSTRUCTION_FILES {
                 let candidate = current.join(compat_path);
-                if let Ok(canonical) = candidate.canonicalize() {
-                    if self.injected.contains(&canonical) {
-                        continue;
-                    }
-                    if let Ok(content) = std::fs::read_to_string(&canonical) {
-                        let content = if content.len() > MAX_INSTRUCTION_SIZE {
-                            content[..MAX_INSTRUCTION_SIZE].to_string()
-                        } else {
-                            content
-                        };
-                        let relative = canonical
-                            .strip_prefix(&canonical_root)
-                            .unwrap_or(&canonical)
-                            .display()
-                            .to_string();
-                        debug!(path = %relative, "Injecting compatibility instruction file");
-                        self.injected.insert(canonical.clone());
-                        results.push(SubdirInstruction {
-                            path: canonical,
-                            relative_path: relative,
-                            content,
-                        });
-                    }
-                }
+                self.try_inject(&candidate, &canonical_root, &mut results, None);
             }
+
+            // Check .cursor/rules/ directory
+            self.discover_rules_in_dir(
+                &current.join(".cursor").join("rules"),
+                &canonical_root,
+                &mut results,
+            );
 
             // Stop at project root
             let canonical_current = current.canonicalize().unwrap_or_else(|_| current.clone());
@@ -186,6 +128,125 @@ impl SubdirInstructionTracker {
         }
 
         results
+    }
+
+    /// Try to inject a single instruction file.
+    fn try_inject(
+        &mut self,
+        candidate: &Path,
+        canonical_root: &Path,
+        results: &mut Vec<SubdirInstruction>,
+        path_globs: Option<Vec<String>>,
+    ) {
+        let Ok(canonical) = candidate.canonicalize() else {
+            return;
+        };
+        if self.injected.contains(&canonical) {
+            return;
+        }
+
+        let Ok(content) = std::fs::read_to_string(&canonical) else {
+            return;
+        };
+
+        let content = if content.len() > MAX_INSTRUCTION_SIZE {
+            content[..MAX_INSTRUCTION_SIZE].to_string()
+        } else {
+            content
+        };
+
+        // Strip HTML comments
+        let content = strip_html_comments(&content);
+
+        let relative = canonical
+            .strip_prefix(canonical_root)
+            .unwrap_or(&canonical)
+            .display()
+            .to_string();
+
+        debug!(path = %relative, "Injecting subdirectory instruction file");
+
+        self.injected.insert(canonical.clone());
+        results.push(SubdirInstruction {
+            path: canonical,
+            relative_path: relative,
+            content,
+            path_globs,
+        });
+    }
+
+    /// Discover rule files in a rules directory (.opendev/rules/ or .cursor/rules/).
+    fn discover_rules_in_dir(
+        &mut self,
+        rules_dir: &Path,
+        canonical_root: &Path,
+        results: &mut Vec<SubdirInstruction>,
+    ) {
+        if !rules_dir.is_dir() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(rules_dir) else {
+            return;
+        };
+
+        let mut rule_files: Vec<_> = entries
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name();
+                let name_str = name.to_string_lossy();
+                e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                    && (name_str.ends_with(".md")
+                        || name_str.ends_with(".txt")
+                        || name_str.ends_with(".mdc"))
+            })
+            .collect();
+        rule_files.sort_by_key(|e| e.file_name());
+
+        for entry in rule_files {
+            let path = entry.path();
+            let Ok(canonical) = path.canonicalize() else {
+                continue;
+            };
+
+            if self.injected.contains(&canonical) {
+                continue;
+            }
+
+            let Ok(content) = std::fs::read_to_string(&canonical) else {
+                continue;
+            };
+            if content.trim().is_empty() {
+                continue;
+            }
+
+            let content = if content.len() > MAX_INSTRUCTION_SIZE {
+                content[..MAX_INSTRUCTION_SIZE].to_string()
+            } else {
+                content
+            };
+
+            // Parse frontmatter for conditional path_globs
+            let (frontmatter, remaining) = parse_frontmatter(&content);
+            let path_globs: Option<Vec<String>> = frontmatter.and_then(|fm| fm.paths);
+
+            let cleaned = strip_html_comments(&remaining);
+
+            let relative = canonical
+                .strip_prefix(canonical_root)
+                .unwrap_or(&canonical)
+                .display()
+                .to_string();
+
+            debug!(path = %relative, "Injecting subdirectory rule file");
+
+            self.injected.insert(canonical.clone());
+            results.push(SubdirInstruction {
+                path: canonical,
+                relative_path: relative,
+                content: cleaned,
+                path_globs,
+            });
+        }
     }
 
     /// After compaction removes middle messages, allow subdirectory instructions

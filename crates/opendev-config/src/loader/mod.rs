@@ -118,6 +118,7 @@ impl ConfigLoader {
     fn merge(base: AppConfig, overrides: serde_json::Value) -> AppConfig {
         // Extract array fields that should be concatenated before the general merge.
         let base_instructions = base.instructions.clone();
+        let base_instruction_excludes = base.instruction_excludes.clone();
         let base_skill_paths = base.skill_paths.clone();
         let base_skill_urls = base.skill_urls.clone();
 
@@ -141,6 +142,17 @@ impl ConfigLoader {
                     }
                 }
                 merged.instructions = combined;
+            }
+            if override_obj.contains_key("instruction_excludes")
+                && !base_instruction_excludes.is_empty()
+            {
+                let mut combined = base_instruction_excludes;
+                for item in &merged.instruction_excludes {
+                    if !combined.contains(item) {
+                        combined.push(item.clone());
+                    }
+                }
+                merged.instruction_excludes = combined;
             }
             if override_obj.contains_key("skill_paths") && !base_skill_paths.is_empty() {
                 let mut combined = base_skill_paths;

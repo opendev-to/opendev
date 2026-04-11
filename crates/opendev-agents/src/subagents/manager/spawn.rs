@@ -162,7 +162,7 @@ impl SubagentManager {
                 }
             }
 
-            let instructions = opendev_context::discover_instruction_files(wd);
+            let instructions = opendev_context::discover_instruction_files(wd, &[], &[]);
             if !instructions.is_empty() {
                 parts.push("\n\n# Project Instructions\n".to_string());
                 for instr in &instructions {

@@ -21,7 +21,9 @@ pub use compaction::{
 };
 pub use context_picker::{AssembledContext, ContextCategory, ContextPiece, ContextReason};
 pub use environment::{
-    EnvironmentContext, InstructionFile, discover_instruction_files, resolve_instruction_paths,
+    EnvironmentContext, Frontmatter, InstructionFile, InstructionSource,
+    discover_instruction_files, is_excluded, parse_frontmatter, process_includes,
+    resolve_instruction_paths, rule_applies, strip_html_comments,
 };
 pub use pair_validator::{MessagePairValidator, ValidationResult, ViolationType};
 pub use retrieval::{
