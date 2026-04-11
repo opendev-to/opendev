@@ -32,13 +32,20 @@ export function InputBox() {
   // Load files when @ is detected
   useEffect(() => {
     if (showFileMention) {
-      apiClient.listFiles(mentionQuery).then(response => {
-        setFilesList(response.files);
-        setSelectedFileIndex(0);
-      }).catch(error => {
-        console.error('Failed to load files:', error);
-        setFilesList([]);
-      });
+      // ⚡ Bolt Performance Optimization:
+      // Debounce the listFiles API call by 300ms to reduce network requests
+      // and prevent race conditions when typing quickly
+      const timeoutId = setTimeout(() => {
+        apiClient.listFiles(mentionQuery).then(response => {
+          setFilesList(response.files);
+          setSelectedFileIndex(0);
+        }).catch(error => {
+          console.error('Failed to load files:', error);
+          setFilesList([]);
+        });
+      }, 300);
+
+      return () => clearTimeout(timeoutId);
     }
   }, [mentionQuery, showFileMention]);
 
