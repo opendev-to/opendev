@@ -433,7 +433,7 @@ export function ToolCallMessage({ message, hasResult }: ToolCallMessageExtProps)
     if (expandRef.current) {
       setExpandHeight(expandRef.current.scrollHeight);
     }
-  });
+  }, [isExpanded, message]);
 
   if (message.role === 'tool_call') {
     const toolName = message.tool_name ||
