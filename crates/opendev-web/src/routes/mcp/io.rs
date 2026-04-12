@@ -73,8 +73,56 @@ pub(super) fn save_server_to_config(
     let content = serde_json::to_string_pretty(&mcp_config)
         .map_err(|e| WebError::Internal(format!("Failed to serialize config: {}", e)))?;
 
-    std::fs::write(config_path, content)
-        .map_err(|e| WebError::Internal(format!("Failed to write config: {}", e)))?;
+    atomic_write_config(config_path, &content)?;
+
+    Ok(())
+}
+
+/// Helper function to atomically write a config file with secure permissions.
+fn atomic_write_config(config_path: &Path, content: &str) -> Result<(), WebError> {
+    let tmp_path = config_path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true).mode(0o600);
+        std::io::Write::write_all(
+            &mut opts.open(&tmp_path).map_err(|e| {
+                WebError::Internal(format!(
+                    "Failed to open temp config file {}: {}",
+                    tmp_path.display(),
+                    e
+                ))
+            })?,
+            content.as_bytes(),
+        )
+        .map_err(|e| {
+            WebError::Internal(format!(
+                "Failed to write to temp config file {}: {}",
+                tmp_path.display(),
+                e
+            ))
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp_path, content).map_err(|e| {
+            WebError::Internal(format!(
+                "Failed to write temp config to {}: {}",
+                tmp_path.display(),
+                e
+            ))
+        })?;
+    }
+
+    std::fs::rename(&tmp_path, config_path).map_err(|e| {
+        WebError::Internal(format!(
+            "Failed to rename temp config to {}: {}",
+            config_path.display(),
+            e
+        ))
+    })?;
 
     Ok(())
 }
@@ -96,8 +144,7 @@ pub(super) fn remove_server_from_config(name: &str, config_path: &Path) -> Resul
     if removed {
         let content = serde_json::to_string_pretty(&mcp_config)
             .map_err(|e| WebError::Internal(format!("Failed to serialize config: {}", e)))?;
-        std::fs::write(config_path, content)
-            .map_err(|e| WebError::Internal(format!("Failed to write config: {}", e)))?;
+        atomic_write_config(config_path, &content)?;
     }
 
     Ok(removed)
