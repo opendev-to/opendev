@@ -76,9 +76,22 @@ impl PlanIndex {
     fn write_index(&self, data: &IndexData) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.plans_dir)?;
 
-        let tmp_path = self.plans_dir.join(".plans-idx-tmp");
+        let tmp_path = self.plans_dir.join(format!(".plans-idx-tmp.{}", uuid::Uuid::new_v4()));
         {
-            let mut f = std::fs::File::create(&tmp_path)?;
+            #[cfg(unix)]
+            let mut f = {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true).mode(0o600);
+                opts.open(&tmp_path)?
+            };
+            #[cfg(not(unix))]
+            let mut f = {
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                opts.open(&tmp_path)?
+            };
+
             let json = serde_json::to_string_pretty(data).map_err(std::io::Error::other)?;
             f.write_all(json.as_bytes())?;
             f.write_all(b"\n")?;
