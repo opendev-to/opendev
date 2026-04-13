@@ -1,11 +1,3 @@
-//! File-based mailbox system for inter-agent communication.
-//!
-//! Each agent gets an inbox JSON file. Messages are appended via file locking
-//! to prevent corruption from concurrent writes. Used by the team system for
-//! peer-to-peer agent messaging.
-//!
-//! Storage: `{team_dir}/inboxes/{agent_name}.json`
-
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,11 +6,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-/// Maximum messages in an inbox before old read messages are trimmed.
 const MAX_INBOX_SIZE: usize = 1000;
 
-/// A single mailbox message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A single message in the agent's mailbox.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MailboxMessage {
     pub id: String,
     pub from: String,
@@ -49,7 +40,7 @@ fn now_ms() -> u64 {
 
 /// File-based inbox for an agent.
 ///
-/// Thread-safe via file locking (fd-lock). Each operation acquires an
+/// Thread-safe via file locking (fs2). Each operation acquires an
 /// exclusive lock, performs the read-modify-write, and releases.
 pub struct Mailbox {
     inbox_path: PathBuf,
@@ -67,9 +58,22 @@ impl Mailbox {
         if let Some(parent) = self.inbox_path.parent() {
             fs::create_dir_all(parent)?;
         }
+
+        let lock_path = self.inbox_path.with_extension("lock");
+        let lock_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        let mut rw_lock = fd_lock::RwLock::new(lock_file);
+        let _guard = rw_lock
+            .write()
+            .map_err(|e| io::Error::other(format!("Could not acquire mailbox lock: {e}")))?;
+
         if !self.inbox_path.exists() {
             fs::write(&self.inbox_path, "[]")?;
         }
+
         Ok(())
     }
 
@@ -117,8 +121,11 @@ impl Mailbox {
     /// Peek at unread messages without marking them as read.
     pub fn peek(&self) -> io::Result<Vec<MailboxMessage>> {
         self.ensure_file()?;
-        let messages = self.read_messages()?;
-        Ok(messages.into_iter().filter(|m| !m.read).collect())
+        let mut result = Vec::new();
+        self.with_locked_inbox(|messages| {
+            result = messages.iter().filter(|m| !m.read).cloned().collect();
+        })?;
+        Ok(result)
     }
 
     /// Poll for new messages with a timeout.
@@ -168,7 +175,12 @@ impl Mailbox {
 
     fn write_messages(&self, messages: &[MailboxMessage]) -> io::Result<()> {
         let json = serde_json::to_string_pretty(messages).map_err(io::Error::other)?;
-        fs::write(&self.inbox_path, json)?;
+
+        let tmp_path = self
+            .inbox_path
+            .with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+        fs::write(&tmp_path, &json)?;
+        fs::rename(&tmp_path, &self.inbox_path)?;
         Ok(())
     }
 
