@@ -76,7 +76,9 @@ impl PlanIndex {
     fn write_index(&self, data: &IndexData) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.plans_dir)?;
 
-        let tmp_path = self.plans_dir.join(format!(".plans-idx-tmp.{}", uuid::Uuid::new_v4()));
+        let tmp_path = self
+            .plans_dir
+            .join(format!(".plans-idx-tmp.{}", uuid::Uuid::new_v4()));
         {
             #[cfg(unix)]
             let mut f = {
