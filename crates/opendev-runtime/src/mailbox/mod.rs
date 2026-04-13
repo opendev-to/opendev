@@ -176,7 +176,9 @@ impl Mailbox {
     fn write_messages(&self, messages: &[MailboxMessage]) -> io::Result<()> {
         let json = serde_json::to_string_pretty(messages).map_err(io::Error::other)?;
 
-        let tmp_path = self.inbox_path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+        let tmp_path = self
+            .inbox_path
+            .with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
         fs::write(&tmp_path, &json)?;
         fs::rename(&tmp_path, &self.inbox_path)?;
         Ok(())
