@@ -24,20 +24,14 @@ pub fn adapt_for_provider(schemas: &[Value], provider: &str) -> Vec<Value> {
     let mut modified = false;
 
     match provider.as_str() {
-        "gemini" | "google" => {
-            if adapt_gemini(&mut adapted) {
-                modified = true;
-            }
+        "gemini" | "google" if adapt_gemini(&mut adapted) => {
+            modified = true;
         }
-        "xai" | "grok" => {
-            if adapt_xai(&mut adapted) {
-                modified = true;
-            }
+        "xai" | "grok" if adapt_xai(&mut adapted) => {
+            modified = true;
         }
-        "mistral" => {
-            if adapt_mistral(&mut adapted) {
-                modified = true;
-            }
+        "mistral" if adapt_mistral(&mut adapted) => {
+            modified = true;
         }
         _ => {}
     }
