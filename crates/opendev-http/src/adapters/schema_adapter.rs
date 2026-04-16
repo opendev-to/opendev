@@ -195,6 +195,7 @@ fn flatten_union_types(obj: &mut Value) -> bool {
     let keys: Vec<String> = map.keys().cloned().collect();
     for key in keys {
         if let Some(value) = map.get_mut(&key) {
+            #[allow(clippy::collapsible_match)]
             match value {
                 Value::Object(_) => {
                     if flatten_union_types(value) {
