@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { Components } from 'react-markdown';
 import { CodeBracketIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 
 interface WikiPage {
@@ -16,8 +16,6 @@ interface WikiPage {
 interface DocumentationContentProps {
   wikiPage: WikiPage;
 }
-
-import { Components } from 'react-markdown';
 
 // ⚡ Bolt Performance Optimization:
 // Extract markdown components outside the functional component to ensure referential stability.
