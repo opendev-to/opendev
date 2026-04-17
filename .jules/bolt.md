@@ -5,3 +5,7 @@
 ## 2024-04-11 - React useEffect Dependency Array Optimization
 **Learning:** Omission of a dependency array in `useEffect` (e.g. in `ToolCallMessage.tsx`) causes the hook to execute after *every* render. When such a hook performs DOM measurements (like `scrollHeight`) and sets state (`setExpandHeight`), it triggers further unnecessary renders and layout recalculations, drastically degrading performance especially in long lists like a chat log.
 **Action:** Always ensure `useEffect` and similar hooks have appropriate dependency arrays to restrict their execution strictly to when their dependencies change.
+
+## 2024-04-17 - Referentially Unstable Props in React Lists Triggering Deep Renders
+**Learning:** Defining object literals (like the `components` map for `ReactMarkdown`) inline within a functional component causes React to allocate a new object reference on every render. For components like `DocumentationContent` or list items in a chat interface, this forces a deep re-render of the entire markdown tree, which can severely bottleneck performance since markdown rendering is CPU-heavy.
+**Action:** Always extract static configuration objects, dictionaries, or callback maps outside of the React functional component scope or wrap them in `useMemo` if they depend on state. This ensures referential stability and allows React to skip rendering unchanged subtrees.
