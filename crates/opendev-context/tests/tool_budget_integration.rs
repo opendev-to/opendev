@@ -40,6 +40,54 @@ fn distinct_calls_produce_distinct_overflow_files() {
     assert_ne!(p1, p2, "tool_call_id must differentiate filenames");
 }
 
+/// I1: Mirror the agent loop's call site — `apply_tool_result_budget`
+/// is called between formatting the raw tool result and pushing it
+/// into the `messages` list. The pushed message MUST carry the
+/// budgeted (truncated) content, never the raw payload. This is the
+/// invariant the entire feature rests on.
+#[test]
+fn pushed_tool_message_carries_budgeted_content_not_raw() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = OverflowStore::new(tmp.path());
+    let policy = ToolBudgetPolicy::with_default_chars(64);
+
+    let raw = "RAW_SHOULD_NEVER_APPEAR_IN_FULL ".repeat(100);
+    let budgeted = apply_tool_result_budget("custom_tool", "call-X", &raw, &policy, &store);
+
+    // Mirror the exact push pattern used in
+    // crates/opendev-agents/src/react_loop/phases/tool_dispatch.rs.
+    let mut messages: Vec<serde_json::Value> = Vec::new();
+    messages.push(serde_json::json!({
+        "role": "tool",
+        "tool_call_id": "call-X",
+        "name": "custom_tool",
+        "content": budgeted.displayed_content,
+    }));
+
+    let pushed = messages[0]["content"]
+        .as_str()
+        .expect("content must be a string");
+    let pushed_chars = pushed.chars().count();
+
+    assert_eq!(pushed, budgeted.displayed_content);
+    assert!(
+        pushed_chars < raw.chars().count(),
+        "pushed content must be smaller than raw — pushed {} vs raw {}",
+        pushed_chars,
+        raw.chars().count(),
+    );
+    // Truncation marker is present in the pushed message.
+    assert!(pushed.contains("[truncated:"));
+    assert!(pushed.contains("[full output:"));
+    // And the raw payload's repeated marker substring does NOT appear in
+    // full — at most as a prefix within the preview.
+    let raw_marker_count = pushed.matches("RAW_SHOULD_NEVER_APPEAR_IN_FULL").count();
+    assert!(
+        raw_marker_count < 100,
+        "pushed content seems to contain the full raw payload",
+    );
+}
+
 #[test]
 fn write_failure_degrades_gracefully() {
     // Point the overflow dir at a path that cannot be created (under a
