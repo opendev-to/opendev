@@ -13,17 +13,17 @@ fn make_symbol(name: &str) -> UnifiedSymbolInfo {
     }
 }
 
-#[test]
-fn test_cache_put_and_get() {
+#[tokio::test]
+async fn test_cache_put_and_get() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut cache = SymbolCache::new(Some(tmp.path().to_path_buf()), None);
 
     let ws = PathBuf::from("/workspace");
     let symbols = vec![make_symbol("foo"), make_symbol("bar")];
 
-    cache.put(&ws, "test_query", symbols.clone());
+    cache.put(&ws, "test_query", symbols.clone()).await;
 
-    let result = cache.get(&ws, "test_query");
+    let result = cache.get(&ws, "test_query").await;
     assert!(result.is_some());
     let cached = result.unwrap();
     assert_eq!(cached.len(), 2);
@@ -31,66 +31,66 @@ fn test_cache_put_and_get() {
     assert_eq!(cached[1].name, "bar");
 }
 
-#[test]
-fn test_cache_miss() {
+#[tokio::test]
+async fn test_cache_miss() {
     let mut cache = SymbolCache::new(None, None);
     let ws = PathBuf::from("/workspace");
-    assert!(cache.get(&ws, "missing").is_none());
+    assert!(cache.get(&ws, "missing").await.is_none());
 }
 
-#[test]
-fn test_cache_expiration() {
+#[tokio::test]
+async fn test_cache_expiration() {
     let mut cache = SymbolCache::new(None, Some(0)); // 0 second TTL
     let ws = PathBuf::from("/workspace");
-    cache.put(&ws, "q", vec![make_symbol("x")]);
+    cache.put(&ws, "q", vec![make_symbol("x")]).await;
     // Should be expired immediately
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    assert!(cache.get(&ws, "q").is_none());
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    assert!(cache.get(&ws, "q").await.is_none());
 }
 
-#[test]
-fn test_invalidate_workspace() {
+#[tokio::test]
+async fn test_invalidate_workspace() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut cache = SymbolCache::new(Some(tmp.path().to_path_buf()), None);
 
     let ws1 = PathBuf::from("/workspace1");
     let ws2 = PathBuf::from("/workspace2");
 
-    cache.put(&ws1, "q1", vec![make_symbol("a")]);
-    cache.put(&ws2, "q2", vec![make_symbol("b")]);
+    cache.put(&ws1, "q1", vec![make_symbol("a")]).await;
+    cache.put(&ws2, "q2", vec![make_symbol("b")]).await;
 
-    cache.invalidate_workspace(&ws1);
+    cache.invalidate_workspace(&ws1).await;
 
-    assert!(cache.get(&ws1, "q1").is_none());
-    assert!(cache.get(&ws2, "q2").is_some());
+    assert!(cache.get(&ws1, "q1").await.is_none());
+    assert!(cache.get(&ws2, "q2").await.is_some());
 }
 
-#[test]
-fn test_cache_clear() {
+#[tokio::test]
+async fn test_cache_clear() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut cache = SymbolCache::new(Some(tmp.path().to_path_buf()), None);
 
     let ws = PathBuf::from("/workspace");
-    cache.put(&ws, "q", vec![make_symbol("a")]);
-    cache.clear();
-    assert!(cache.get(&ws, "q").is_none());
+    cache.put(&ws, "q", vec![make_symbol("a")]).await;
+    cache.clear().await;
+    assert!(cache.get(&ws, "q").await.is_none());
 }
 
-#[test]
-fn test_disk_persistence() {
+#[tokio::test]
+async fn test_disk_persistence() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ws = PathBuf::from("/workspace");
 
     // Write with one cache instance
     {
         let mut cache = SymbolCache::new(Some(tmp.path().to_path_buf()), None);
-        cache.put(&ws, "q", vec![make_symbol("persisted")]);
+        cache.put(&ws, "q", vec![make_symbol("persisted")]).await;
     }
 
     // Read with a new instance
     {
         let mut cache = SymbolCache::new(Some(tmp.path().to_path_buf()), None);
-        let result = cache.get(&ws, "q");
+        let result = cache.get(&ws, "q").await;
         assert!(result.is_some());
         assert_eq!(result.unwrap()[0].name, "persisted");
     }
