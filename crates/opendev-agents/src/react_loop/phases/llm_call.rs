@@ -6,6 +6,7 @@
 //! generation for lower per-iteration latency.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 use tracing::{Instrument, debug, info, info_span, warn};
@@ -175,6 +176,15 @@ where
             logger.log_llm_error(state.iteration, err_msg);
         }
         if http_result.retryable {
+            // Back off before the next iteration. The lower HTTP layer can
+            // open a circuit breaker and reject for several seconds; without
+            // a sleep here the agent loop spins at sub-millisecond rates,
+            // generating runaway log volume and burning CPU until the
+            // breaker closes. Prefer a parsed hint from the error message
+            // (e.g. "Will retry in 27s"); fall back to a small fixed delay
+            // for any other retryable failure.
+            let backoff = retry_backoff_for(err_msg);
+            tokio::time::sleep(backoff).await;
             return Err(LoopAction::Continue);
         }
         return Err(LoopAction::Return(Err(AgentError::LlmError(
@@ -236,3 +246,40 @@ where
         streaming_executor,
     })
 }
+
+/// Minimum backoff applied to any retryable LLM HTTP failure.
+/// 500ms is enough to prevent CPU/log runaway while staying responsive
+/// to transient hiccups.
+const RETRY_FALLBACK_BACKOFF: Duration = Duration::from_millis(500);
+
+/// Upper bound applied to a parsed retry hint, in case the source layer
+/// reports an unreasonably large value.
+const RETRY_MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+/// Compute the backoff to apply before retrying a failed LLM call.
+///
+/// Parses a "Will retry in Ns" hint from the error message (emitted by
+/// the HTTP layer's circuit breaker) and uses that, capped at
+/// [`RETRY_MAX_BACKOFF`]. Falls back to [`RETRY_FALLBACK_BACKOFF`] when
+/// no hint is present.
+fn retry_backoff_for(err_msg: &str) -> Duration {
+    parse_retry_hint(err_msg)
+        .map(|d| d.min(RETRY_MAX_BACKOFF))
+        .unwrap_or(RETRY_FALLBACK_BACKOFF)
+}
+
+/// Parse a retry-after hint from a circuit breaker error string.
+///
+/// Recognises the literal phrase `"Will retry in Ns"` produced by
+/// `opendev_http::circuit_breaker`. Returns `None` for any other
+/// shape so unrelated retryable errors fall through to the default
+/// backoff.
+fn parse_retry_hint(err_msg: &str) -> Option<Duration> {
+    let after = err_msg.split("Will retry in ").nth(1)?;
+    let secs_str = after.split('s').next()?.trim();
+    secs_str.parse::<u64>().ok().map(Duration::from_secs)
+}
+
+#[cfg(test)]
+#[path = "llm_call_tests.rs"]
+mod tests;
