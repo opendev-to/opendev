@@ -52,6 +52,21 @@ pub const SLIDING_WINDOW_THRESHOLD: usize = 500;
 /// Minimum length of tool output before summarization kicks in.
 pub const TOOL_OUTPUT_SUMMARIZE_THRESHOLD: usize = 500;
 
+/// Default per-tool result character budget. Outputs above this are
+/// truncated to a preview and overflow content is persisted to disk.
+/// Roughly ~2K tokens, sized to keep a single tool result from
+/// dominating the typical 80K-token context window.
+pub const TOOL_RESULT_BUDGET_DEFAULT_CHARS: usize = 8_000;
+
+/// Number of leading characters retained in the displayed preview when
+/// a tool result exceeds its budget. Smaller than the cap so the
+/// truncation marker and reference path always fit comfortably.
+pub const TOOL_RESULT_BUDGET_PREVIEW_CHARS: usize = 1_500;
+
+/// Subdirectory under the project's `.opendev/` directory where overflow
+/// tool result content is stored.
+pub const TOOL_RESULT_BUDGET_OVERFLOW_DIR: &str = "tool-results";
+
 /// A message in API format (role + content + optional tool_calls).
 ///
 /// This is a lightweight representation for compaction operations,

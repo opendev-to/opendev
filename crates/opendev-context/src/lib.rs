@@ -12,6 +12,7 @@ pub mod environment;
 pub mod pair_validator;
 pub mod retrieval;
 pub mod subdir_instructions;
+pub mod tool_budget;
 pub mod validated_list;
 pub mod worktree;
 
@@ -31,5 +32,6 @@ pub use retrieval::{
     RetrievalContext,
 };
 pub use subdir_instructions::{SubdirInstruction, SubdirInstructionTracker};
+pub use tool_budget::{BudgetedResult, OverflowStore, ToolBudgetPolicy, apply_tool_result_budget};
 pub use validated_list::ValidatedMessageList;
 pub use worktree::{WorktreeInfo, WorktreeManager};

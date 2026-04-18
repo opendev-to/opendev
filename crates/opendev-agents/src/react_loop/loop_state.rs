@@ -60,6 +60,13 @@ pub(super) struct LoopState {
     pub collector_runner: CollectorRunner,
     /// Shared flag set by safety phase after compaction.
     pub compaction_flag: Arc<AtomicBool>,
+
+    /// Per-tool result budget policy. Caps each tool result at append-time
+    /// so a single oversized output cannot push the conversation past
+    /// compaction thresholds in one turn.
+    pub tool_budget_policy: opendev_context::ToolBudgetPolicy,
+    /// On-disk store for content overflowed by `tool_budget_policy`.
+    pub overflow_store: opendev_context::OverflowStore,
 }
 
 impl LoopState {
@@ -106,6 +113,8 @@ impl LoopState {
             activated_tools: HashSet::new(),
             collector_runner: CollectorRunner::new(collectors),
             compaction_flag,
+            tool_budget_policy: opendev_context::ToolBudgetPolicy::default(),
+            overflow_store: opendev_context::OverflowStore::new(working_dir),
             // Note: todo reminders are handled by TodoStateCollector (live data).
             // Only task_proactive_reminder remains here as a static template nudge.
             proactive_reminders: ProactiveReminderScheduler::new(vec![ProactiveReminderConfig {

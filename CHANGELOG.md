@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Preemptive per-tool result budgeting in `opendev-context::tool_budget`. Tool results exceeding their per-tool character cap are truncated to a preview with a reference path; full content is persisted under `.opendev/tool-results/`. Complements the existing staged compaction by preventing single-turn context spikes from oversized tool outputs (e.g. wide directory listings, large file reads, MCP analysis dumps).
+
 ## [0.1.8] - 2026-04-01
 
 ### Added

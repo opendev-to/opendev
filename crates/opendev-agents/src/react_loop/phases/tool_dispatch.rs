@@ -557,11 +557,26 @@ where
         }
 
         let formatted = ReactLoop::format_tool_result(tool_name, &result_value);
+        let budgeted = opendev_context::apply_tool_result_budget(
+            tool_name,
+            tool_call_id_str,
+            &formatted,
+            &state.tool_budget_policy,
+            &state.overflow_store,
+        );
+        if budgeted.truncated {
+            debug!(
+                tool = tool_name,
+                original_len = budgeted.original_len,
+                overflow_ref = ?budgeted.overflow_ref,
+                "Tool result exceeded budget; truncated with overflow ref",
+            );
+        }
         messages.push(serde_json::json!({
             "role": "tool",
             "tool_call_id": tool_call_id_str,
             "name": tool_name,
-            "content": formatted,
+            "content": budgeted.displayed_content,
         }));
 
         // Track background task spawns for completion nudge.
