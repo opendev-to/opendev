@@ -126,8 +126,25 @@ impl SnapshotPersistence {
         let json = serde_json::to_string_pretty(snapshot)
             .map_err(|e| format!("Failed to serialize snapshot: {e}"))?;
 
-        std::fs::write(&tmp_path, &json)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true).mode(0o600);
+            std::io::Write::write_all(
+                &mut opts
+                    .open(&tmp_path)
+                    .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?,
+                json.as_bytes(),
+            )
             .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, &json)
+                .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
+        }
 
         std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename snapshot: {e}"))?;
 
