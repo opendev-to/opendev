@@ -1,7 +1,3 @@
-## 2024-03-24 - Debouncing User Inputs Triggers
-**Learning:** React component API calls tied directly to text inputs for search and file query functionalities must be debounced, as otherwise every single keystroke creates a network request, potentially creating race conditions on the response where a slower prior response overwrites a faster later one.
-**Action:** When working on real-time search or autocomplete functions, always check if there is a proper debounce. Implement a standard `setTimeout` + `clearTimeout` cleanup wrapper if one doesn't exist.
-
-## 2024-04-11 - React useEffect Dependency Array Optimization
-**Learning:** Omission of a dependency array in `useEffect` (e.g. in `ToolCallMessage.tsx`) causes the hook to execute after *every* render. When such a hook performs DOM measurements (like `scrollHeight`) and sets state (`setExpandHeight`), it triggers further unnecessary renders and layout recalculations, drastically degrading performance especially in long lists like a chat log.
-**Action:** Always ensure `useEffect` and similar hooks have appropriate dependency arrays to restrict their execution strictly to when their dependencies change.
+## 2024-04-18 - Replacing synchronous std::fs operations with tokio::fs in async contexts
+**Learning:** In the `SymbolCache` implementation in `crates/opendev-tools-lsp/src/cache.rs`, using synchronous `std::fs` operations (e.g., `read_to_string`, `write`, `create_dir_all`, `remove_dir_all`) inside async functions blocks the async executor thread. This is a common performance bottleneck in Rust async applications, as it prevents other async tasks from making progress on the thread handling the I/O.
+**Action:** Always verify if `std::fs` is being called within an `async fn` or an executor's context. When identifying such usage, refactor to use `tokio::fs` equivalents (e.g., `tokio::fs::read_to_string().await`) to ensure non-blocking file I/O operations and improve overall application concurrency.

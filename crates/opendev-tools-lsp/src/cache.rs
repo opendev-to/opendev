@@ -72,7 +72,7 @@ impl SymbolCache {
     }
 
     /// Get cached symbols for a workspace + query, if not expired.
-    pub fn get(&mut self, workspace: &Path, query: &str) -> Option<Vec<UnifiedSymbolInfo>> {
+    pub async fn get(&mut self, workspace: &Path, query: &str) -> Option<Vec<UnifiedSymbolInfo>> {
         let key = (workspace.to_path_buf(), query.to_string());
 
         // Check in-memory first
@@ -86,7 +86,7 @@ impl SymbolCache {
         }
 
         // Check disk cache
-        if let Some(entry) = self.load_from_disk(workspace, query)
+        if let Some(entry) = self.load_from_disk(workspace, query).await
             && entry.is_current_version()
             && !entry.is_expired(self.ttl)
         {
@@ -100,7 +100,7 @@ impl SymbolCache {
     }
 
     /// Store symbols in cache.
-    pub fn put(&mut self, workspace: &Path, query: &str, symbols: Vec<UnifiedSymbolInfo>) {
+    pub async fn put(&mut self, workspace: &Path, query: &str, symbols: Vec<UnifiedSymbolInfo>) {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -113,18 +113,18 @@ impl SymbolCache {
         };
 
         let key = (workspace.to_path_buf(), query.to_string());
-        self.save_to_disk(workspace, query, &entry);
+        self.save_to_disk(workspace, query, &entry).await;
         self.memory.insert(key, entry);
     }
 
     /// Invalidate all entries for a workspace.
-    pub fn invalidate_workspace(&mut self, workspace: &Path) {
+    pub async fn invalidate_workspace(&mut self, workspace: &Path) {
         self.memory.retain(|(ws, _), _| ws != workspace);
 
         if let Some(ref cache_dir) = self.cache_dir {
             let ws_cache = self.workspace_cache_dir(cache_dir, workspace);
-            if ws_cache.exists()
-                && let Err(e) = std::fs::remove_dir_all(&ws_cache)
+            if tokio::fs::try_exists(&ws_cache).await.unwrap_or(false)
+                && let Err(e) = tokio::fs::remove_dir_all(&ws_cache).await
             {
                 warn!("Failed to remove cache dir {}: {}", ws_cache.display(), e);
             }
@@ -132,13 +132,13 @@ impl SymbolCache {
     }
 
     /// Clear all cached data.
-    pub fn clear(&mut self) {
+    pub async fn clear(&mut self) {
         self.memory.clear();
         if let Some(ref cache_dir) = self.cache_dir {
-            if let Err(e) = std::fs::remove_dir_all(cache_dir) {
+            if let Err(e) = tokio::fs::remove_dir_all(cache_dir).await {
                 warn!("Failed to clear cache dir: {}", e);
             }
-            let _ = std::fs::create_dir_all(cache_dir);
+            let _ = tokio::fs::create_dir_all(cache_dir).await;
         }
     }
 
@@ -156,23 +156,23 @@ impl SymbolCache {
         cache_dir.join(ws_hash)
     }
 
-    fn load_from_disk(&self, workspace: &Path, query: &str) -> Option<CacheEntry> {
+    async fn load_from_disk(&self, workspace: &Path, query: &str) -> Option<CacheEntry> {
         let cache_dir = self.cache_dir.as_ref()?;
         let ws_dir = self.workspace_cache_dir(cache_dir, workspace);
         let file = ws_dir.join(format!("{}.json", Self::cache_key(query)));
 
-        let content = std::fs::read_to_string(&file).ok()?;
+        let content = tokio::fs::read_to_string(&file).await.ok()?;
         serde_json::from_str(&content).ok()
     }
 
-    fn save_to_disk(&self, workspace: &Path, query: &str, entry: &CacheEntry) {
+    async fn save_to_disk(&self, workspace: &Path, query: &str, entry: &CacheEntry) {
         let cache_dir = match &self.cache_dir {
             Some(d) => d,
             None => return,
         };
 
         let ws_dir = self.workspace_cache_dir(cache_dir, workspace);
-        if let Err(e) = std::fs::create_dir_all(&ws_dir) {
+        if let Err(e) = tokio::fs::create_dir_all(&ws_dir).await {
             warn!("Failed to create cache subdir: {}", e);
             return;
         }
@@ -180,7 +180,7 @@ impl SymbolCache {
         let file = ws_dir.join(format!("{}.json", Self::cache_key(query)));
         match serde_json::to_string(entry) {
             Ok(content) => {
-                if let Err(e) = std::fs::write(&file, content) {
+                if let Err(e) = tokio::fs::write(&file, content).await {
                     warn!("Failed to write cache file: {}", e);
                 }
             }
