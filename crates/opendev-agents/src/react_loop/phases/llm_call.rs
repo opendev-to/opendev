@@ -259,12 +259,18 @@ const RETRY_MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// Compute the backoff to apply before retrying a failed LLM call.
 ///
 /// Parses a "Will retry in Ns" hint from the error message (emitted by
-/// the HTTP layer's circuit breaker) and uses that, capped at
-/// [`RETRY_MAX_BACKOFF`]. Falls back to [`RETRY_FALLBACK_BACKOFF`] when
-/// no hint is present.
+/// the HTTP layer's circuit breaker) and uses that, clamped to
+/// `[RETRY_FALLBACK_BACKOFF, RETRY_MAX_BACKOFF]`. When no hint is
+/// present, falls back to [`RETRY_FALLBACK_BACKOFF`].
+///
+/// The lower bound matters at the circuit-breaker half-open boundary:
+/// when the cooldown has just expired the breaker reports
+/// `Will retry in 0s.` and a naive parse would produce a zero-second
+/// sleep, allowing a tight retry burst until the breaker fully opens
+/// again. Clamping to the fallback prevents that.
 fn retry_backoff_for(err_msg: &str) -> Duration {
     parse_retry_hint(err_msg)
-        .map(|d| d.min(RETRY_MAX_BACKOFF))
+        .map(|d| d.clamp(RETRY_FALLBACK_BACKOFF, RETRY_MAX_BACKOFF))
         .unwrap_or(RETRY_FALLBACK_BACKOFF)
 }
 

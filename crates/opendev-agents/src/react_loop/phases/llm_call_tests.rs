@@ -49,6 +49,26 @@ fn backoff_falls_back_when_no_hint() {
 }
 
 #[test]
+fn parsed_zero_seconds_clamps_up_to_fallback() {
+    // Reproduces the half-open boundary case observed in the field:
+    // the circuit breaker reports `remaining_secs=0` the moment its
+    // cooldown expires. A naive parse would yield a zero-second sleep,
+    // letting the loop burst-retry until the breaker fully opens
+    // again. The clamp must lift parsed=0 up to the fallback.
+    let msg = "Circuit breaker open … Will retry in 0s.";
+    assert_eq!(parse_retry_hint(msg), Some(Duration::ZERO));
+    assert_eq!(retry_backoff_for(msg), RETRY_FALLBACK_BACKOFF);
+}
+
+#[test]
+fn parsed_below_fallback_clamps_up() {
+    // Any hint smaller than the fallback floor must be lifted, not
+    // honored verbatim.
+    let msg = "Will retry in 0s.";
+    assert!(retry_backoff_for(msg) >= RETRY_FALLBACK_BACKOFF);
+}
+
+#[test]
 fn fallback_is_at_least_one_log_line_apart() {
     // Sanity: fallback must be large enough to prevent the runaway-loop
     // scenario this fix addresses (sub-millisecond retries flooding logs).
