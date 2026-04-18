@@ -90,7 +90,7 @@ impl LspWrapper {
         workspace_root: &Path,
     ) -> Result<Vec<UnifiedSymbolInfo>, LspError> {
         // Check cache first
-        if let Some(cached) = self.cache.get(workspace_root, query) {
+        if let Some(cached) = self.cache.get(workspace_root, query).await {
             return Ok(cached);
         }
 
@@ -105,7 +105,7 @@ impl LspWrapper {
         let symbols = parse_symbol_response(&result);
 
         // Cache the result
-        self.cache.put(workspace_root, query, symbols.clone());
+        self.cache.put(workspace_root, query, symbols.clone()).await;
 
         Ok(symbols)
     }
@@ -199,7 +199,7 @@ impl LspWrapper {
         let edit = WorkspaceEdit::from_json(&result);
 
         // Invalidate cache since files changed
-        self.cache.invalidate_workspace(workspace_root);
+        self.cache.invalidate_workspace(workspace_root).await;
 
         Ok(edit)
     }

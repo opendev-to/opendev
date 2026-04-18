@@ -40,3 +40,7 @@
 ## 2024-05-25 - Rules of Hooks and JSX IIFEs
 **Learning:** Attempting to apply `useMemo` optimizations directly inside an Immediately Invoked Function Expression (IIFE) within JSX violates React's Rules of Hooks. Hooks must be placed at the top level of the component body, never inside nested functions or IIFEs.
 **Action:** When extracting expensive logic (like array filtering) from a JSX IIFE into a memoized value, ensure the `useMemo` hook is hoisted to the top level of the component, and only the resulting memoized value is used within the JSX.
+
+## 2024-04-18 - Replacing synchronous std::fs operations with tokio::fs in async contexts
+**Learning:** In the `SymbolCache` implementation in `crates/opendev-tools-lsp/src/cache.rs`, using synchronous `std::fs` operations (e.g., `read_to_string`, `write`, `create_dir_all`, `remove_dir_all`) inside async functions blocks the async executor thread. This is a common performance bottleneck in Rust async applications, as it prevents other async tasks from making progress on the thread handling the I/O.
+**Action:** Always verify if `std::fs` is being called within an `async fn` or an executor's context. When identifying such usage, refactor to use `tokio::fs` equivalents (e.g., `tokio::fs::read_to_string().await`) to ensure non-blocking file I/O operations and improve overall application concurrency.
