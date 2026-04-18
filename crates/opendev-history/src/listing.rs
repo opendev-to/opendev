@@ -50,7 +50,7 @@ impl SessionListing {
             sessions.retain(|s| s.owner_id.as_deref() == Some(owner));
         }
 
-        sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at.clone()));
+        sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         sessions
     }
 
@@ -109,7 +109,7 @@ impl SessionListing {
             let listing = SessionListing::new(projects_dir.join(&workspace));
             all.extend(listing.list_sessions(None, false));
         }
-        all.sort_by_key(|b| std::cmp::Reverse(b.updated_at.clone()));
+        all.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         all
     }
 
