@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, KeyboardEvent } from 'react';
 import { useChatStore } from '../../stores/chat';
 import { apiClient } from '../../api/client';
-import { SPINNER_FRAMES } from '../../constants/spinner';
+import { HaloSpinner } from '../ui/HaloSpinner';
 import { NewSessionModal } from '../Layout/NewSessionModal';
 
 interface WorkspaceOption {
@@ -24,7 +24,6 @@ export function LandingPage() {
   const [showWorkspacePicker, setShowWorkspacePicker] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
-  const [brailleOffset, setBrailleOffset] = useState(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
@@ -63,14 +62,6 @@ export function LandingPage() {
         setSelectedWorkspace(sorted[0].path);
       }
     }).catch(console.error);
-  }, []);
-
-  // Braille halo animation
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setBrailleOffset(prev => (prev + 1) % SPINNER_FRAMES.length);
-    }, 100);
-    return () => clearInterval(interval);
   }, []);
 
   // Click-outside to dismiss menus
@@ -158,25 +149,7 @@ export function LandingPage() {
         <span className="text-5xl md:text-7xl font-mono font-bold tracking-wider text-bg-300 animate-breathe select-none">
           OpenDev
         </span>
-        <div className="absolute animate-spin-slow" style={{ width: 360, height: 360 }}>
-          {Array.from({ length: 24 }).map((_, i) => {
-            const angle = (i / 24) * 360;
-            const char = SPINNER_FRAMES[(i + brailleOffset) % SPINNER_FRAMES.length];
-            return (
-              <span
-                key={i}
-                className="absolute text-lg font-mono text-bg-300"
-                style={{
-                  left: '50%',
-                  top: '50%',
-                  transform: `rotate(${angle}deg) translateX(180px) rotate(-${angle}deg)`,
-                }}
-              >
-                {char}
-              </span>
-            );
-          })}
-        </div>
+        <HaloSpinner />
       </div>
 
       {/* Centered input card */}
