@@ -103,28 +103,12 @@ impl super::base::ProviderAdapter for AnthropicAdapter {
             && supports_thinking(&model)
         {
             if supports_adaptive_thinking(&model) {
-                // Claude 4.6+ uses adaptive thinking — the model decides how much to think.
-                // For "low"/"medium" we set an optional budget cap; for "high" we leave it uncapped.
-                match effort.as_str() {
-                    "low" => {
-                        payload["thinking"] = json!({
-                            "type": "adaptive",
-                            "budget_tokens": 8000
-                        });
-                    }
-                    "medium" => {
-                        payload["thinking"] = json!({
-                            "type": "adaptive",
-                            "budget_tokens": 16000
-                        });
-                    }
-                    _ => {
-                        // "high" or any other value — uncapped adaptive
-                        payload["thinking"] = json!({
-                            "type": "adaptive"
-                        });
-                    }
-                }
+                // Claude 4.6+ adaptive thinking: the model chooses its own budget.
+                // The Messages API rejects `thinking.adaptive.budget_tokens` with
+                // "Extra inputs are not permitted", so we never attach a cap here —
+                // the reasoning_effort signal is carried by max_tokens / temperature
+                // alone for adaptive-capable models.
+                payload["thinking"] = json!({ "type": "adaptive" });
             } else {
                 // Legacy models (3.7, 4.0) use fixed budget thinking
                 let budget_tokens: u64 = match effort.as_str() {
