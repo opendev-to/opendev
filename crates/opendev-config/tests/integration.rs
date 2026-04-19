@@ -4,7 +4,6 @@
 //! and models.dev cache operations using real filesystem I/O.
 
 use opendev_config::{ConfigLoader, ModelInfo, ModelRegistry, ProviderInfo};
-use opendev_models::AppConfig;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
@@ -170,7 +169,7 @@ fn registry_loads_from_cache() {
     // Simulate load_providers_from_dir by calling it directly
     // (load_from_cache would try network if stale, so test the internal method)
     let loaded = std::fs::read_to_string(providers_dir.join("test-provider.json")).unwrap();
-    let data: serde_json::Value = serde_json::from_str(&loaded).unwrap();
+    let _data: serde_json::Value = serde_json::from_str(&loaded).unwrap();
     // We'll manually add to test the lookup methods
     let mut models = HashMap::new();
     models.insert(
