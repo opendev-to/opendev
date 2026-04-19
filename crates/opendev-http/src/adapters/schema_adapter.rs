@@ -23,6 +23,7 @@ pub fn adapt_for_provider(schemas: &[Value], provider: &str) -> Vec<Value> {
     let mut adapted: Vec<Value> = schemas.to_vec();
     let mut modified = false;
 
+    #[allow(clippy::collapsible_match)]
     match provider.as_str() {
         "gemini" | "google" => {
             if adapt_gemini(&mut adapted) {
@@ -201,6 +202,7 @@ fn flatten_union_types(obj: &mut Value) -> bool {
     let keys: Vec<String> = map.keys().cloned().collect();
     for key in keys {
         if let Some(value) = map.get_mut(&key) {
+            #[allow(clippy::collapsible_match)]
             match value {
                 Value::Object(_) => {
                     if flatten_union_types(value) {
