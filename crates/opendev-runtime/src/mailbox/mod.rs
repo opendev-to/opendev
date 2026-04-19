@@ -168,7 +168,25 @@ impl Mailbox {
 
     fn write_messages(&self, messages: &[MailboxMessage]) -> io::Result<()> {
         let json = serde_json::to_string_pretty(messages).map_err(io::Error::other)?;
-        fs::write(&self.inbox_path, json)?;
+
+        let tmp_path = self.inbox_path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+
+            let mut file = opts.open(&tmp_path)
+                .map_err(|e| io::Error::other(format!("Failed to create snapshot tmp file: {e}")))?;
+            std::io::Write::write_all(&mut file, json.as_bytes())
+                .map_err(|e| io::Error::other(format!("Failed to write snapshot tmp: {e}")))?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(&tmp_path, &json)?;
+        }
+
+        fs::rename(&tmp_path, &self.inbox_path)?;
         Ok(())
     }
 
