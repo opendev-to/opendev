@@ -127,7 +127,7 @@ async fn list_sessions_empty() {
 /// List sessions returns created sessions.
 #[tokio::test]
 async fn list_sessions_after_create() {
-    let (tmp, state) = make_test_state();
+    let (_tmp, state) = make_test_state();
 
     // Manually save a session so it appears in the index
     {
@@ -306,7 +306,7 @@ async fn set_invalid_mode_returns_400() {
 async fn set_autonomy_level() {
     let (_tmp, state) = make_test_state();
 
-    let (status, json) = send_request(
+    let (status, _json) = send_request(
         state.clone(),
         Method::POST,
         "/api/config/autonomy",

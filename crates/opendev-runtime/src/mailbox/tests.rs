@@ -86,7 +86,7 @@ fn test_send_creates_file_if_missing() {
 
 #[test]
 fn test_concurrent_writes() {
-    use std::sync::Arc;
+
     use std::thread;
 
     let dir = temp_team_dir();
