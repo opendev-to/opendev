@@ -94,7 +94,7 @@ impl ProviderInfo {
         if let Some(cap) = capability {
             models.retain(|m| m.capabilities.contains(&cap.to_string()));
         }
-        models.sort_by_key(|b| std::cmp::Reverse(b.context_length));
+        models.sort_by(|a, b| b.context_length.cmp(&a.context_length));
         models
     }
 

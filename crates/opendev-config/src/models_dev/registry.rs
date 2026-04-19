@@ -238,7 +238,7 @@ impl ModelRegistry {
     /// List all available providers, sorted by priority then alphabetically.
     pub fn list_providers(&self) -> Vec<&ProviderInfo> {
         let mut providers: Vec<&ProviderInfo> = self.providers.values().collect();
-        providers.sort_by_key(|a| provider_sort_key(&a.id));
+        providers.sort_by(|a, b| provider_sort_key(&a.id).cmp(&provider_sort_key(&b.id)));
         providers
     }
 
