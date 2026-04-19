@@ -22,7 +22,7 @@ fn test_parse_with_offset() {
 #[test]
 fn test_parse_fractional() {
     let dt = parse_flexible_datetime("2024-06-15T10:30:00.123456").unwrap();
-    assert_eq!(dt.to_rfc3339().starts_with("2024-06-15T10:30:00"), true);
+    assert!(dt.to_rfc3339().starts_with("2024-06-15T10:30:00"));
 }
 
 #[test]
