@@ -310,7 +310,13 @@ fn test_convert_request_adaptive_thinking_medium() {
     });
     let result = adapter.convert_request(payload);
     assert_eq!(result["thinking"]["type"], "adaptive");
-    assert_eq!(result["thinking"]["budget_tokens"], 16000);
+    // Anthropic rejects `budget_tokens` under `thinking.adaptive`
+    // ("Extra inputs are not permitted") — adaptive means the model chooses.
+    assert!(
+        result["thinking"].get("budget_tokens").is_none(),
+        "adaptive thinking must not include budget_tokens; got {:?}",
+        result["thinking"]
+    );
 }
 
 #[test]
@@ -323,7 +329,46 @@ fn test_convert_request_adaptive_thinking_low() {
     });
     let result = adapter.convert_request(payload);
     assert_eq!(result["thinking"]["type"], "adaptive");
-    assert_eq!(result["thinking"]["budget_tokens"], 8000);
+    assert!(
+        result["thinking"].get("budget_tokens").is_none(),
+        "adaptive thinking must not include budget_tokens; got {:?}",
+        result["thinking"]
+    );
+}
+
+#[test]
+fn test_adaptive_thinking_never_sends_budget_tokens() {
+    // Regression: Anthropic's Messages API rejects any payload where
+    // `thinking.type == "adaptive"` contains `budget_tokens`, with
+    // `thinking.adaptive.budget_tokens: Extra inputs are not permitted`.
+    // Cover every effort level on every adaptive-capable model variant.
+    let adapter = AnthropicAdapter::new().with_caching(false);
+    let models = [
+        "claude-opus-4-6-20260301",
+        "claude-opus-4.6-20260301",
+        "claude-sonnet-4-6-20260301",
+        "claude-sonnet-4.6-20260301",
+    ];
+    let efforts = ["low", "medium", "high"];
+    for model in models {
+        for effort in efforts {
+            let payload = json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "_reasoning_effort": effort,
+            });
+            let result = adapter.convert_request(payload);
+            assert_eq!(
+                result["thinking"]["type"], "adaptive",
+                "{model} @ {effort}: expected adaptive"
+            );
+            assert!(
+                result["thinking"].get("budget_tokens").is_none(),
+                "{model} @ {effort}: adaptive payload must omit budget_tokens, got {:?}",
+                result["thinking"]
+            );
+        }
+    }
 }
 
 #[test]
