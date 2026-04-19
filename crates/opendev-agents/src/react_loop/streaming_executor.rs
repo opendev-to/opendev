@@ -248,6 +248,7 @@ impl StreamCallback for StreamingToolExecutor {
                 index,
                 call_id,
                 name,
+                ..
             } => {
                 // Store metadata keyed by stream index for later lookup.
                 if let Ok(mut map) = self.call_metadata.lock() {

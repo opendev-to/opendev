@@ -43,7 +43,24 @@ impl ChatCompletionsAdapter {
                 for tc_delta in tc_deltas {
                     let idx = tc_delta.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
 
+                    // OpenAI spec says `arguments` is a JSON-encoded string, but some
+                    // providers (observed: z.ai GLM-5.1 in OpenAI-compat mode) emit a raw
+                    // JSON value instead. Normalize to a string here. Empty/null values
+                    // are skipped so the accumulator isn't polluted with no-op entries.
+                    let args_str = tc_delta
+                        .get("function")
+                        .and_then(|f| f.get("arguments"))
+                        .and_then(|v| match v {
+                            Value::String(s) if !s.is_empty() => Some(s.clone()),
+                            Value::String(_) | Value::Null => None,
+                            other => Some(other.to_string()),
+                        });
+
                     if let Some(id) = tc_delta.get("id").and_then(|i| i.as_str()) {
+                        // First (or only) chunk for this tool call. Providers like z.ai
+                        // GLM-5.1 stuff the full arguments JSON into this same chunk —
+                        // carry it through `initial_args` so the accumulator seeds the
+                        // tool-call's args buffer rather than ending up empty.
                         let name = tc_delta
                             .get("function")
                             .and_then(|f| f.get("name"))
@@ -54,18 +71,12 @@ impl ChatCompletionsAdapter {
                             index: idx,
                             call_id: id.to_string(),
                             name,
+                            initial_args: args_str,
                         });
                     }
 
-                    if let Some(args) = tc_delta
-                        .get("function")
-                        .and_then(|f| f.get("arguments"))
-                        .and_then(|a| a.as_str())
-                    {
-                        return Some(StreamEvent::FunctionCallDelta {
-                            index: idx,
-                            delta: args.to_string(),
-                        });
+                    if let Some(delta) = args_str {
+                        return Some(StreamEvent::FunctionCallDelta { index: idx, delta });
                     }
                 }
             }
@@ -125,3 +136,7 @@ impl super::base::ProviderAdapter for ChatCompletionsAdapter {
         Self::parse_chat_completions_sse(data)
     }
 }
+
+#[cfg(test)]
+#[path = "chat_completions_tests.rs"]
+mod tests;

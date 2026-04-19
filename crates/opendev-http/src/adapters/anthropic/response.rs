@@ -196,6 +196,7 @@ impl AnthropicAdapter {
                             index,
                             call_id,
                             name,
+                            initial_args: None,
                         })
                     }
                     _ => None,

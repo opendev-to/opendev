@@ -173,6 +173,7 @@ impl super::base::ProviderAdapter for OpenAiAdapter {
                     index,
                     call_id,
                     name,
+                    initial_args: None,
                 })
             }
             "response.function_call_arguments.delta" => {

@@ -16,11 +16,17 @@ pub enum StreamEvent {
     /// between multiple interleaved thinking blocks in a single response).
     ReasoningBlockStart,
     /// A new function/tool call is starting.
-    /// Fields: `(index, call_id, function_name)`
+    ///
+    /// Some providers (e.g., z.ai GLM-5.1 in OpenAI-compat mode) emit the
+    /// *complete* arguments JSON string in the same SSE chunk as `id`/`name`
+    /// rather than as subsequent `FunctionCallDelta` chunks. When that
+    /// happens the adapter sets `initial_args` and the accumulator seeds
+    /// the tool call's args buffer with it before consuming any deltas.
     FunctionCallStart {
         index: usize,
         call_id: String,
         name: String,
+        initial_args: Option<String>,
     },
     /// A chunk of function call arguments.
     FunctionCallDelta { index: usize, delta: String },
