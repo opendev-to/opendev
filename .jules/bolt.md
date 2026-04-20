@@ -5,3 +5,7 @@
 ## 2024-04-11 - React useEffect Dependency Array Optimization
 **Learning:** Omission of a dependency array in `useEffect` (e.g. in `ToolCallMessage.tsx`) causes the hook to execute after *every* render. When such a hook performs DOM measurements (like `scrollHeight`) and sets state (`setExpandHeight`), it triggers further unnecessary renders and layout recalculations, drastically degrading performance especially in long lists like a chat log.
 **Action:** Always ensure `useEffect` and similar hooks have appropriate dependency arrays to restrict their execution strictly to when their dependencies change.
+
+## 2024-06-25 - Extracted HaloSpinner Component
+**Learning:** Frequent animations like `setInterval` can cause severe layout thrashing and unnecessary deep re-renders if left inline in larger components like `LandingPage.tsx` and `WelcomeScreen.tsx`.
+**Action:** Isolate high-frequency state updates like animation intervals into dedicated child components wrapped with `React.memo` to prevent full-list re-renders.
