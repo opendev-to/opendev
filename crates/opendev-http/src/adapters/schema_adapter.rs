@@ -24,28 +24,14 @@ pub fn adapt_for_provider(schemas: &[Value], provider: &str) -> Vec<Value> {
     let mut modified = false;
 
     match provider.as_str() {
-        "gemini" | "google" => {
-            if adapt_gemini(&mut adapted) {
-                modified = true;
-            }
-        }
-        "xai" | "grok" => {
-            if adapt_xai(&mut adapted) {
-                modified = true;
-            }
-        }
-        "mistral" => {
-            if adapt_mistral(&mut adapted) {
-                modified = true;
-            }
-        }
+        "gemini" | "google" => modified |= adapt_gemini(&mut adapted),
+        "xai" | "grok" => modified |= adapt_xai(&mut adapted),
+        "mistral" => modified |= adapt_mistral(&mut adapted),
         _ => {}
     }
 
     // General cleanup for all non-standard providers
-    if general_cleanup(&mut adapted) {
-        modified = true;
-    }
+    modified |= general_cleanup(&mut adapted);
 
     if modified {
         debug!(
@@ -202,16 +188,10 @@ fn flatten_union_types(obj: &mut Value) -> bool {
     for key in keys {
         if let Some(value) = map.get_mut(&key) {
             match value {
-                Value::Object(_) => {
-                    if flatten_union_types(value) {
-                        changed = true;
-                    }
-                }
+                Value::Object(_) => changed |= flatten_union_types(value),
                 Value::Array(arr) => {
                     for item in arr.iter_mut() {
-                        if flatten_union_types(item) {
-                            changed = true;
-                        }
+                        changed |= flatten_union_types(item);
                     }
                 }
                 _ => {}

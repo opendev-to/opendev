@@ -461,18 +461,20 @@ impl AdaptedClient {
                                     index,
                                     call_id,
                                     name,
+                                    initial_args,
                                 } => {
                                     let tc_idx = tool_calls.len();
+                                    let seeded = initial_args.clone().unwrap_or_default();
                                     tool_calls.push(serde_json::json!({
                                         "id": call_id,
                                         "type": "function",
                                         "function": {
                                             "name": name,
-                                            "arguments": "",
+                                            "arguments": seeded.clone(),
                                         }
                                     }));
                                     tool_call_index.insert(*index, tc_idx);
-                                    current_tool_args.insert(tc_idx, String::new());
+                                    current_tool_args.insert(tc_idx, seeded);
                                 }
                                 StreamEvent::FunctionCallDelta { index, delta } => {
                                     if let Some(&tc_idx) = tool_call_index.get(index) {

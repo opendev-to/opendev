@@ -18,6 +18,7 @@ fn test_function_call_start_stored() {
         index: 0,
         call_id: "call_123".to_string(),
         name: "Read".to_string(),
+        initial_args: None,
     });
 
     // Verify it was stored by index
@@ -42,6 +43,7 @@ fn test_write_tool_preparsed() {
         index: 0,
         call_id: "call_456".to_string(),
         name: "Edit".to_string(),
+        initial_args: None,
     });
 
     // Complete it
@@ -112,6 +114,7 @@ async fn test_read_only_tool_spawns_task() {
         index: 0,
         call_id: "call_789".to_string(),
         name: "Read".to_string(),
+        initial_args: None,
     });
 
     // Complete it - this should spawn a task
