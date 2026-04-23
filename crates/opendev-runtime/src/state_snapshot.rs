@@ -132,7 +132,8 @@ impl SnapshotPersistence {
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create(true).truncate(true).mode(0o600);
 
-            let mut file = opts.open(&tmp_path)
+            let mut file = opts
+                .open(&tmp_path)
                 .map_err(|e| format!("Failed to open snapshot tmp: {e}"))?;
             std::io::Write::write_all(&mut file, json.as_bytes())
                 .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
