@@ -193,7 +193,7 @@ async fn resume_session() {
         mgr.save_session(&session).unwrap();
     }
 
-    let (status, _json) = send_request(
+    let (status, json) = send_request(
         state,
         Method::POST,
         "/api/sessions/test-resume/resume",
