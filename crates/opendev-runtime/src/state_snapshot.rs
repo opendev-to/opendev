@@ -184,7 +184,7 @@ impl SnapshotPersistence {
             }
         }
 
-        snapshots.sort_by(|a, b| b.snapshot_timestamp_ms.cmp(&a.snapshot_timestamp_ms));
+        snapshots.sort_by_key(|b| std::cmp::Reverse(b.snapshot_timestamp_ms));
         snapshots
     }
 
