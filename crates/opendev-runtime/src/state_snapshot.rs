@@ -121,13 +121,29 @@ impl SnapshotPersistence {
             .map_err(|e| format!("Failed to create snapshot dir: {e}"))?;
 
         let path = self.snapshot_path(&snapshot.session_id);
-        let tmp_path = path.with_extension("json.tmp");
+        // Use a secure temporary filename to prevent predictable tempfile attacks
+        let tmp_path = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
 
         let json = serde_json::to_string_pretty(snapshot)
             .map_err(|e| format!("Failed to serialize snapshot: {e}"))?;
 
-        std::fs::write(&tmp_path, &json)
-            .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+
+            let mut file = opts
+                .open(&tmp_path)
+                .map_err(|e| format!("Failed to open snapshot tmp securely: {e}"))?;
+            std::io::Write::write_all(&mut file, json.as_bytes())
+                .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&tmp_path, &json)
+                .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
+        }
 
         std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename snapshot: {e}"))?;
 
@@ -169,7 +185,7 @@ impl SnapshotPersistence {
             }
         }
 
-        snapshots.sort_by(|a, b| b.snapshot_timestamp_ms.cmp(&a.snapshot_timestamp_ms));
+        snapshots.sort_by_key(|b| std::cmp::Reverse(b.snapshot_timestamp_ms));
         snapshots
     }
 

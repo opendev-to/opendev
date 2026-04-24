@@ -299,7 +299,7 @@ fn scan_all_memory_files(dir: &Path) -> Vec<MemoryFile> {
     }
 
     // Sort oldest first (process oldest sessions first)
-    files.sort_by(|a, b| a.modified.cmp(&b.modified));
+    files.sort_by_key(|a| a.modified);
     files
 }
 
