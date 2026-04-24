@@ -298,7 +298,7 @@ impl GrepTool {
                         unique_paths.push((key, mtime));
                     }
                 }
-                unique_paths.sort_by(|a, b| b.1.cmp(&a.1));
+                unique_paths.sort_by_key(|b| std::cmp::Reverse(b.1));
                 for (key, _) in &unique_paths {
                     output.push_str(key);
                     output.push('\n');
