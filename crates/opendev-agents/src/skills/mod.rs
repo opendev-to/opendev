@@ -29,4 +29,6 @@ mod metadata;
 mod parsing;
 
 pub use loader::SkillLoader;
-pub use metadata::{CompanionFile, LoadedSkill, SkillMetadata, SkillSource};
+pub use metadata::{
+    CompanionFile, LoadedSkill, SkillContext, SkillEffort, SkillHookDef, SkillMetadata, SkillSource,
+};

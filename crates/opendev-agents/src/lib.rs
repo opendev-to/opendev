@@ -31,7 +31,9 @@ pub use main_agent::MainAgent;
 pub use prompts::{PromptComposer, PromptSection};
 pub use react_loop::{IterationMetrics, ReactLoop, ReactLoopConfig, ToolCallMetric, TurnResult};
 pub use response::ResponseCleaner;
-pub use skills::{LoadedSkill, SkillLoader, SkillMetadata, SkillSource};
+pub use skills::{
+    LoadedSkill, SkillContext, SkillEffort, SkillHookDef, SkillLoader, SkillMetadata, SkillSource,
+};
 pub use subagents::{
     NoopProgressCallback, PermissionAction, PermissionRule, RunnerContext, SimpleReactRunner,
     StandardReactRunner, SubAgentSpec, SubagentEventBridge, SubagentManager,
