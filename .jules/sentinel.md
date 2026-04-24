@@ -7,3 +7,8 @@
 **Vulnerability:** Configuration files containing sensitive data (like MCP OAuth client secrets or access tokens) were written using `std::fs::write` or non-atomic serialization. This creates a Time-of-Check to Time-of-Use (TOCTOU) race condition and defaults to standard user permissions, potentially allowing unauthorized read access on multi-user systems.
 **Learning:** Directly modifying permissions after writing a file still leaves a short window where a local attacker can read or modify the file.
 **Prevention:** Always write sensitive files using an atomic pattern: create a temporary file using `std::fs::OpenOptions` with `.create(true).write(true).truncate(true).mode(0o600)` (on Unix via `std::os::unix::fs::OpenOptionsExt`), write the contents, and then use `std::fs::rename` to atomically replace the destination file.
+
+## 2025-02-27 - Predictable Tempfiles and TOCTOU in Application State Snapshots
+**Vulnerability:** The application state snapshots in `SnapshotPersistence::save` contained sensitive session data (like tool outputs and costs) and were written using predictable temporary filenames (e.g., `.with_extension("json.tmp")`) with default permissions (`std::fs::write`). This allows potential TOCTOU attacks or unintended data exposure on multi-user systems.
+**Learning:** Even internal cache or snapshot files that are quickly renamed can be intercepted if they use predictable filenames and default permissions.
+**Prevention:** Use cryptographically secure random identifiers (e.g., `uuid::Uuid::new_v4()`) for temporary filenames and enforce strict creation permissions (`.mode(0o600)` with `.create_new(true)`) during atomic writes to prevent predictability and race condition windows.
