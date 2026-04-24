@@ -105,11 +105,13 @@ pub(super) fn parse_simple_yaml(yaml: &str) -> CustomAgentFrontmatter {
                         meta.top_p = value.parse().ok();
                     }
                     "color" => meta.color = Some(value.to_string()),
+                    #[allow(clippy::collapsible_match)]
                     "tools" => {
                         if value.is_empty() {
                             ctx = Context::Tools;
                         }
                     }
+                    #[allow(clippy::collapsible_match)]
                     "permission" => {
                         if value.is_empty() {
                             ctx = Context::Permission;
