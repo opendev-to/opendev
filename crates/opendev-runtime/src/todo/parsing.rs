@@ -102,6 +102,7 @@ fn extract_numbered_step(line: &str) -> Option<String> {
     let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
 
     // Check for separator (. or ) or -)
+    #[allow(clippy::question_mark)]
     let rest = if let Some(s) = rest.strip_prefix(". ") {
         s
     } else if let Some(s) = rest.strip_prefix(") ") {
