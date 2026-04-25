@@ -1,3 +1,4 @@
+import { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import { CodeBracketIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
 
@@ -16,6 +17,83 @@ interface WikiPage {
 interface DocumentationContentProps {
   wikiPage: WikiPage;
 }
+
+// ⚡ Bolt Performance Optimization:
+// Extract markdown components outside the functional component to ensure referential stability.
+// Since these components don't depend on component state or props, creating them inline
+// causes React to generate a new object on every render, triggering unnecessary deep re-renders
+// of the ReactMarkdown component and all its children. This optimization prevents those re-renders.
+const MARKDOWN_COMPONENTS: Components = {
+  h1: ({ children, ...props }) => (
+    <h1 className="text-3xl font-bold text-gray-900 mt-10 mb-6 leading-tight" {...props}>
+      {children}
+    </h1>
+  ),
+  h2: ({ children, ...props }) => (
+    <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4 leading-tight" {...props}>
+      {children}
+    </h2>
+  ),
+  h3: ({ children, ...props }) => (
+    <h3 className="text-xl font-semibold text-gray-900 mt-6 mb-3 leading-tight" {...props}>
+      {children}
+    </h3>
+  ),
+  p: ({ children, ...props }) => (
+    <p className="text-base text-gray-700 mb-4 leading-relaxed" {...props}>
+      {children}
+    </p>
+  ),
+  ul: ({ children, ...props }) => (
+    <ul className="list-disc pl-6 mb-4 space-y-2" {...props}>
+      {children}
+    </ul>
+  ),
+  ol: ({ children, ...props }) => (
+    <ol className="list-decimal pl-6 mb-4 space-y-2" {...props}>
+      {children}
+    </ol>
+  ),
+  li: ({ children, ...props }) => (
+    <li className="text-gray-700 leading-relaxed" {...props}>
+      {children}
+    </li>
+  ),
+  code: ({ children, className, ...props }) => {
+    const isInline = !className;
+    return isInline ? (
+      <code
+        className="bg-purple-50 text-purple-900 px-1.5 py-0.5 rounded text-sm font-mono"
+        {...props}
+      >
+        {children}
+      </code>
+    ) : (
+      <code
+        className="block bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm font-mono leading-relaxed"
+        {...props}
+      >
+        {children}
+      </code>
+    );
+  },
+  blockquote: ({ children, ...props }) => (
+    <blockquote
+      className="border-l-4 border-purple-500 pl-4 py-2 my-4 bg-purple-50 text-gray-700 italic"
+      {...props}
+    >
+      {children}
+    </blockquote>
+  ),
+  a: ({ children, ...props }) => (
+    <a
+      className="text-purple-600 hover:text-purple-800 underline"
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+};
 
 export function DocumentationContent({ wikiPage }: DocumentationContentProps) {
   return (
@@ -62,77 +140,7 @@ export function DocumentationContent({ wikiPage }: DocumentationContentProps) {
       <article className="prose prose-lg max-w-none">
         <ReactMarkdown
           className="text-gray-800 leading-relaxed"
-          components={{
-            h1: ({ children, ...props }) => (
-              <h1 className="text-3xl font-bold text-gray-900 mt-10 mb-6 leading-tight" {...props}>
-                {children}
-              </h1>
-            ),
-            h2: ({ children, ...props }) => (
-              <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4 leading-tight" {...props}>
-                {children}
-              </h2>
-            ),
-            h3: ({ children, ...props }) => (
-              <h3 className="text-xl font-semibold text-gray-900 mt-6 mb-3 leading-tight" {...props}>
-                {children}
-              </h3>
-            ),
-            p: ({ children, ...props }) => (
-              <p className="text-base text-gray-700 mb-4 leading-relaxed" {...props}>
-                {children}
-              </p>
-            ),
-            ul: ({ children, ...props }) => (
-              <ul className="list-disc pl-6 mb-4 space-y-2" {...props}>
-                {children}
-              </ul>
-            ),
-            ol: ({ children, ...props }) => (
-              <ol className="list-decimal pl-6 mb-4 space-y-2" {...props}>
-                {children}
-              </ol>
-            ),
-            li: ({ children, ...props }) => (
-              <li className="text-gray-700 leading-relaxed" {...props}>
-                {children}
-              </li>
-            ),
-            code: ({ children, className, ...props }) => {
-              const isInline = !className;
-              return isInline ? (
-                <code
-                  className="bg-purple-50 text-purple-900 px-1.5 py-0.5 rounded text-sm font-mono"
-                  {...props}
-                >
-                  {children}
-                </code>
-              ) : (
-                <code
-                  className="block bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm font-mono leading-relaxed"
-                  {...props}
-                >
-                  {children}
-                </code>
-              );
-            },
-            blockquote: ({ children, ...props }) => (
-              <blockquote
-                className="border-l-4 border-purple-500 pl-4 py-2 my-4 bg-purple-50 text-gray-700 italic"
-                {...props}
-              >
-                {children}
-              </blockquote>
-            ),
-            a: ({ children, ...props }) => (
-              <a
-                className="text-purple-600 hover:text-purple-800 underline"
-                {...props}
-              >
-                {children}
-              </a>
-            ),
-          }}
+          components={MARKDOWN_COMPONENTS}
         >
           {wikiPage.content}
         </ReactMarkdown>
