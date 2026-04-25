@@ -75,7 +75,6 @@ impl Mailbox {
 
     /// Send a message to this inbox.
     pub fn send(&self, msg: MailboxMessage) -> io::Result<()> {
-        self.ensure_file()?;
         let mut msg_opt = Some(msg);
         self.with_locked_inbox(|messages| {
             if let Some(m) = msg_opt.take() {
@@ -194,6 +193,8 @@ impl Mailbox {
         let _guard = rw_lock
             .write()
             .map_err(|e| io::Error::other(format!("Could not acquire mailbox lock: {e}")))?;
+
+        self.ensure_file()?;
 
         // Read, mutate, write back under lock
         let mut messages = self.read_messages()?;
