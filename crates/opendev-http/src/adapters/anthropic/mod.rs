@@ -7,7 +7,7 @@
 //! - Image blocks using Anthropic's native `source` format
 
 mod request;
-mod response;
+pub(crate) mod response;
 
 use serde_json::{Value, json};
 

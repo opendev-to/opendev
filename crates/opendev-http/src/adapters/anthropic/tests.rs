@@ -428,3 +428,48 @@ fn test_thinking_blocks_signature_roundtrip() {
     assert_eq!(assistant_content[1]["type"], "text");
     assert_eq!(assistant_content[2]["type"], "tool_use");
 }
+
+#[test]
+fn test_parse_stream_event_signature_delta() {
+    let adapter = AnthropicAdapter::new();
+    // Verify signature_delta content_block_delta emits ThinkingSignature
+    let data = serde_json::json!({
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+            "type": "signature_delta",
+            "signature": "EucBtest_signature_abc123"
+        }
+    });
+    let event = adapter.parse_stream_event("content_block_delta", &data);
+    match event {
+        Some(crate::streaming::StreamEvent::ThinkingSignature { index, signature }) => {
+            assert_eq!(index, 0);
+            assert_eq!(signature, "EucBtest_signature_abc123");
+        }
+        other => panic!("Expected ThinkingSignature, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_parse_stream_event_thinking_block_start() {
+    let adapter = AnthropicAdapter::new();
+    let data = serde_json::json!({
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+            "type": "thinking",
+            "thinking": "",
+            "signature": ""
+        }
+    });
+    let event = adapter.parse_stream_event("content_block_start", &data);
+    match event {
+        Some(crate::streaming::StreamEvent::ThinkingBlockStart { index, signature }) => {
+            assert_eq!(index, 0);
+            // signature is Some("") from the empty placeholder in content_block_start
+            assert_eq!(signature, Some("".to_string()));
+        }
+        other => panic!("Expected ThinkingBlockStart, got {:?}", other),
+    }
+}

@@ -15,6 +15,22 @@ pub enum StreamEvent {
     /// A new reasoning/thinking block is starting (used to insert separators
     /// between multiple interleaved thinking blocks in a single response).
     ReasoningBlockStart,
+    /// A new Anthropic-native thinking block is starting.
+    ///
+    /// Carries the block index and the `signature` field required for multi-turn
+    /// echo-back. The streaming client accumulates these into `_thinking_blocks`
+    /// for inclusion in the synthesized response. UI code should treat this as
+    /// `ReasoningBlockStart` for display purposes.
+    ThinkingBlockStart {
+        index: usize,
+        signature: Option<String>,
+    },
+    /// The signature for a completed thinking block (from Anthropic `signature_delta`).
+    ///
+    /// Anthropic sends the encrypted signature as the final delta for a thinking
+    /// block before `content_block_stop`. Must be preserved in `_thinking_blocks`
+    /// for valid multi-turn requests.
+    ThinkingSignature { index: usize, signature: String },
     /// A new function/tool call is starting.
     ///
     /// Some providers (e.g., z.ai GLM-5.1 in OpenAI-compat mode) emit the

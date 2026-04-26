@@ -71,7 +71,9 @@ impl LlmCaller {
         messages.retain(|msg| msg.get("_msg_class").and_then(|v| v.as_str()) != Some("internal"));
         for msg in &mut messages {
             if let Some(obj) = msg.as_object_mut() {
-                obj.retain(|k, _| !k.starts_with('_'));
+                // Preserve _thinking_blocks: needed by the Anthropic adapter to echo
+                // encrypted thinking signatures back on multi-turn requests.
+                obj.retain(|k, _| !k.starts_with('_') || k == "_thinking_blocks");
             }
         }
         messages
