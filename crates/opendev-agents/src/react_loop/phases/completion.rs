@@ -118,11 +118,9 @@ where
                     pending,
                     "Background tasks still pending after 10 nudges — aborting to prevent hang"
                 );
-                return LoopAction::Return(Err(
-                    crate::traits::AgentError::Other(
-                        format!("{pending} background task(s) did not complete after 10 wait nudges — aborting"),
-                    )
-                ));
+                return LoopAction::Return(Err(crate::traits::AgentError::Other(format!(
+                    "{pending} background task(s) did not complete after 10 wait nudges — aborting"
+                ))));
             }
         }
     }

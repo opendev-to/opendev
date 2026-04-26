@@ -175,9 +175,8 @@ impl AnthropicAdapter {
                                 msg.get("reasoning_content").and_then(|r| r.as_str())
                                 && !reasoning.is_empty()
                             {
-                                content_blocks.push(super::response::build_thinking_block(
-                                    reasoning, None,
-                                ));
+                                content_blocks
+                                    .push(super::response::build_thinking_block(reasoning, None));
                             }
 
                             // Add text content if present

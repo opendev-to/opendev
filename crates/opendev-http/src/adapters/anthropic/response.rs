@@ -199,8 +199,10 @@ impl AnthropicAdapter {
                     "thinking" => {
                         let index =
                             data.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
-                        let signature =
-                            cb.get("signature").and_then(|s| s.as_str()).map(String::from);
+                        let signature = cb
+                            .get("signature")
+                            .and_then(|s| s.as_str())
+                            .map(String::from);
                         Some(StreamEvent::ThinkingBlockStart { index, signature })
                     }
                     "tool_use" => {

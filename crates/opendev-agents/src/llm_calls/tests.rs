@@ -298,17 +298,16 @@ fn test_internal_removal_exposes_merge() {
 fn test_clean_messages_preserves_thinking_blocks() {
     // _thinking_blocks carries Anthropic's encrypted thinking signatures for
     // multi-turn echo-back and must survive clean_messages.
-    let blocks = serde_json::json!([{"type": "thinking", "thinking": "...", "signature": "sig123"}]);
-    let messages = vec![
-        serde_json::json!({
-            "role": "assistant",
-            "content": null,
-            "tool_calls": [{"id": "tc-1", "function": {"name": "read_file", "arguments": "{}"}}],
-            "reasoning_content": "some reasoning",
-            "_thinking_blocks": blocks.clone(),
-            "_other_internal": "should be stripped",
-        }),
-    ];
+    let blocks =
+        serde_json::json!([{"type": "thinking", "thinking": "...", "signature": "sig123"}]);
+    let messages = vec![serde_json::json!({
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [{"id": "tc-1", "function": {"name": "read_file", "arguments": "{}"}}],
+        "reasoning_content": "some reasoning",
+        "_thinking_blocks": blocks.clone(),
+        "_other_internal": "should be stripped",
+    })];
     let cleaned = LlmCaller::clean_messages(&messages);
     assert_eq!(cleaned.len(), 1);
     let msg = &cleaned[0];
