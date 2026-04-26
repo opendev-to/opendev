@@ -79,13 +79,9 @@ pub(super) fn urlencoded(s: &str) -> String {
 /// Extract the domain from a URL, stripping the `www.` prefix.
 fn extract_domain(url: &str) -> Option<String> {
     // Simple domain extraction without pulling in the `url` crate.
-    let after_scheme = if let Some(rest) = url.strip_prefix("https://") {
-        rest
-    } else if let Some(rest) = url.strip_prefix("http://") {
-        rest
-    } else {
-        return None;
-    };
+    let after_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
     let domain = after_scheme.split('/').next().unwrap_or("");
     let domain = domain.split(':').next().unwrap_or(domain); // strip port
     let domain = domain.to_lowercase();
