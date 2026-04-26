@@ -312,7 +312,7 @@ fn test_process_iteration_resets_no_tool_counter_on_tool_call() {
 #[test]
 fn test_default_config() {
     let config = ReactLoopConfig::default();
-    assert!(config.max_iterations.is_none());
+    assert_eq!(config.max_iterations, Some(50));
     assert_eq!(config.max_nudge_attempts, 3);
     assert_eq!(config.max_todo_nudges, 4);
 }

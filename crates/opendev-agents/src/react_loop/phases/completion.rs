@@ -111,6 +111,18 @@ where
                 append_nudge(messages, &nudge);
                 react_loop.push_metrics(iter_metrics);
                 return LoopAction::Continue;
+            } else {
+                warn!(
+                    spawned = state.bg_tasks_spawned,
+                    completed = bg_completed,
+                    pending,
+                    "Background tasks still pending after 10 nudges — aborting to prevent hang"
+                );
+                return LoopAction::Return(Err(
+                    crate::traits::AgentError::Other(
+                        format!("{pending} background task(s) did not complete after 10 wait nudges — aborting"),
+                    )
+                ));
             }
         }
     }
