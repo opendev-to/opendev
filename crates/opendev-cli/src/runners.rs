@@ -101,6 +101,9 @@ pub async fn run_non_interactive(
         }
     };
 
+    // No TUI to drain the approval channel — auto-execute every tool.
+    agent_runtime.disable_tool_approvals();
+
     // Connect MCP servers (best-effort, failures are logged)
     agent_runtime.start_mcp_connections();
 
@@ -278,8 +281,6 @@ pub async fn run_interactive(
         session_manager.create_session();
     }
 
-    let _ = dangerously_skip_permissions; // Will be wired to approval system
-
     // Create agent runtime (prompt composer is initialized inside)
     let mut agent_runtime =
         match runtime::AgentRuntime::new(config.clone(), working_dir, session_manager) {
@@ -289,6 +290,10 @@ pub async fn run_interactive(
                 std::process::exit(1);
             }
         };
+
+    if dangerously_skip_permissions {
+        agent_runtime.disable_tool_approvals();
+    }
 
     // Connect MCP servers (best-effort, failures are logged)
     agent_runtime.start_mcp_connections();

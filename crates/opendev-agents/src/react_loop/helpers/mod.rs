@@ -129,10 +129,17 @@ impl ReactLoop {
 
         // Append assistant message to history
         if let Some(ref msg) = response.message {
-            let raw_content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+            // Prefer the full content value (string or array); fall back to "" for safety.
+            // An array content is returned by Anthropic when extended thinking is active —
+            // stripping it to "" loses thinking signatures, breaking multi-turn requests.
+            let content_value = msg
+                .get("content")
+                .filter(|v| !v.is_null())
+                .cloned()
+                .unwrap_or(serde_json::Value::String(String::new()));
             let mut assistant_msg = serde_json::json!({
                 "role": "assistant",
-                "content": raw_content,
+                "content": content_value,
             });
             if let Some(tool_calls) = msg.get("tool_calls")
                 && !tool_calls.is_null()
@@ -143,6 +150,12 @@ impl ReactLoop {
                 && !reasoning.is_null()
             {
                 assistant_msg["reasoning_content"] = reasoning.clone();
+            }
+            // Preserve raw thinking blocks (with Anthropic `signature` fields) for multi-turn echo-back.
+            if let Some(blocks) = msg.get("_thinking_blocks")
+                && !blocks.is_null()
+            {
+                assistant_msg["_thinking_blocks"] = blocks.clone();
             }
             messages.push(assistant_msg);
         }

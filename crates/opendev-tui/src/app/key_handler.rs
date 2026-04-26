@@ -220,17 +220,13 @@ impl App {
             }
 
             // Focus navigation: left
-            (_, KeyCode::Char('h')) | (_, KeyCode::Left) => {
-                if self.state.task_watcher_focus > 0 {
-                    self.state.task_watcher_focus -= 1;
-                }
+            (_, KeyCode::Char('h')) | (_, KeyCode::Left) if self.state.task_watcher_focus > 0 => {
+                self.state.task_watcher_focus -= 1;
             }
             // Focus navigation: right
-            (_, KeyCode::Char('l')) | (_, KeyCode::Right) => {
-                if total_tasks > 0 {
-                    self.state.task_watcher_focus =
-                        (self.state.task_watcher_focus + 1).min(total_tasks - 1);
-                }
+            (_, KeyCode::Char('l')) | (_, KeyCode::Right) if total_tasks > 0 => {
+                self.state.task_watcher_focus =
+                    (self.state.task_watcher_focus + 1).min(total_tasks - 1);
             }
             // Focus navigation: up (move by cols)
             (_, KeyCode::Char('k')) | (_, KeyCode::Up) => {
@@ -692,55 +688,44 @@ impl App {
             // Shift+Enter — insert newline in input buffer
             // iTerm2 (and many terminals) map Shift+Enter to Ctrl+J (ASCII LF).
             // Alt+Enter sends Enter with ALT modifier. Both insert a newline.
-            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
-                if !self.state.agent_active {
-                    self.state
-                        .input_buffer
-                        .insert(self.state.input_cursor, '\n');
-                    self.state.input_cursor += '\n'.len_utf8();
-                }
+            (KeyModifiers::CONTROL, KeyCode::Char('j')) if !self.state.agent_active => {
+                self.state
+                    .input_buffer
+                    .insert(self.state.input_cursor, '\n');
+                self.state.input_cursor += '\n'.len_utf8();
             }
             (m, KeyCode::Enter)
-                if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
+                if (m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT))
+                    && !self.state.agent_active =>
             {
-                if !self.state.agent_active {
-                    self.state
-                        .input_buffer
-                        .insert(self.state.input_cursor, '\n');
-                    self.state.input_cursor += '\n'.len_utf8();
-                }
+                self.state
+                    .input_buffer
+                    .insert(self.state.input_cursor, '\n');
+                self.state.input_cursor += '\n'.len_utf8();
             }
             // Enter — accept autocomplete, submit message, or execute slash command
             (_, KeyCode::Enter) => self.handle_key_enter(),
             // Backspace
-            (_, KeyCode::Backspace) => {
-                if self.state.input_cursor > 0 {
-                    self.state.input_cursor =
-                        Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
-                    self.state.input_buffer.remove(self.state.input_cursor);
-                    self.update_autocomplete();
-                }
+            (_, KeyCode::Backspace) if self.state.input_cursor > 0 => {
+                self.state.input_cursor =
+                    Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
+                self.state.input_buffer.remove(self.state.input_cursor);
+                self.update_autocomplete();
             }
             // Delete
-            (_, KeyCode::Delete) => {
-                if self.state.input_cursor < self.state.input_buffer.len() {
-                    self.state.input_buffer.remove(self.state.input_cursor);
-                    self.update_autocomplete();
-                }
+            (_, KeyCode::Delete) if self.state.input_cursor < self.state.input_buffer.len() => {
+                self.state.input_buffer.remove(self.state.input_cursor);
+                self.update_autocomplete();
             }
             // Left arrow
-            (_, KeyCode::Left) => {
-                if self.state.input_cursor > 0 {
-                    self.state.input_cursor =
-                        Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
-                }
+            (_, KeyCode::Left) if self.state.input_cursor > 0 => {
+                self.state.input_cursor =
+                    Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
             }
             // Right arrow
-            (_, KeyCode::Right) => {
-                if self.state.input_cursor < self.state.input_buffer.len() {
-                    self.state.input_cursor =
-                        Self::next_char_boundary(&self.state.input_buffer, self.state.input_cursor);
-                }
+            (_, KeyCode::Right) if self.state.input_cursor < self.state.input_buffer.len() => {
+                self.state.input_cursor =
+                    Self::next_char_boundary(&self.state.input_buffer, self.state.input_cursor);
             }
             // Home
             (_, KeyCode::Home) => {
@@ -873,11 +858,9 @@ impl App {
                 self.state.user_scrolled = false;
             }
             // Ctrl+T — toggle todo panel expanded/collapsed
-            (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
-                if !self.state.todo_items.is_empty() {
-                    self.state.todo_expanded = !self.state.todo_expanded;
-                    self.state.dirty = true;
-                }
+            (KeyModifiers::CONTROL, KeyCode::Char('t')) if !self.state.todo_items.is_empty() => {
+                self.state.todo_expanded = !self.state.todo_expanded;
+                self.state.dirty = true;
             }
             // Alt+B — toggle task watcher subpanel
             (KeyModifiers::ALT, KeyCode::Char('b')) => {

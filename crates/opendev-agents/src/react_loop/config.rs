@@ -25,7 +25,7 @@ pub struct ReactLoopConfig {
 impl Default for ReactLoopConfig {
     fn default() -> Self {
         Self {
-            max_iterations: None, // Unlimited by default (matches Python)
+            max_iterations: Some(50), // 50 iterations is generous for real tasks; prevents headless hangs
             max_nudge_attempts: 3,
             max_todo_nudges: 4,
             original_task: None,

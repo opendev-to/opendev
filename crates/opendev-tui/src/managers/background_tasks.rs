@@ -235,7 +235,7 @@ impl BackgroundTaskManager {
     /// Get all tasks sorted by start time (newest first).
     pub fn all_tasks(&self) -> Vec<&TaskStatus> {
         let mut tasks: Vec<&TaskStatus> = self.tasks.values().collect();
-        tasks.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        tasks.sort_by_key(|t| std::cmp::Reverse(t.started_at));
         tasks
     }
 

@@ -8,6 +8,18 @@ use serde_json::{Value, json};
 
 use super::AnthropicAdapter;
 
+/// Build a single Anthropic `thinking` content block.
+///
+/// Used by both the streaming synthesizer (which has signatures from `signature_delta`)
+/// and the request path's fallback (which only has plain reasoning text).
+pub(crate) fn build_thinking_block(text: &str, signature: Option<&str>) -> Value {
+    let mut b = json!({"type": "thinking", "thinking": text});
+    if let Some(s) = signature {
+        b["signature"] = Value::String(s.to_string());
+    }
+    b
+}
+
 impl AnthropicAdapter {
     /// Convert Anthropic response to Chat Completions format.
     pub(super) fn response_to_chat_completions(response: Value) -> Value {
@@ -142,6 +154,12 @@ impl AnthropicAdapter {
                         let text = delta.get("thinking")?.as_str()?;
                         Some(StreamEvent::ReasoningDelta(text.to_string()))
                     }
+                    "signature_delta" => {
+                        let index =
+                            data.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                        let signature = delta.get("signature")?.as_str()?.to_string();
+                        Some(StreamEvent::ThinkingSignature { index, signature })
+                    }
                     "input_json_delta" => {
                         let index =
                             data.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
@@ -178,7 +196,15 @@ impl AnthropicAdapter {
                 let cb = data.get("content_block")?;
                 let block_type = cb.get("type").and_then(|t| t.as_str())?;
                 match block_type {
-                    "thinking" => Some(StreamEvent::ReasoningBlockStart),
+                    "thinking" => {
+                        let index =
+                            data.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                        let signature = cb
+                            .get("signature")
+                            .and_then(|s| s.as_str())
+                            .map(String::from);
+                        Some(StreamEvent::ThinkingBlockStart { index, signature })
+                    }
                     "tool_use" => {
                         let index =
                             data.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;

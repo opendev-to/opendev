@@ -718,6 +718,15 @@ impl AgentRuntime {
 }
 
 impl AgentRuntime {
+    /// Drop the tool-approval channel sender so Bash and MCP tools auto-execute
+    /// without prompting. The corresponding receiver is only consumed by the TUI;
+    /// callers that don't run a TUI (non-interactive `-p` mode, or interactive with
+    /// `--dangerously-skip-permissions`) must call this or the approval gate will
+    /// block forever on a response that never comes.
+    pub fn disable_tool_approvals(&mut self) {
+        self.tool_approval_tx = None;
+    }
+
     /// Compose the system prompt for the current turn.
     ///
     /// Uses the section cache: `Static` sections are resolved once per session,

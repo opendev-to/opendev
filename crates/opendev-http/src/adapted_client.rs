@@ -11,6 +11,16 @@ use crate::streaming::{StreamCallback, StreamEvent};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
+/// Per-block accumulator for Anthropic extended-thinking output during SSE streaming.
+///
+/// `index` matches the Anthropic SSE `index` field; `signature` is filled in by
+/// `signature_delta` (final delta of the block); `text` accumulates `thinking_delta`.
+struct ThinkingBlockBuf {
+    index: usize,
+    signature: Option<String>,
+    text: String,
+}
+
 /// HTTP client with provider-specific request/response adaptation.
 ///
 /// Wraps `HttpClient` and an optional `ProviderAdapter`. When an adapter
@@ -355,6 +365,8 @@ impl AdaptedClient {
         // Track which tool call indices have already received FunctionCallDone
         // (OpenAI Responses API emits them natively; Chat Completions does not).
         let mut done_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // Anthropic extended thinking: track blocks with signatures for multi-turn echo-back.
+        let mut thinking_blocks: Vec<ThinkingBlockBuf> = Vec::new();
         let mut line_buf = String::new();
         let mut event_type: Option<String> = None;
 
@@ -449,6 +461,22 @@ impl AdaptedClient {
                                 StreamEvent::TextDelta(text) => {
                                     accumulated_text.push_str(text);
                                 }
+                                StreamEvent::ThinkingBlockStart { index, signature } => {
+                                    thinking_blocks.push(ThinkingBlockBuf {
+                                        index: *index,
+                                        signature: signature.clone(),
+                                        text: String::new(),
+                                    });
+                                    if !accumulated_reasoning.is_empty() {
+                                        accumulated_reasoning.push_str("\n\n");
+                                    }
+                                    // Also fan out a ReasoningBlockStart so UI/TUI handlers
+                                    // that predate ThinkingBlockStart still see the separator.
+                                    // The original ThinkingBlockStart is dispatched after the
+                                    // match — current subscribers ignore it, but new ones can
+                                    // opt in to read the signature.
+                                    callback.on_event(&StreamEvent::ReasoningBlockStart);
+                                }
                                 StreamEvent::ReasoningBlockStart => {
                                     if !accumulated_reasoning.is_empty() {
                                         accumulated_reasoning.push_str("\n\n");
@@ -456,6 +484,19 @@ impl AdaptedClient {
                                 }
                                 StreamEvent::ReasoningDelta(text) => {
                                     accumulated_reasoning.push_str(text);
+                                    if let Some(last) = thinking_blocks.last_mut() {
+                                        last.text.push_str(text);
+                                    }
+                                }
+                                StreamEvent::ThinkingSignature { index, signature } => {
+                                    // Anthropic sends the encrypted signature as the final
+                                    // `signature_delta` before `content_block_stop`; without
+                                    // echoing it back, multi-turn requests fail with 400.
+                                    if let Some(entry) =
+                                        thinking_blocks.iter_mut().find(|b| b.index == *index)
+                                    {
+                                        entry.signature = Some(signature.clone());
+                                    }
                                 }
                                 StreamEvent::FunctionCallStart {
                                     index,
@@ -624,6 +665,19 @@ impl AdaptedClient {
                 });
                 if !accumulated_reasoning.is_empty() {
                     message["reasoning_content"] = serde_json::Value::String(accumulated_reasoning);
+                }
+                // Include structured thinking blocks (with signatures) for Anthropic multi-turn.
+                if !thinking_blocks.is_empty() {
+                    let blocks: Vec<serde_json::Value> = thinking_blocks
+                        .iter()
+                        .map(|b| {
+                            crate::adapters::anthropic::response::build_thinking_block(
+                                &b.text,
+                                b.signature.as_deref(),
+                            )
+                        })
+                        .collect();
+                    message["_thinking_blocks"] = serde_json::Value::Array(blocks);
                 }
                 // Finalize tool call arguments
                 if !tool_calls.is_empty() {

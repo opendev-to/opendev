@@ -272,15 +272,20 @@ impl ReactLoop {
                     return Ok(AgentResult::interrupted(messages.clone()));
                 }
                 TurnResult::MaxIterations => {
-                    // This path is reached from process_iteration's secondary
-                    // limit check. The primary wind-down happens above, but
-                    // this acts as a safety net.
                     iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;
                     self.push_metrics(iter_metrics);
-                    return Ok(AgentResult::fail(
-                        "Max iterations reached without completion",
+                    let max = self.config.max_iterations.unwrap_or(0);
+                    warn!(
+                        iteration = state.iteration,
+                        max_iterations = max,
+                        "React loop hit max_iterations ceiling — aborting"
+                    );
+                    let mut result = AgentResult::fail(
+                        format!("Reached max_iterations ({max}) without completion"),
                         messages.clone(),
-                    ));
+                    );
+                    result.completion_status = Some("max_iterations_reached".to_string());
+                    return Ok(result);
                 }
                 TurnResult::Complete { content, status } => {
                     iter_metrics.total_duration_ms = iter_start.elapsed().as_millis() as u64;

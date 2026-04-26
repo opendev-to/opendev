@@ -114,12 +114,10 @@ impl InteractiveMenu {
                             self.search_query.clear();
                             self.filter_items();
                         }
-                        KeyCode::Enter => {
-                            if !self.filtered_items.is_empty() {
-                                let id = self.filtered_items[self.selected_index].0.clone();
-                                self.clear_display(&mut stdout, num_lines)?;
-                                return Ok(Some(id));
-                            }
+                        KeyCode::Enter if !self.filtered_items.is_empty() => {
+                            let id = self.filtered_items[self.selected_index].0.clone();
+                            self.clear_display(&mut stdout, num_lines)?;
+                            return Ok(Some(id));
                         }
                         KeyCode::Backspace => {
                             self.search_query.pop();
@@ -133,42 +131,32 @@ impl InteractiveMenu {
                             self.search_query.push(c);
                             self.filter_items();
                         }
-                        KeyCode::Up => {
-                            if !self.filtered_items.is_empty() {
-                                self.selected_index =
-                                    (self.selected_index + self.filtered_items.len() - 1)
-                                        % self.filtered_items.len();
-                            }
+                        KeyCode::Up if !self.filtered_items.is_empty() => {
+                            self.selected_index = (self.selected_index + self.filtered_items.len()
+                                - 1)
+                                % self.filtered_items.len();
                         }
-                        KeyCode::Down => {
-                            if !self.filtered_items.is_empty() {
-                                self.selected_index =
-                                    (self.selected_index + 1) % self.filtered_items.len();
-                            }
+                        KeyCode::Down if !self.filtered_items.is_empty() => {
+                            self.selected_index =
+                                (self.selected_index + 1) % self.filtered_items.len();
                         }
                         _ => {}
                     }
                 } else {
                     match key.code {
-                        KeyCode::Up => {
-                            if !self.filtered_items.is_empty() {
-                                self.selected_index =
-                                    (self.selected_index + self.filtered_items.len() - 1)
-                                        % self.filtered_items.len();
-                            }
+                        KeyCode::Up if !self.filtered_items.is_empty() => {
+                            self.selected_index = (self.selected_index + self.filtered_items.len()
+                                - 1)
+                                % self.filtered_items.len();
                         }
-                        KeyCode::Down => {
-                            if !self.filtered_items.is_empty() {
-                                self.selected_index =
-                                    (self.selected_index + 1) % self.filtered_items.len();
-                            }
+                        KeyCode::Down if !self.filtered_items.is_empty() => {
+                            self.selected_index =
+                                (self.selected_index + 1) % self.filtered_items.len();
                         }
-                        KeyCode::Enter => {
-                            if !self.filtered_items.is_empty() {
-                                let id = self.filtered_items[self.selected_index].0.clone();
-                                self.clear_display(&mut stdout, num_lines)?;
-                                return Ok(Some(id));
-                            }
+                        KeyCode::Enter if !self.filtered_items.is_empty() => {
+                            let id = self.filtered_items[self.selected_index].0.clone();
+                            self.clear_display(&mut stdout, num_lines)?;
+                            return Ok(Some(id));
                         }
                         KeyCode::Char('/') => {
                             self.search_mode = true;
