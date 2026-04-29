@@ -23,7 +23,7 @@ fd-lock = "4"
 notify = "8"
 notify-debouncer-mini = "0.7"
 rand = "0.8"
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

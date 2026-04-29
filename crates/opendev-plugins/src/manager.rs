@@ -1,5 +1,6 @@
 //! Plugin manager: discovery, install/uninstall, enable/disable.
 
+use crate::fs_utils::atomic_write_secure;
 use crate::models::{
     InstalledPlugins, KnownMarketplaces, PluginConfig, PluginManifest, PluginMetadata, PluginScope,
     PluginSource, PluginStatus,
@@ -372,7 +373,7 @@ impl PluginManager {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(marketplaces)?;
-        std::fs::write(path, content)?;
+        atomic_write_secure(path, content.as_bytes())?;
         Ok(())
     }
 
@@ -404,7 +405,7 @@ impl PluginManager {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(plugins)?;
-        std::fs::write(path, content)?;
+        atomic_write_secure(path, content.as_bytes())?;
         Ok(())
     }
 

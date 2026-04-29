@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 dirs-next = { workspace = true }
 regex = { workspace = true }
 url = "2"
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

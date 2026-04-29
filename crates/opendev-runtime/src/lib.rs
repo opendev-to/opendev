@@ -106,3 +106,5 @@ pub use tool_approval_channel::{
 };
 pub use tool_summarizer::{build_background_result, safe_truncate, summarize_tool_result};
 pub use worktree::{MergeResult, WorktreeInfo, WorktreeManager};
+
+pub mod fs_utils;

@@ -16,3 +16,5 @@ pub use models::{
     PluginManifest, PluginMetadata, PluginScope, PluginSource, PluginStatus, PromptTemplate,
     ToolDefinition,
 };
+
+pub mod fs_utils;

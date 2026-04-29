@@ -6,6 +6,7 @@
 //!
 //! Storage: `~/.opendev/teams/{name}/team.json`
 
+use crate::fs_utils::atomic_write_secure;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -99,7 +100,7 @@ impl TeamManager {
         // Persist to disk
         let config_path = team_dir.join("team.json");
         let json = serde_json::to_string_pretty(&config).map_err(std::io::Error::other)?;
-        fs::write(&config_path, json)?;
+        atomic_write_secure(&config_path, json.as_bytes())?;
 
         let mut teams = self
             .active_teams
@@ -177,7 +178,7 @@ impl TeamManager {
     fn persist_config(&self, config: &TeamConfig) -> std::io::Result<()> {
         let config_path = self.teams_dir.join(&config.name).join("team.json");
         let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
-        fs::write(&config_path, json)?;
+        atomic_write_secure(&config_path, json.as_bytes())?;
         Ok(())
     }
 

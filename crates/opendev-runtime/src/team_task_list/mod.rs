@@ -7,6 +7,7 @@
 //!
 //! Storage: `~/.opendev/tasks/{team-name}/tasks.json`
 
+use crate::fs_utils::atomic_write_secure;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -229,7 +230,7 @@ impl TeamTaskList {
             fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(tasks).map_err(std::io::Error::other)?;
-        fs::write(path, json)?;
+        atomic_write_secure(&path, json.as_bytes())?;
         Ok(())
     }
 }
