@@ -106,8 +106,10 @@ fn extract_numbered_step(line: &str) -> Option<String> {
         s
     } else if let Some(s) = rest.strip_prefix(") ") {
         s
+    } else if let Some(s) = rest.strip_prefix(" - ") {
+        s
     } else {
-        rest.strip_prefix(" - ")?
+        return None;
     };
 
     let text = rest.trim();
