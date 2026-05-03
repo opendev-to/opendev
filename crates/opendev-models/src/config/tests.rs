@@ -71,13 +71,12 @@ fn test_get_api_key_custom_provider_openai_env_fallback() {
         api_key: None,
         ..AppConfig::default()
     };
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        if !key.is_empty() {
-            assert!(config_no_key.get_api_key().is_ok());
-            return;
-        }
+    let key_var = std::env::var("OPENAI_API_KEY");
+    if key_var.is_ok() && !key_var.unwrap().is_empty() {
+        assert!(config_no_key.get_api_key().is_ok());
+    } else {
+        assert!(config_no_key.get_api_key().is_err());
     }
-    assert!(config_no_key.get_api_key().is_err());
 }
 
 #[test]
