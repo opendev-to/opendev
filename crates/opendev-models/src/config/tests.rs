@@ -55,7 +55,7 @@ fn test_get_api_key_prefers_env_over_config() {
 fn test_get_api_key_custom_provider_prefers_config_key() {
     // Unknown provider with config key → prefer config key (explicitly configured)
     let config = AppConfig {
-        model_provider: "cloudflare".to_string(),
+        model_provider: "unknown_test_provider_123".to_string(),
         api_key: Some("config-custom-key".to_string()),
         ..AppConfig::default()
     };
@@ -67,7 +67,7 @@ fn test_get_api_key_custom_provider_openai_env_fallback() {
     // Unknown provider without config key → falls back to OPENAI_API_KEY
     // (only run assertion if OPENAI_API_KEY is actually set to avoid flaky test)
     let config_no_key = AppConfig {
-        model_provider: "cloudflare".to_string(),
+        model_provider: "unknown_test_provider_123".to_string(),
         api_key: None,
         ..AppConfig::default()
     };
