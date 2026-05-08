@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSubagentStore, formatToolVerb, formatToolArg, type SubagentState, type ActiveToolCall } from '../../stores/subagents';
 
 function formatElapsed(ms: number): string {
@@ -14,6 +14,24 @@ function formatTokens(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
+
+
+// ⚡ Bolt Performance Optimization:
+// Isolate the high-frequency state update (1000ms interval) into a dedicated leaf component.
+// This prevents `SubagentNode` and `ActiveToolRow` from re-rendering their entire subtrees every second.
+const ElapsedTimeDisplay = React.memo(function ElapsedTimeDisplay({ startedAt, finished }: { startedAt: number; finished?: boolean }) {
+  const [elapsed, setElapsed] = useState(() => Date.now() - startedAt);
+
+  useEffect(() => {
+    if (finished) return;
+    const interval = setInterval(() => {
+      setElapsed(Date.now() - startedAt);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [startedAt, finished]);
+
+  return <>{formatElapsed(elapsed)}</>;
+});
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -31,15 +49,6 @@ function Spinner({ className }: { className?: string }) {
 }
 
 function ActiveToolRow({ tool, isLast }: { tool: ActiveToolCall; isLast: boolean }) {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setElapsed(Date.now() - tool.startedAt);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [tool.startedAt]);
-
   const verb = formatToolVerb(tool.toolName);
   const arg = formatToolArg(tool.toolName, tool.args);
   const connector = isLast ? '└─' : '├─';
@@ -50,7 +59,7 @@ function ActiveToolRow({ tool, isLast }: { tool: ActiveToolCall; isLast: boolean
       <Spinner className="text-blue-400" />
       <span className="text-text-200">{verb}</span>
       {arg && <span className="text-text-400 truncate max-w-[300px]">{arg}</span>}
-      <span className="text-text-400 ml-auto shrink-0">({formatElapsed(elapsed)})</span>
+      <span className="text-text-400 ml-auto shrink-0">(<ElapsedTimeDisplay startedAt={tool.startedAt} />)</span>
     </div>
   );
 }
@@ -70,18 +79,6 @@ function CompletedToolRow({ toolName, success, isLast }: { toolName: string; suc
 }
 
 function SubagentNode({ sa }: { sa: SubagentState }) {
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    if (sa.finished) return;
-    const interval = setInterval(() => {
-      setElapsed(Date.now() - sa.startedAt);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [sa.startedAt, sa.finished]);
-
-  const finalElapsed = sa.finished ? (Date.now() - sa.startedAt) : elapsed;
-
   // Status indicator
   const statusEl = sa.finished ? (
     sa.success ? (
@@ -95,7 +92,8 @@ function SubagentNode({ sa }: { sa: SubagentState }) {
 
   // Stats string
   const tokenStr = sa.tokenCount > 0 ? ` · ${formatTokens(sa.tokenCount)} tokens` : '';
-  const stats = `(${sa.toolCallCount} tool uses${tokenStr} · ${formatElapsed(finalElapsed)})`;
+  const statsPrefix = `(${sa.toolCallCount} tool uses${tokenStr} · `;
+  const statsSuffix = `)`;
 
   // Display name
   const displayName = sa.name.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -115,7 +113,7 @@ function SubagentNode({ sa }: { sa: SubagentState }) {
         {statusEl}
         <span className="text-cyan-400 font-semibold">{displayName}</span>
         <span className="text-text-400 truncate">: {taskPreview}</span>
-        <span className="text-text-400 ml-auto shrink-0 text-xs">{stats}</span>
+        <span className="text-text-400 ml-auto shrink-0 text-xs">{statsPrefix}<ElapsedTimeDisplay startedAt={sa.startedAt} finished={sa.finished} />{statsSuffix}</span>
       </div>
 
       {/* Active tool calls */}
@@ -154,7 +152,7 @@ function SubagentNode({ sa }: { sa: SubagentState }) {
       {/* Completion summary (persistent after finish) */}
       {sa.finished && (
         <div className="text-xs font-mono text-text-400 pl-10 leading-6">
-          Done ({sa.toolCallCount} tool uses{tokenStr} · {formatElapsed(finalElapsed)})
+          Done ({sa.toolCallCount} tool uses{tokenStr} · <ElapsedTimeDisplay startedAt={sa.startedAt} finished={sa.finished} />)
         </div>
       )}
     </div>
