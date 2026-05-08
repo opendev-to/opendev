@@ -129,12 +129,14 @@ impl UserStore {
             {
                 use std::os::unix::fs::OpenOptionsExt;
                 let mut opts = std::fs::OpenOptions::new();
-                opts.write(true).create(true).truncate(true).mode(0o600);
+                opts.write(true).create_new(true).mode(0o600);
                 std::io::Write::write_all(&mut opts.open(&tmp_path)?, b"{}")?;
             }
             #[cfg(not(unix))]
             {
-                std::fs::write(&tmp_path, "{}")?;
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                std::io::Write::write_all(&mut opts.open(&tmp_path)?, b"{}")?;
             }
 
             std::fs::rename(&tmp_path, &self.users_file)?;
@@ -181,12 +183,14 @@ impl UserStore {
         {
             use std::os::unix::fs::OpenOptionsExt;
             let mut opts = std::fs::OpenOptions::new();
-            opts.write(true).create(true).truncate(true).mode(0o600);
+            opts.write(true).create_new(true).mode(0o600);
             std::io::Write::write_all(&mut opts.open(&tmp_path)?, json.as_bytes())?;
         }
         #[cfg(not(unix))]
         {
-            std::fs::write(&tmp_path, json)?;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            std::io::Write::write_all(&mut opts.open(&tmp_path)?, json.as_bytes())?;
         }
 
         std::fs::rename(&tmp_path, &self.users_file)?;
