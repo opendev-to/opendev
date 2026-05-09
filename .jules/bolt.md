@@ -9,3 +9,7 @@
 ## 2024-04-19 - Isolating High-Frequency Animations
 **Learning:** `setInterval` states (like animation timers running at 100ms intervals) residing in high-level components (like `LandingPage` and `WelcomeScreen`) cause their entire component subtrees to re-render ten times a second. This leads to massive layout thrashing and poor responsiveness, especially when inputs are present.
 **Action:** Always extract high-frequency local state updates (like spinners or timers) into their own isolated, leaf-level components using `React.memo()`. Keep state strictly co-located with the UI that depends on it.
+
+## 2024-05-09 - ReactMarkdown Components Prop Optimization
+**Learning:** Passing an inline object to the `components` prop of `ReactMarkdown` (e.g. `components={{ h1: ... }}`) inside a functional component body causes React to create a new object reference on every render. This completely breaks referential stability and forces the entire Markdown parser and rendering tree to re-evaluate unnecessarily.
+**Action:** Always extract static mapping objects like `components` for `ReactMarkdown` to a constant outside of the functional component to ensure referential stability and prevent deep re-renders.
