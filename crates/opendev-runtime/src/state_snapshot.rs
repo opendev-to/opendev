@@ -131,7 +131,9 @@ impl SnapshotPersistence {
             use std::os::unix::fs::OpenOptionsExt;
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create_new(true).mode(0o600);
-            let mut file = opts.open(&tmp_path).map_err(|e| format!("Failed to create snapshot tmp file: {e}"))?;
+            let mut file = opts
+                .open(&tmp_path)
+                .map_err(|e| format!("Failed to create snapshot tmp file: {e}"))?;
             std::io::Write::write_all(&mut file, json.as_bytes())
                 .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
         }
@@ -140,7 +142,9 @@ impl SnapshotPersistence {
         {
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create_new(true);
-            let mut file = opts.open(&tmp_path).map_err(|e| format!("Failed to create snapshot tmp file: {e}"))?;
+            let mut file = opts
+                .open(&tmp_path)
+                .map_err(|e| format!("Failed to create snapshot tmp file: {e}"))?;
             std::io::Write::write_all(&mut file, json.as_bytes())
                 .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
         }
