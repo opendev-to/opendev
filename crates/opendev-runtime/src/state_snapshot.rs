@@ -3,6 +3,10 @@
 //! Periodically serializes essential session state to a temp file so that
 //! incomplete sessions can be detected and recovered on the next startup.
 
+use std::fs::OpenOptions;
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -111,8 +115,9 @@ impl SnapshotPersistence {
 
     /// Return the path where a session's snapshot would be stored.
     pub fn snapshot_path(&self, session_id: &str) -> PathBuf {
+        let safe_session_id = session_id.replace(['/', '\\'], "_");
         self.snapshot_dir
-            .join(format!("{session_id}_{SNAPSHOT_FILENAME}"))
+            .join(format!("{safe_session_id}_{SNAPSHOT_FILENAME}"))
     }
 
     /// Save a snapshot to disk atomically (write tmp then rename).
@@ -121,13 +126,35 @@ impl SnapshotPersistence {
             .map_err(|e| format!("Failed to create snapshot dir: {e}"))?;
 
         let path = self.snapshot_path(&snapshot.session_id);
-        let tmp_path = path.with_extension("json.tmp");
+        let tmp_filename = format!("{}.tmp", uuid::Uuid::new_v4());
+        let tmp_path = self.snapshot_dir.join(tmp_filename);
 
         let json = serde_json::to_string_pretty(snapshot)
             .map_err(|e| format!("Failed to serialize snapshot: {e}"))?;
 
-        std::fs::write(&tmp_path, &json)
+        #[cfg(unix)]
+        let options = {
+            let mut opt = OpenOptions::new();
+            opt.write(true).create_new(true).mode(0o600);
+            opt
+        };
+
+        #[cfg(not(unix))]
+        let options = {
+            let mut opt = OpenOptions::new();
+            opt.write(true).create_new(true);
+            opt
+        };
+
+        let mut file = options
+            .open(&tmp_path)
+            .map_err(|e| format!("Failed to create snapshot tmp: {e}"))?;
+
+        file.write_all(json.as_bytes())
             .map_err(|e| format!("Failed to write snapshot tmp: {e}"))?;
+
+        file.sync_all()
+            .map_err(|e| format!("Failed to sync snapshot tmp: {e}"))?;
 
         std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename snapshot: {e}"))?;
 
