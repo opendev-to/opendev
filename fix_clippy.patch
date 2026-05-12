@@ -1,0 +1,43 @@
+--- crates/opendev-runtime/src/approval/manager.rs
++++ crates/opendev-runtime/src/approval/manager.rs
+@@ -100,7 +100,7 @@
+         }
+
+-        enabled.sort_by(|a, b| b.priority.cmp(&a.priority));
++        enabled.sort_by_key(|b| std::cmp::Reverse(b.priority));
+         for rule in enabled {
+             if rule.matches(command) {
+                 return Some(rule);
+--- crates/opendev-runtime/src/permissions/mod.rs
++++ crates/opendev-runtime/src/permissions/mod.rs
+@@ -178,7 +178,7 @@
+         let mut sorted: Vec<_> = enabled.collect();
+-        sorted.sort_by(|a, b| b.priority.cmp(&a.priority));
++        sorted.sort_by_key(|b| std::cmp::Reverse(b.priority));
+
+         for rule in sorted {
+             if rule.matches(command) {
+--- crates/opendev-runtime/src/state_snapshot.rs
++++ crates/opendev-runtime/src/state_snapshot.rs
+@@ -186,7 +186,7 @@
+             }
+         }
+
+-        snapshots.sort_by(|a, b| b.snapshot_timestamp_ms.cmp(&a.snapshot_timestamp_ms));
++        snapshots.sort_by_key(|b| std::cmp::Reverse(b.snapshot_timestamp_ms));
+         snapshots
+     }
+--- crates/opendev-runtime/src/todo/parsing.rs
++++ crates/opendev-runtime/src/todo/parsing.rs
+@@ -107,9 +107,7 @@
+             if !end.is_empty() {
+                 return None;
+             }
+-        } else if let Some(s) = rest.strip_prefix(" - ") {
+-            s
+-        } else {
+-            return None;
+-        };
++        } else {
++            rest.strip_prefix(" - ")?
++        };
