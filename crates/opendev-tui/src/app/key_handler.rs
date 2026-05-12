@@ -220,18 +220,16 @@ impl App {
             }
 
             // Focus navigation: left
-            (_, KeyCode::Char('h')) | (_, KeyCode::Left) => {
-                if self.state.task_watcher_focus > 0 {
-                    self.state.task_watcher_focus -= 1;
-                }
+            (_, KeyCode::Char('h')) | (_, KeyCode::Left) if self.state.task_watcher_focus > 0 => {
+                self.state.task_watcher_focus -= 1;
             }
+            (_, KeyCode::Char('h')) | (_, KeyCode::Left) => {}
             // Focus navigation: right
-            (_, KeyCode::Char('l')) | (_, KeyCode::Right) => {
-                if total_tasks > 0 {
-                    self.state.task_watcher_focus =
-                        (self.state.task_watcher_focus + 1).min(total_tasks - 1);
-                }
+            (_, KeyCode::Char('l')) | (_, KeyCode::Right) if total_tasks > 0 => {
+                self.state.task_watcher_focus =
+                    (self.state.task_watcher_focus + 1).min(total_tasks - 1);
             }
+            (_, KeyCode::Char('l')) | (_, KeyCode::Right) => {}
             // Focus navigation: up (move by cols)
             (_, KeyCode::Char('k')) | (_, KeyCode::Up) => {
                 let cols = crate::widgets::background_tasks::compute_grid_cols(
@@ -713,35 +711,31 @@ impl App {
             // Enter — accept autocomplete, submit message, or execute slash command
             (_, KeyCode::Enter) => self.handle_key_enter(),
             // Backspace
-            (_, KeyCode::Backspace) => {
-                if self.state.input_cursor > 0 {
-                    self.state.input_cursor =
-                        Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
-                    self.state.input_buffer.remove(self.state.input_cursor);
-                    self.update_autocomplete();
-                }
+            (_, KeyCode::Backspace) if self.state.input_cursor > 0 => {
+                self.state.input_cursor =
+                    Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
+                self.state.input_buffer.remove(self.state.input_cursor);
+                self.update_autocomplete();
             }
+            (_, KeyCode::Backspace) => {}
             // Delete
-            (_, KeyCode::Delete) => {
-                if self.state.input_cursor < self.state.input_buffer.len() {
-                    self.state.input_buffer.remove(self.state.input_cursor);
-                    self.update_autocomplete();
-                }
+            (_, KeyCode::Delete) if self.state.input_cursor < self.state.input_buffer.len() => {
+                self.state.input_buffer.remove(self.state.input_cursor);
+                self.update_autocomplete();
             }
+            (_, KeyCode::Delete) => {}
             // Left arrow
-            (_, KeyCode::Left) => {
-                if self.state.input_cursor > 0 {
-                    self.state.input_cursor =
-                        Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
-                }
+            (_, KeyCode::Left) if self.state.input_cursor > 0 => {
+                self.state.input_cursor =
+                    Self::prev_char_boundary(&self.state.input_buffer, self.state.input_cursor);
             }
+            (_, KeyCode::Left) => {}
             // Right arrow
-            (_, KeyCode::Right) => {
-                if self.state.input_cursor < self.state.input_buffer.len() {
-                    self.state.input_cursor =
-                        Self::next_char_boundary(&self.state.input_buffer, self.state.input_cursor);
-                }
+            (_, KeyCode::Right) if self.state.input_cursor < self.state.input_buffer.len() => {
+                self.state.input_cursor =
+                    Self::next_char_boundary(&self.state.input_buffer, self.state.input_cursor);
             }
+            (_, KeyCode::Right) => {}
             // Home
             (_, KeyCode::Home) => {
                 self.state.input_cursor = 0;
@@ -873,12 +867,11 @@ impl App {
                 self.state.user_scrolled = false;
             }
             // Ctrl+T — toggle todo panel expanded/collapsed
-            (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
-                if !self.state.todo_items.is_empty() {
-                    self.state.todo_expanded = !self.state.todo_expanded;
-                    self.state.dirty = true;
-                }
+            (KeyModifiers::CONTROL, KeyCode::Char('t')) if !self.state.todo_items.is_empty() => {
+                self.state.todo_expanded = !self.state.todo_expanded;
+                self.state.dirty = true;
             }
+            (KeyModifiers::CONTROL, KeyCode::Char('t')) => {}
             // Alt+B — toggle task watcher subpanel
             (KeyModifiers::ALT, KeyCode::Char('b')) => {
                 if self.state.task_watcher_open {
