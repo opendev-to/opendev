@@ -47,6 +47,7 @@ pub struct ErrorResponse {
 // ── Server ──
 
 /// HTTP callback server that handles `lm_query()` calls from the sandbox.
+#[derive(Debug)]
 pub struct CallbackServer {
     port: u16,
     _shutdown_tx: oneshot::Sender<()>,
@@ -140,15 +141,6 @@ impl CallbackServer {
         drop(self._shutdown_tx);
         let _ = self.handle.await;
         info!("Sandbox callback server stopped");
-    }
-}
-
-impl std::fmt::Debug for CallbackServer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CallbackServer")
-            .field("port", &self.port)
-            .field("query_count", &self.query_count())
-            .finish()
     }
 }
 
