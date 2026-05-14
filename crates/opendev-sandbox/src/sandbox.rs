@@ -9,6 +9,7 @@ use crate::errors::{Result, SandboxError};
 use opendev_models::config::SandboxConfig;
 
 /// Wrapper around a microsandbox Python sandbox with lifecycle management.
+#[derive(Debug)]
 pub struct MicroSandbox {
     session_id: String,
     started: bool,
@@ -66,7 +67,7 @@ impl MicroSandbox {
     /// Inject a string variable into the sandbox environment.
     pub async fn inject_variable(&self, name: &str, content: &str) -> Result<()> {
         // Escape triple quotes in content to avoid Python syntax errors.
-        let escaped = content.replace("\\", "\\\\").replace("'''", "\\'\\'\\'");
+        let escaped = content.replace('\\', "\\\\").replace("'''", "\\'\\'\\'");
         let code = format!("{name} = '''{escaped}'''");
         self.run_code(&code).await?;
         Ok(())
@@ -90,15 +91,6 @@ impl MicroSandbox {
     /// The session identifier for this sandbox.
     pub fn session_id(&self) -> &str {
         &self.session_id
-    }
-}
-
-impl std::fmt::Debug for MicroSandbox {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MicroSandbox")
-            .field("session_id", &self.session_id)
-            .field("started", &self.started)
-            .finish()
     }
 }
 
