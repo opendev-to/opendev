@@ -692,24 +692,23 @@ impl App {
             // Shift+Enter — insert newline in input buffer
             // iTerm2 (and many terminals) map Shift+Enter to Ctrl+J (ASCII LF).
             // Alt+Enter sends Enter with ALT modifier. Both insert a newline.
-            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
-                if !self.state.agent_active {
-                    self.state
-                        .input_buffer
-                        .insert(self.state.input_cursor, '\n');
-                    self.state.input_cursor += '\n'.len_utf8();
-                }
+            (KeyModifiers::CONTROL, KeyCode::Char('j')) if !self.state.agent_active => {
+                self.state
+                    .input_buffer
+                    .insert(self.state.input_cursor, '\n');
+                self.state.input_cursor += '\n'.len_utf8();
             }
             (m, KeyCode::Enter)
-                if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) =>
+                if (m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT))
+                    && !self.state.agent_active =>
             {
-                if !self.state.agent_active {
-                    self.state
-                        .input_buffer
-                        .insert(self.state.input_cursor, '\n');
-                    self.state.input_cursor += '\n'.len_utf8();
-                }
+                self.state
+                    .input_buffer
+                    .insert(self.state.input_cursor, '\n');
+                self.state.input_cursor += '\n'.len_utf8();
             }
+            (m, KeyCode::Enter)
+                if m.contains(KeyModifiers::SHIFT) || m.contains(KeyModifiers::ALT) => {}
             // Enter — accept autocomplete, submit message, or execute slash command
             (_, KeyCode::Enter) => self.handle_key_enter(),
             // Backspace
