@@ -102,15 +102,10 @@ fn extract_numbered_step(line: &str) -> Option<String> {
     let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
 
     // Check for separator (. or ) or -)
-    let rest = if let Some(s) = rest.strip_prefix(". ") {
-        s
-    } else if let Some(s) = rest.strip_prefix(") ") {
-        s
-    } else if let Some(s) = rest.strip_prefix(" - ") {
-        s
-    } else {
-        return None;
-    };
+    let rest = rest
+        .strip_prefix(". ")
+        .or_else(|| rest.strip_prefix(") "))
+        .or_else(|| rest.strip_prefix(" - "))?;
 
     let text = rest.trim();
     if text.is_empty() {

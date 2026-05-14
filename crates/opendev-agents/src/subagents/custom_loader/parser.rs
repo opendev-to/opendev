@@ -105,15 +105,11 @@ pub(super) fn parse_simple_yaml(yaml: &str) -> CustomAgentFrontmatter {
                         meta.top_p = value.parse().ok();
                     }
                     "color" => meta.color = Some(value.to_string()),
-                    "tools" => {
-                        if value.is_empty() {
-                            ctx = Context::Tools;
-                        }
+                    "tools" if value.is_empty() => {
+                        ctx = Context::Tools;
                     }
-                    "permission" => {
-                        if value.is_empty() {
-                            ctx = Context::Permission;
-                        }
+                    "permission" if value.is_empty() => {
+                        ctx = Context::Permission;
                     }
                     _ => {}
                 }
