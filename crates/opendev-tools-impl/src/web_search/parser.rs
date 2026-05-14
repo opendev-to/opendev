@@ -81,10 +81,8 @@ fn extract_domain(url: &str) -> Option<String> {
     // Simple domain extraction without pulling in the `url` crate.
     let after_scheme = if let Some(rest) = url.strip_prefix("https://") {
         rest
-    } else if let Some(rest) = url.strip_prefix("http://") {
-        rest
     } else {
-        return None;
+        url.strip_prefix("http://")?
     };
     let domain = after_scheme.split('/').next().unwrap_or("");
     let domain = domain.split(':').next().unwrap_or(domain); // strip port
