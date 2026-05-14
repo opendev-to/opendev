@@ -95,6 +95,7 @@ impl MicroSandbox {
 }
 
 /// Pool of reusable sandboxes keyed by session ID.
+#[derive(Default)]
 pub struct SandboxPool {
     sandboxes: Mutex<HashMap<String, MicroSandbox>>,
 }
@@ -131,8 +132,3 @@ impl SandboxPool {
     }
 }
 
-impl Default for SandboxPool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
