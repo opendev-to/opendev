@@ -40,13 +40,6 @@ fn create_test_repo() -> TempDir {
         .output()
         .unwrap();
 
-    // Disable signing so commit works in environments with global signing hooks
-    Command::new("git")
-        .args(["config", "commit.gpgsign", "false"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
-
     // Create initial commit
     std::fs::write(repo.join("README.md"), "# Test\n").unwrap();
     Command::new("git")
