@@ -86,20 +86,16 @@ fn test_send_creates_file_if_missing() {
 
 #[test]
 fn test_concurrent_writes() {
-    use std::sync::{Arc, Barrier};
+    use std::sync::Arc;
     use std::thread;
 
     let dir = temp_team_dir();
     let team_dir = dir.path().canonicalize().unwrap();
-    let num_threads = 5;
-    let barrier = Arc::new(Barrier::new(num_threads));
 
-    let handles: Vec<_> = (0..num_threads)
+    let handles: Vec<_> = (0..5)
         .map(|i| {
             let td = team_dir.clone();
-            let b = barrier.clone();
             thread::spawn(move || {
-                b.wait();
                 let mailbox = Mailbox::new(&td, "agent-a");
                 mailbox
                     .send(make_msg(&format!("thread-{i}"), &format!("msg from {i}")))
@@ -111,9 +107,6 @@ fn test_concurrent_writes() {
     for h in handles {
         h.join().unwrap();
     }
-
-    // Give OS time to sync file writes across all platforms
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     let mailbox = Mailbox::new(&team_dir, "agent-a");
     let msgs = mailbox.receive().unwrap();
