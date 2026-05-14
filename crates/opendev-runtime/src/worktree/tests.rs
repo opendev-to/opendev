@@ -40,6 +40,12 @@ fn create_test_repo() -> TempDir {
         .output()
         .unwrap();
 
+    Command::new("git")
+        .args(["config", "commit.gpgsign", "false"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+
     // Create initial commit
     std::fs::write(repo.join("README.md"), "# Test\n").unwrap();
     Command::new("git")
