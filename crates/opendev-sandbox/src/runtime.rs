@@ -167,7 +167,6 @@ pub fn platform_availability() -> Option<String> {
         return Some("Sandbox execution is not yet available on Windows.".to_string());
     }
 
-    #[allow(unreachable_code)]
     None
 }
 
