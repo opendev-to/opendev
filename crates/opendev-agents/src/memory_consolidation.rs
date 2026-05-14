@@ -299,7 +299,7 @@ fn scan_all_memory_files(dir: &Path) -> Vec<MemoryFile> {
     }
 
     // Sort oldest first (process oldest sessions first)
-    files.sort_by(|a, b| a.modified.cmp(&b.modified));
+    files.sort_by_key(|a| a.modified);
     files
 }
 
@@ -392,7 +392,7 @@ fn regenerate_index(dir: &Path) -> std::io::Result<()> {
         files.push((name, desc));
     }
 
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.sort_by_key(|a| a.0.clone());
 
     let mut index = String::from("# Memory Index\n");
     for (name, desc) in &files {
