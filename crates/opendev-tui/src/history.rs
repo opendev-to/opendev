@@ -92,7 +92,7 @@ impl CommandHistory {
         }
 
         // Sort by last_used descending (most recent first)
-        self.entries.sort_by_key(|x| std::cmp::Reverse(x.last_used));
+        self.entries.sort_by(|a, b| b.last_used.cmp(&a.last_used));
 
         // Trim to max size
         if self.entries.len() > MAX_HISTORY_ENTRIES {

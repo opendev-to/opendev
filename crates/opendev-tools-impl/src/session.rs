@@ -174,7 +174,7 @@ fn action_list(
     }
 
     // Sort by most recent first
-    sessions.sort_by_key(|x| std::cmp::Reverse(x.updated_at));
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     if sessions.is_empty() {
         return ToolResult::ok("No past sessions found.".to_string());
