@@ -88,7 +88,7 @@ pub fn find_msb_lib_dir() -> Option<PathBuf> {
 /// Check if the microsandbox server is reachable.
 async fn health_check() -> bool {
     let url = format!("{MSB_SERVER_URL}/health");
-    match reqwest::get(&url).await {
+    match reqwest::get(url).await {
         Ok(resp) => resp.status().is_success(),
         Err(_) => false,
     }
