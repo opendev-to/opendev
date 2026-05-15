@@ -30,7 +30,7 @@ fn find_brew_msb_path(subpath: &str) -> Option<PathBuf> {
         return None;
     }
     let prefix = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let path = PathBuf::from(&prefix).join("libexec/msb").join(subpath);
+    let path = PathBuf::from(prefix).join("libexec/msb").join(subpath);
     path.exists().then_some(path)
 }
 
@@ -119,7 +119,7 @@ pub async fn ensure_server_running() -> Result<()> {
     info!(binary = %msb.display(), "Starting microsandbox server");
 
     // Build command with library path
-    let mut cmd = tokio::process::Command::new(&msb);
+    let mut cmd = tokio::process::Command::new(msb);
     cmd.args(["server", "start", "--dev"]);
 
     // Set library path so libkrunfw is found
@@ -128,7 +128,7 @@ pub async fn ensure_server_running() -> Result<()> {
         cmd.env("DYLD_LIBRARY_PATH", &lib_dir);
 
         #[cfg(target_os = "linux")]
-        cmd.env("LD_LIBRARY_PATH", &lib_dir);
+        cmd.env("LD_LIBRARY_PATH", lib_dir);
     }
 
     cmd.stdout(Stdio::null()).stderr(Stdio::null());
@@ -174,7 +174,7 @@ pub fn platform_availability() -> Option<String> {
 /// Stop the microsandbox server if it was started by us.
 pub async fn stop_server() {
     if let Some(msb) = find_msb_binary() {
-        let result = tokio::process::Command::new(&msb)
+        let result = tokio::process::Command::new(msb)
             .args(["server", "stop"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
