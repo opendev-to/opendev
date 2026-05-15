@@ -242,12 +242,11 @@ fn read_password() -> io::Result<String> {
                     let _ = writeln!(stdout);
                     return Ok(password);
                 }
-                KeyCode::Backspace => {
-                    if password.pop().is_some() {
-                        let _ = write!(stdout, "\x08 \x08");
-                        stdout.flush()?;
-                    }
+                KeyCode::Backspace if password.pop().is_some() => {
+                    let _ = write!(stdout, "\x08 \x08");
+                    stdout.flush()?;
                 }
+                KeyCode::Backspace => {}
                 KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                     terminal::disable_raw_mode()?;
                     let _ = writeln!(stdout);

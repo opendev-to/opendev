@@ -220,9 +220,7 @@ impl App {
             }
 
             // Focus navigation: left
-            (_, KeyCode::Char('h')) | (_, KeyCode::Left)
-                if self.state.task_watcher_focus > 0 =>
-            {
+            (_, KeyCode::Char('h')) | (_, KeyCode::Left) if self.state.task_watcher_focus > 0 => {
                 self.state.task_watcher_focus -= 1;
             }
             // Focus navigation: right
