@@ -16,3 +16,7 @@
 ## 2024-05-13 - TOCTOU Vulnerability in File Initialization
 **Learning:** `Path::exists()` followed by `fs::write()` is a classic Time-Of-Check to Time-Of-Use (TOCTOU) race condition vulnerability, which manifests as flaky test failures in highly concurrent environments (like tests hitting the same file path).
 **Action:** Always use `OpenOptions::new().create_new(true).write(true).open()` to safely initialize a file only if it doesn't already exist.
+
+## 2024-05-15 - Referential Stability of Component Props
+**Learning:** Passing inline objects to props (like the `components` prop of `ReactMarkdown`) in functional components breaks referential stability, causing the component and its entire subtree to re-render unnecessarily on every parent render.
+**Action:** Always extract static configuration objects and functions that don't depend on component state outside of the functional component definition.
