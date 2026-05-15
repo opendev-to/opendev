@@ -157,7 +157,7 @@ impl<'a> SandboxSession<'a> {
     /// Call the LLM with the current conversation messages.
     async fn call_llm(&self, _messages: &[Message]) -> Result<String> {
         // TODO: Build chat completions payload, call AdaptedClient::post_json().
-        let _ = self.model.as_str();
+        let _model = &self.model;
         Err(SandboxError::LlmCall(
             "LLM call not yet wired — pending AdaptedClient integration".to_string(),
         ))
