@@ -177,7 +177,7 @@ impl PermissionRuleSet {
         let input = format!("{tool_name}:{args}");
 
         let mut sorted: Vec<&PermissionRule> = self.rules.iter().collect();
-        sorted.sort_by(|a, b| b.priority.cmp(&a.priority));
+        sorted.sort_by_key(|r| std::cmp::Reverse(r.priority));
 
         for rule in sorted {
             // Check directory scope first

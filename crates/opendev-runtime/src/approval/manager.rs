@@ -99,7 +99,7 @@ impl ApprovalRulesManager {
     /// Returns the first matching rule, or `None` if no rule applies.
     pub fn evaluate_command(&self, command: &str) -> Option<&ApprovalRule> {
         let mut enabled: Vec<&ApprovalRule> = self.rules.iter().filter(|r| r.enabled).collect();
-        enabled.sort_by(|a, b| b.priority.cmp(&a.priority));
+        enabled.sort_by_key(|r| std::cmp::Reverse(r.priority));
         enabled.into_iter().find(|r| r.matches(command))
     }
 
