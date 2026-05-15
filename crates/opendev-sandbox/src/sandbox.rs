@@ -59,14 +59,14 @@ impl MicroSandbox {
 
         // TODO: sandbox.run(code).await, capture output/error
 
-        let _code = code;
+        let _ = code;
         Ok(String::new())
     }
 
     /// Inject a string variable into the sandbox environment.
     pub async fn inject_variable(&self, name: &str, content: &str) -> Result<()> {
         // Escape triple quotes in content to avoid Python syntax errors.
-        let escaped = content.replace('\\', "\\\\").replace("'''", "\\'\\'\\'");
+        let escaped = content.replace("\\", "\\\\").replace("'''", "\\'\\'\\'");
         let code = format!("{name} = '''{escaped}'''");
         self.run_code(&code).await?;
         Ok(())
