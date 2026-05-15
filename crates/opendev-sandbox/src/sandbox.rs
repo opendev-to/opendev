@@ -59,7 +59,7 @@ impl MicroSandbox {
 
         // TODO: sandbox.run(code).await, capture output/error
 
-        let _ = code;
+        let _code = code;
         Ok(String::new())
     }
 

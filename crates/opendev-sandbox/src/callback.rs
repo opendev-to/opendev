@@ -85,7 +85,7 @@ impl CallbackServer {
 
                         // TODO: Wire to AdaptedClient::post_json() for real LLM calls.
                         // For now, return a placeholder.
-                        let _ = req;
+                        let _req = req;
                         Json(serde_json::json!({
                             "result": "LLM response placeholder"
                         }))
