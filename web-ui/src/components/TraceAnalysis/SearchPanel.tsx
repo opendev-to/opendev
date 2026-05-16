@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import type { AnyFlowNode } from '../../utils/trace/collapseGraph';
 import type { TraceNodeData, ToolNodeData, TaskNodeData, CollapsedNodeData, AnyNodeData, ContentBlock } from '../../types/trace';
 import { getToolNames } from '../../types/trace';
+import { useDebounce } from '../../hooks/useDebounce';
 
 const NODE_TYPE_DOT_CLASSES: Record<string, string> = {
   user: 'bg-accent-secondary-100',
@@ -114,8 +115,12 @@ function truncateAround(text: string, query: string, maxLen: number): string {
 export function SearchPanel({ nodes, onSelectNode }: Props) {
   const [query, setQuery] = useState('');
 
+  // ⚡ Bolt Performance Optimization:
+  // Debouncing the search query to prevent excessive filtering of nodes on every keystroke
+  const debouncedQuery = useDebounce(query, 300);
+
   const results = useMemo<SearchResult[]>(() => {
-    const q = query.trim();
+    const q = debouncedQuery.trim();
     if (!q) return [];
     const out: SearchResult[] = [];
 
@@ -154,7 +159,7 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
     }
 
     return out;
-  }, [nodes, query]);
+  }, [nodes, debouncedQuery]);
 
   return (
     <div className="w-[260px] shrink-0 flex flex-col bg-bg-100 border-r border-border-300/20 font-sans overflow-hidden">
@@ -174,12 +179,12 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
             className="absolute right-3 top-1 bg-transparent border-none text-text-400 cursor-pointer text-base leading-5 px-1 hover:text-text-000"
             onClick={() => setQuery('')}
           >
-            \u00d7
+            ×
           </button>
         )}
       </div>
 
-      {query.trim() && (
+      {debouncedQuery.trim() && (
         <div className="px-3 pb-1.5 text-[10px] text-text-400">
           {results.length} result{results.length !== 1 ? 's' : ''}
         </div>
@@ -200,7 +205,7 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
               )}
             </div>
             <div className="text-[11px] text-text-200 leading-4 overflow-hidden text-ellipsis whitespace-nowrap">
-              {highlightMatch(r.matchSnippet, query.trim())}
+              {highlightMatch(r.matchSnippet, debouncedQuery.trim())}
             </div>
             {r.toolNames.length > 0 && (
               <div className="flex gap-1 mt-1 flex-wrap">
