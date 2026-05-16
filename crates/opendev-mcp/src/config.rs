@@ -173,7 +173,7 @@ pub fn save_config(config: &McpConfig, config_path: &Path) -> McpResult<()> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true).mode(0o600);
+        opts.write(true).create_new(true).mode(0o600);
         std::io::Write::write_all(
             &mut opts.open(&tmp_path).map_err(|e| {
                 McpError::Config(format!(
@@ -194,9 +194,23 @@ pub fn save_config(config: &McpConfig, config_path: &Path) -> McpResult<()> {
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(&tmp_path, content).map_err(|e| {
+        std::io::Write::write_all(
+            &mut std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)
+                .map_err(|e| {
+                    McpError::Config(format!(
+                        "Failed to open temp config file {}: {}",
+                        tmp_path.display(),
+                        e
+                    ))
+                })?,
+            content.as_bytes(),
+        )
+        .map_err(|e| {
             McpError::Config(format!(
-                "Failed to write temp config to {}: {}",
+                "Failed to write to temp config file {}: {}",
                 tmp_path.display(),
                 e
             ))
