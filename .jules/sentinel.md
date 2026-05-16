@@ -12,3 +12,8 @@
 **Vulnerability:** Time-of-Check to Time-of-Use (TOCTOU) vulnerability where `AppStateSnapshot` data was written via `std::fs::write(&tmp_path, &json)` before renaming. This could allow unauthorized access to sensitive application state on multi-user systems since default permissions were used, and atomic writing alone does not secure the temp file itself during writing.
 **Learning:** Even short-lived temporary files used for atomic renaming can be intercepted or read during the write process if they contain sensitive system state (like API keys or session information) and are created with default broad permissions.
 **Prevention:** Always write sensitive state serialization using an atomic pattern with `.create_new(true)` and `.mode(0o600)` (on Unix) via `std::fs::OpenOptions` instead of `std::fs::write`, to securely enforce read/write restrictions before data touches the disk.
+
+## 2025-05-16 - Preventing Path Traversal in State Snapshots
+**Vulnerability:** The `snapshot_path` method used the unvalidated `session_id` to generate a file path. If `session_id` contained characters like `../`, it could allow Path Traversal, writing state files outside the intended snapshot directory.
+**Learning:** Never trust string identifiers directly in file paths without sanitization, even if they're supposedly internally generated or "safe".
+**Prevention:** Always sanitize variables used in file paths. In Rust, `.replace(['/', '\\'], "_")` is a simple and effective method to neutralize path separator attacks before appending to a directory using `.join()`.
