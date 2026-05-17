@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { MagnifyingGlassIcon, PlusIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { RepositoryCard } from './RepositoryCard';
 import { Repository } from './RepositoryExplorer';
@@ -10,15 +11,24 @@ interface RepositoryGridProps {
 }
 
 export function RepositoryGrid({ repositories, searchQuery, onSearchChange, onAddRepository }: RepositoryGridProps) {
-  const filteredRepositories = repositories.filter(repo =>
-    repo.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.language.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // ⚡ Bolt Performance Optimization:
+  // Memoize the filtering and reduction calculations so they aren't re-run on every render
+  // unless the search query or the base repositories change.
+  const { filteredRepositories, totalFiles, totalDocs } = useMemo(() => {
+    const query = searchQuery.toLowerCase();
+    const filtered = repositories.filter(repo =>
+      repo.name.toLowerCase().includes(query) ||
+      repo.fullName.toLowerCase().includes(query) ||
+      repo.description.toLowerCase().includes(query) ||
+      repo.language.toLowerCase().includes(query)
+    );
 
-  const totalFiles = filteredRepositories.reduce((sum, repo) => sum + repo.files, 0);
-  const totalDocs = filteredRepositories.reduce((sum, repo) => sum + repo.docsFound, 0);
+    return {
+      filteredRepositories: filtered,
+      totalFiles: filtered.reduce((sum, repo) => sum + repo.files, 0),
+      totalDocs: filtered.reduce((sum, repo) => sum + repo.docsFound, 0)
+    };
+  }, [repositories, searchQuery]);
 
   return (
     <div className="min-h-screen bg-gray-50">

@@ -20,3 +20,7 @@
 ## 2024-05-15 - Referential Stability of Component Props
 **Learning:** Passing inline objects to props (like the `components` prop of `ReactMarkdown`) in functional components breaks referential stability, causing the component and its entire subtree to re-render unnecessarily on every parent render.
 **Action:** Always extract static configuration objects and functions that don't depend on component state outside of the functional component definition.
+
+## 2024-05-18 - Unmemoized Debounced Filtering Causes Double Renders
+**Learning:** Debouncing a prop (like `searchQuery`) locally inside a component without memoizing the dependent calculations (`.filter()`) does not prevent re-renders when the parent updates on every keystroke. It actually makes performance worse by causing a render with stale data immediately, followed by a second render 300ms later when the debounced value updates, doubling the render cycles.
+**Action:** If a parent component is driving the input state, the debounce should ideally happen at the state level (so the parent doesn't re-render its children constantly). If debouncing within the child, the expensive filtering calculation *must* be wrapped in `useMemo` so it's only re-calculated when the debounced value changes, but even then, it doesn't stop the initial render caused by the prop change.
