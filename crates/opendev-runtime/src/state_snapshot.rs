@@ -111,8 +111,9 @@ impl SnapshotPersistence {
 
     /// Return the path where a session's snapshot would be stored.
     pub fn snapshot_path(&self, session_id: &str) -> PathBuf {
+        let sanitized_id = session_id.replace(['/', '\\'], "_");
         self.snapshot_dir
-            .join(format!("{session_id}_{SNAPSHOT_FILENAME}"))
+            .join(format!("{sanitized_id}_{SNAPSHOT_FILENAME}"))
     }
 
     /// Save a snapshot to disk atomically (write tmp then rename).
