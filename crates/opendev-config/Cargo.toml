@@ -6,6 +6,7 @@ license.workspace = true
 description = "Configuration and path management for OpenDev"
 
 [dependencies]
+uuid = { workspace = true }
 opendev-models = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

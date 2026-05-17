@@ -201,7 +201,7 @@ impl ConfigLoader {
         {
             use std::os::unix::fs::OpenOptionsExt;
             let mut opts = std::fs::OpenOptions::new();
-            opts.write(true).create(true).truncate(true).mode(0o600);
+            opts.write(true).create_new(true).mode(0o600);
 
             let mut file = opts.open(&tmp_path).map_err(|e| ConfigError::ReadError {
                 path: tmp_path.display().to_string(),
@@ -216,7 +216,18 @@ impl ConfigLoader {
         }
         #[cfg(not(unix))]
         {
-            std::fs::write(&tmp_path, &json).map_err(|e| ConfigError::ReadError {
+            std::io::Write::write_all(
+                &mut std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_path)
+                    .map_err(|e| ConfigError::ReadError {
+                        path: tmp_path.display().to_string(),
+                        source: e,
+                    })?,
+                json.as_bytes(),
+            )
+            .map_err(|e| ConfigError::ReadError {
                 path: tmp_path.display().to_string(),
                 source: e,
             })?;
