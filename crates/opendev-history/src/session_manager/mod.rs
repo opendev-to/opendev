@@ -173,9 +173,28 @@ impl SessionManager {
         let json_content =
             serde_json::to_string_pretty(&session_for_json).map_err(std::io::Error::other)?;
 
-        // Atomic write for metadata
-        let tmp_json = self.session_dir.join(format!(".{}.json.tmp", session.id));
-        std::fs::write(&tmp_json, &json_content)?;
+        // Atomic write for metadata with TOCTOU prevention
+        let temp_suffix = uuid::Uuid::new_v4();
+        let tmp_json = self
+            .session_dir
+            .join(format!(".{}.{}.json.tmp", session.id, temp_suffix));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+            std::io::Write::write_all(&mut opts.open(&tmp_json)?, json_content.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::io::Write::write_all(
+                &mut std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_json)?,
+                json_content.as_bytes(),
+            )?;
+        }
         std::fs::rename(&tmp_json, &json_path)?;
 
         // Validate and repair messages before writing
@@ -196,8 +215,26 @@ impl SessionManager {
             jsonl_content.push('\n');
         }
 
-        let tmp_jsonl = self.session_dir.join(format!(".{}.jsonl.tmp", session.id));
-        std::fs::write(&tmp_jsonl, &jsonl_content)?;
+        let tmp_jsonl = self
+            .session_dir
+            .join(format!(".{}.{}.jsonl.tmp", session.id, temp_suffix));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+            std::io::Write::write_all(&mut opts.open(&tmp_jsonl)?, jsonl_content.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::io::Write::write_all(
+                &mut std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_jsonl)?,
+                jsonl_content.as_bytes(),
+            )?;
+        }
         std::fs::rename(&tmp_jsonl, &jsonl_path)?;
 
         // Update index
