@@ -20,3 +20,7 @@
 ## 2024-05-15 - Referential Stability of Component Props
 **Learning:** Passing inline objects to props (like the `components` prop of `ReactMarkdown`) in functional components breaks referential stability, causing the component and its entire subtree to re-render unnecessarily on every parent render.
 **Action:** Always extract static configuration objects and functions that don't depend on component state outside of the functional component definition.
+
+## 2024-05-20 - Expensive Filtering in Render Body
+**Learning:** Performing `Array.prototype.filter` operations directly within the component render body (e.g. `mockRepositories.filter(...)`) causes an O(N) operation on every single render. When tied to an uncontrolled text input prop or high-frequency render parent, this results in layout thrashing.
+**Action:** Always wrap array filtering and derived aggregates (like `.reduce`) in a `useMemo` block with the appropriate dependency array (like the `searchQuery` prop).

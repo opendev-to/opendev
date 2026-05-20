@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   FolderIcon,
   DocumentTextIcon,
@@ -75,11 +75,17 @@ const mockRepositories: Repository[] = [
 export function RepositoryExplorer({ selectedRepo, onRepoSelect, searchQuery }: RepositoryExplorerProps) {
   const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
 
-  const filteredRepos = mockRepositories.filter(repo =>
-    repo.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // ⚡ Bolt Performance Optimization:
+  // Memoize the filtered repositories array to prevent redundant filtering
+  // calculations on every render, especially as the user types in the search query.
+  const filteredRepos = useMemo(() => {
+    const query = searchQuery.toLowerCase();
+    return mockRepositories.filter(repo =>
+      repo.name.toLowerCase().includes(query) ||
+      repo.fullName.toLowerCase().includes(query) ||
+      repo.description.toLowerCase().includes(query)
+    );
+  }, [searchQuery]);
 
   const toggleExpanded = (repoId: string) => {
     setExpandedRepos(prev => {
