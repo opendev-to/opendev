@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { MagnifyingGlassIcon, PlusIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { RepositoryCard } from './RepositoryCard';
 import { Repository } from './RepositoryExplorer';
+import { useDebounce } from '../../hooks/useDebounce';
 
 interface RepositoryGridProps {
   repositories: Repository[];
@@ -11,28 +12,32 @@ interface RepositoryGridProps {
 }
 
 export function RepositoryGrid({ repositories, searchQuery, onSearchChange, onAddRepository }: RepositoryGridProps) {
+  // Debounce the searchQuery to prevent expensive array filtering and reductions
+  // on every single keystroke.
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+
   // ⚡ Bolt Performance Optimization:
-  // Hoisted the lowercase conversion of the search query outside of the .filter() loop.
-  // This prevents redundant string allocations per iteration.
-  // We use useMemo to prevent excessive filtering and aggregations on every render.
+  // Memoize the filtered repositories array so it is only recalculated
+  // when the repositories list or the debounced search query changes,
+  // preventing unnecessary O(N) recalculations and layout thrashing.
   const filteredRepositories = useMemo(() => {
-    if (!searchQuery) return repositories;
-
-    const queryLower = searchQuery.toLowerCase();
+    if (!debouncedSearchQuery) return repositories;
+    const lowerQuery = debouncedSearchQuery.toLowerCase();
     return repositories.filter(repo =>
-      repo.name.toLowerCase().includes(queryLower) ||
-      repo.fullName.toLowerCase().includes(queryLower) ||
-      repo.description.toLowerCase().includes(queryLower) ||
-      repo.language.toLowerCase().includes(queryLower)
+      repo.name.toLowerCase().includes(lowerQuery) ||
+      repo.fullName.toLowerCase().includes(lowerQuery) ||
+      repo.description.toLowerCase().includes(lowerQuery) ||
+      repo.language.toLowerCase().includes(lowerQuery)
     );
-  }, [repositories, searchQuery]);
+  }, [repositories, debouncedSearchQuery]);
 
-  const totalFiles = useMemo(() => {
-    return filteredRepositories.reduce((sum, repo) => sum + repo.files, 0);
-  }, [filteredRepositories]);
-
-  const totalDocs = useMemo(() => {
-    return filteredRepositories.reduce((sum, repo) => sum + repo.docsFound, 0);
+  // ⚡ Bolt Performance Optimization:
+  // Memoize the aggregations derived from filteredRepositories.
+  const { totalFiles, totalDocs } = useMemo(() => {
+    return {
+      totalFiles: filteredRepositories.reduce((sum, repo) => sum + repo.files, 0),
+      totalDocs: filteredRepositories.reduce((sum, repo) => sum + repo.docsFound, 0),
+    };
   }, [filteredRepositories]);
 
   return (
