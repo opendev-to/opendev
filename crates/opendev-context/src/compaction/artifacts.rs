@@ -102,8 +102,26 @@ impl ArtifactIndex {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, &json)?;
+        let tmp = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+            let mut file = opts.open(&tmp)?;
+            std::io::Write::write_all(&mut file, json.as_bytes())?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            std::io::Write::write_all(&mut file, json.as_bytes())?;
+        }
+
         std::fs::rename(&tmp, path)
     }
 
