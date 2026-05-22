@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import {
   DocumentTextIcon,
   ChatBubbleLeftRightIcon,
@@ -224,6 +225,62 @@ Complete API documentation for OpenDev components, including REST endpoints, Web
     tags: ['api', 'reference', 'endpoints', 'websocket']
   }
 ];
+
+// ⚡ Bolt Performance Optimization:
+// Extract markdown components outside the functional component to ensure referential stability.
+// Since these components don't depend on component state or props, creating them inline
+// causes React to generate a new object on every render, triggering unnecessary deep re-renders
+// of the ReactMarkdown component and all its children. This optimization prevents those re-renders.
+const MARKDOWN_COMPONENTS = {
+  h1: ({ children, ...props }: any) => (
+    <h1 className="text-2xl font-bold text-gray-900 mt-8 mb-6" {...props}>
+      {children}
+    </h1>
+  ),
+  h2: ({ children, ...props }: any) => (
+    <h2 className="text-xl font-bold text-gray-900 mt-8 mb-4" {...props}>
+      {children}
+    </h2>
+  ),
+  h3: ({ children, ...props }: any) => (
+    <h3 className="text-lg font-semibold text-gray-900 mt-6 mb-3" {...props}>
+      {children}
+    </h3>
+  ),
+  p: ({ children, ...props }: any) => (
+    <p className="mb-4" {...props}>
+      {children}
+    </p>
+  ),
+  li: ({ children, ...props }: any) => (
+    <li className="ml-4 mb-1" {...props}>
+      {children}
+    </li>
+  ),
+  code: ({ children, className, ...props }: any) => {
+    const isInline = !className;
+    return isInline ? (
+      <code
+        className="bg-gray-100 px-1 py-0.5 rounded text-sm text-gray-800"
+        {...props}
+      >
+        {children}
+      </code>
+    ) : (
+      <code
+        className="block bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm font-mono leading-relaxed"
+        {...props}
+      >
+        {children}
+      </code>
+    );
+  },
+  strong: ({ children, ...props }: any) => (
+    <strong {...props}>
+      {children}
+    </strong>
+  ),
+};
 
 // Mock documentation tree that combines wiki pages with traditional files
 const mockDocumentation: DocumentationItem[] = [
@@ -527,30 +584,9 @@ export function DocumentationViewer({ selectedRepo, searchQuery, onIndexingChang
               <div className="flex-1 overflow-y-auto p-6">
                 {selectedDoc.wikiPage ? (
                   <div className="prose prose-sm max-w-none">
-                    <div dangerouslySetInnerHTML={{
-                      __html: selectedDoc.wikiPage.content.replace(
-                        /`([^`]+)`/g,
-                        '<code class="bg-gray-100 px-1 py-0.5 rounded text-sm text-gray-800">$1</code>'
-                      ).replace(
-                        /\*\*([^*]+)\*\*/g,
-                        '<strong>$1</strong>'
-                      ).replace(
-                        /### (.+)/g,
-                        '<h3 class="text-lg font-semibold text-gray-900 mt-6 mb-3">$1</h3>'
-                      ).replace(
-                        /## (.+)/g,
-                        '<h2 class="text-xl font-bold text-gray-900 mt-8 mb-4">$1</h2>'
-                      ).replace(
-                        /# (.+)/g,
-                        '<h1 class="text-2xl font-bold text-gray-900 mt-8 mb-6">$1</h1>'
-                      ).replace(
-                        /- (.+)/g,
-                        '<li class="ml-4 mb-1">$1</li>'
-                      ).replace(
-                        /\n\n/g,
-                        '</p><p class="mb-4">'
-                      )
-                    }} />
+                    <ReactMarkdown components={MARKDOWN_COMPONENTS}>
+                      {selectedDoc.wikiPage.content}
+                    </ReactMarkdown>
                     {selectedDoc.wikiPage.relatedFiles && selectedDoc.wikiPage.relatedFiles.length > 0 && (
                       <div className="mt-8 p-4 bg-blue-50 rounded-lg border border-blue-200">
                         <h4 className="font-semibold text-blue-900 mb-2">Related Files</h4>
