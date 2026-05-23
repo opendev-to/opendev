@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { MagnifyingGlassIcon, PlusIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { RepositoryCard } from './RepositoryCard';
 import { Repository } from './RepositoryExplorer';
@@ -10,15 +11,29 @@ interface RepositoryGridProps {
 }
 
 export function RepositoryGrid({ repositories, searchQuery, onSearchChange, onAddRepository }: RepositoryGridProps) {
-  const filteredRepositories = repositories.filter(repo =>
-    repo.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.language.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // ⚡ Bolt Performance Optimization:
+  // Hoisted the lowercase conversion of the search query outside of the .filter() loop.
+  // This prevents redundant string allocations per iteration.
+  // We use useMemo to prevent excessive filtering and aggregations on every render.
+  const filteredRepositories = useMemo(() => {
+    if (!searchQuery) return repositories;
 
-  const totalFiles = filteredRepositories.reduce((sum, repo) => sum + repo.files, 0);
-  const totalDocs = filteredRepositories.reduce((sum, repo) => sum + repo.docsFound, 0);
+    const queryLower = searchQuery.toLowerCase();
+    return repositories.filter(repo =>
+      repo.name.toLowerCase().includes(queryLower) ||
+      repo.fullName.toLowerCase().includes(queryLower) ||
+      repo.description.toLowerCase().includes(queryLower) ||
+      repo.language.toLowerCase().includes(queryLower)
+    );
+  }, [repositories, searchQuery]);
+
+  const totalFiles = useMemo(() => {
+    return filteredRepositories.reduce((sum, repo) => sum + repo.files, 0);
+  }, [filteredRepositories]);
+
+  const totalDocs = useMemo(() => {
+    return filteredRepositories.reduce((sum, repo) => sum + repo.docsFound, 0);
+  }, [filteredRepositories]);
 
   return (
     <div className="min-h-screen bg-gray-50">

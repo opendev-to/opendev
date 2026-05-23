@@ -20,3 +20,7 @@
 ## 2024-05-15 - Referential Stability of Component Props
 **Learning:** Passing inline objects to props (like the `components` prop of `ReactMarkdown`) in functional components breaks referential stability, causing the component and its entire subtree to re-render unnecessarily on every parent render.
 **Action:** Always extract static configuration objects and functions that don't depend on component state outside of the functional component definition.
+
+## 2024-05-23 - Debouncing Local Arrays Degrades Perceived Performance
+**Learning:** While debouncing is essential for reducing network API calls or heavy backend processing when a user types in a search box, applying `useDebounce` to filter small, local, in-memory arrays (like `mockRepositories` or pre-loaded state) artificially introduces UI latency (e.g., 300ms delay before results appear). This feels sluggish to the user and is a net performance regression compared to executing the fast, synchronous filter loop immediately.
+**Action:** Never debounce synchronous array filtering unless the array is massively large and blocking the main thread. If it's a cold path or standard list, rely on `useMemo` to cache the results and hoist expensive operations (like `.toLowerCase()`) outside the loop instead of debouncing.

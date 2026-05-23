@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   FolderIcon,
   DocumentTextIcon,
@@ -75,11 +75,24 @@ const mockRepositories: Repository[] = [
 export function RepositoryExplorer({ selectedRepo, onRepoSelect, searchQuery }: RepositoryExplorerProps) {
   const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
 
-  const filteredRepos = mockRepositories.filter(repo =>
-    repo.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    repo.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // ⚡ Bolt Performance Optimization:
+  // Hoisted the lowercase conversion of the search query outside of the .filter() loop.
+  // This prevents redundant string allocations per iteration.
+  // We use useMemo to prevent excessive filtering and aggregations on every render.
+  const filteredRepos = useMemo(() => {
+    if (!searchQuery) return mockRepositories;
+
+    const queryLower = searchQuery.toLowerCase();
+    return mockRepositories.filter(repo =>
+      repo.name.toLowerCase().includes(queryLower) ||
+      repo.fullName.toLowerCase().includes(queryLower) ||
+      repo.description.toLowerCase().includes(queryLower)
+    );
+  }, [searchQuery]);
+
+  const totalFiles = useMemo(() => {
+    return filteredRepos.reduce((sum, repo) => sum + repo.files, 0);
+  }, [filteredRepos]);
 
   const toggleExpanded = (repoId: string) => {
     setExpandedRepos(prev => {
@@ -142,7 +155,7 @@ export function RepositoryExplorer({ selectedRepo, onRepoSelect, searchQuery }: 
       <div className="px-3 py-2 bg-purple-50 rounded-lg border border-purple-200">
         <div className="text-xs font-medium text-purple-900 mb-1">Repository Summary</div>
         <div className="text-xs text-purple-700">
-          {filteredRepos.length} repos • {filteredRepos.reduce((sum, repo) => sum + repo.files, 0).toLocaleString()} files
+          {filteredRepos.length} repos • {totalFiles.toLocaleString()} files
         </div>
       </div>
 
