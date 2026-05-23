@@ -106,9 +106,25 @@ impl SessionIndex {
         let index_path = self.index_path();
         with_file_lock(&index_path, Duration::from_secs(10), || {
             // Write to temp file then rename (atomic on POSIX)
-            let tmp_path = self.session_dir.join(".sessions-index-tmp.json");
+            let tmp_path = self.session_dir.join(format!(".sessions-index-tmp.{}.json", uuid::Uuid::new_v4()));
             let content = serde_json::to_string_pretty(&data).map_err(std::io::Error::other)?;
-            std::fs::write(&tmp_path, content)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true).mode(0o600);
+                std::io::Write::write_all(&mut opts.open(&tmp_path)?, content.as_bytes())?;
+            }
+            #[cfg(not(unix))]
+            {
+                std::io::Write::write_all(
+                    &mut std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&tmp_path)?,
+                    content.as_bytes(),
+                )?;
+            }
             std::fs::rename(&tmp_path, &index_path)?;
             Ok(())
         })?
