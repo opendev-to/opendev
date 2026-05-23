@@ -106,7 +106,9 @@ impl SessionIndex {
         let index_path = self.index_path();
         with_file_lock(&index_path, Duration::from_secs(10), || {
             // Write to temp file then rename (atomic on POSIX)
-            let tmp_path = self.session_dir.join(format!(".sessions-index-tmp.{}.json", uuid::Uuid::new_v4()));
+            let tmp_path = self
+                .session_dir
+                .join(format!(".sessions-index-tmp.{}.json", uuid::Uuid::new_v4()));
             let content = serde_json::to_string_pretty(&data).map_err(std::io::Error::other)?;
             #[cfg(unix)]
             {
