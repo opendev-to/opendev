@@ -98,13 +98,33 @@ impl ArtifactIndex {
 
     /// Save the artifact index to a file as JSON (atomic write).
     pub fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, &json)?;
-        std::fs::rename(&tmp, path)
+
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("index");
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
+        let tmp_path = parent.join(format!(".{}.{}.tmp", file_name, uuid::Uuid::new_v4()));
+
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+
+        let mut file = opts.open(&tmp_path)?;
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+
+        std::fs::rename(&tmp_path, path).inspect_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+        })
     }
 
     /// Load an artifact index from a JSON file.

@@ -18,6 +18,7 @@ tokio = { workspace = true }
 regex = { workspace = true }
 dirs-next = { workspace = true }
 glob = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
