@@ -24,3 +24,7 @@
 ## 2024-05-23 - Debouncing Local Arrays Degrades Perceived Performance
 **Learning:** While debouncing is essential for reducing network API calls or heavy backend processing when a user types in a search box, applying `useDebounce` to filter small, local, in-memory arrays (like `mockRepositories` or pre-loaded state) artificially introduces UI latency (e.g., 300ms delay before results appear). This feels sluggish to the user and is a net performance regression compared to executing the fast, synchronous filter loop immediately.
 **Action:** Never debounce synchronous array filtering unless the array is massively large and blocking the main thread. If it's a cold path or standard list, rely on `useMemo` to cache the results and hoist expensive operations (like `.toLowerCase()`) outside the loop instead of debouncing.
+
+## 2024-05-24 - Array Filtering Operations in React Renders
+**Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle (even outside `useEffect`) introduces unnecessary memory allocations and O(N) redundant string operations. This causes measurable UI lag when handling large sets of data, especially when state values updates frequently (e.g. searching/typing).
+**Action:** Always wrap expensive synchronous array filtering in `useMemo`, and hoist repetitive value normalization (like query.toLowerCase()) outside of the filtering loop.
