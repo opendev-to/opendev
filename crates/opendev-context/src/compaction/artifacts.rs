@@ -122,7 +122,7 @@ impl ArtifactIndex {
         file.write_all(json.as_bytes())?;
         file.sync_all()?;
 
-        std::fs::rename(&tmp_path, path).inspect_err(|_| {
+        std::fs::rename(&tmp_path, path).inspect_err(|_e| {
             let _ = std::fs::remove_file(&tmp_path);
         })
     }
