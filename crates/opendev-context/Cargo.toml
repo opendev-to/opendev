@@ -6,6 +6,7 @@ license.workspace = true
 description = "Context engineering: compaction, validation, and context picking for OpenDev"
 
 [dependencies]
+uuid = { workspace = true }
 opendev-config = { workspace = true }
 opendev-models = { workspace = true }
 serde = { workspace = true }
@@ -18,7 +19,6 @@ tokio = { workspace = true }
 regex = { workspace = true }
 dirs-next = { workspace = true }
 glob = { workspace = true }
-uuid = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
