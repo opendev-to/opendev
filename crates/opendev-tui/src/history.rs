@@ -200,8 +200,41 @@ impl CommandHistory {
         }
         match serde_json::to_string_pretty(&self.entries) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(&self.file_path, json) {
-                    warn!("Failed to write history file: {}", e);
+                // Security fix: Avoid TOCTOU and default permissions when writing sensitive TUI history.
+                // Write to a randomized temporary file with exclusive creation and restricted permissions, then rename atomically.
+                let tmp = self.file_path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let mut opts = std::fs::OpenOptions::new();
+                    opts.write(true).create_new(true).mode(0o600);
+                    match opts.open(&tmp) {
+                        Ok(mut file) => {
+                            if let Err(e) = std::io::Write::write_all(&mut file, json.as_bytes()) {
+                                warn!("Failed to write temporary history file: {}", e);
+                            } else if let Err(e) = std::fs::rename(&tmp, &self.file_path) {
+                                warn!("Failed to rename temporary history file: {}", e);
+                            }
+                        }
+                        Err(e) => warn!("Failed to create temporary history file: {}", e),
+                    }
+                }
+
+                #[cfg(not(unix))]
+                {
+                    let mut opts = std::fs::OpenOptions::new();
+                    opts.write(true).create_new(true);
+                    match opts.open(&tmp) {
+                        Ok(mut file) => {
+                            if let Err(e) = std::io::Write::write_all(&mut file, json.as_bytes()) {
+                                warn!("Failed to write temporary history file: {}", e);
+                            } else if let Err(e) = std::fs::rename(&tmp, &self.file_path) {
+                                warn!("Failed to rename temporary history file: {}", e);
+                            }
+                        }
+                        Err(e) => warn!("Failed to create temporary history file: {}", e),
+                    }
                 }
             }
             Err(e) => {
