@@ -202,7 +202,9 @@ impl CommandHistory {
             Ok(json) => {
                 // Security fix: Avoid TOCTOU and default permissions when writing sensitive TUI history.
                 // Write to a randomized temporary file with exclusive creation and restricted permissions, then rename atomically.
-                let tmp = self.file_path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+                let tmp = self
+                    .file_path
+                    .with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
 
                 #[cfg(unix)]
                 {
