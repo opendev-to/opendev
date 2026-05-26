@@ -172,7 +172,7 @@ impl Mailbox {
                     .inbox_path
                     .with_extension(format!("corrupt.{}", now_ms()));
                 let _ = fs::rename(&self.inbox_path, &backup);
-                fs::write(&self.inbox_path, "[]")?;
+                self.write_messages(&[])?;
                 Ok(Vec::new())
             }
         }
@@ -180,7 +180,31 @@ impl Mailbox {
 
     fn write_messages(&self, messages: &[MailboxMessage]) -> io::Result<()> {
         let json = serde_json::to_string_pretty(messages).map_err(io::Error::other)?;
-        fs::write(&self.inbox_path, json)?;
+
+        let tmp_name = format!(".inbox-{}.tmp", uuid::Uuid::new_v4());
+        let tmp_path = self.inbox_path.with_file_name(&tmp_name);
+
+        let mut opts = OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+
+        let result = (|| -> io::Result<()> {
+            use std::io::Write;
+            let mut f = opts.open(&tmp_path)?;
+            f.write_all(json.as_bytes())?;
+            f.sync_all()?;
+            fs::rename(&tmp_path, &self.inbox_path)
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp_path);
+        }
+        result?;
+
         Ok(())
     }
 
