@@ -122,10 +122,19 @@ pub(crate) fn save_persistent_rules(
                 Ok(mut file) => {
                     use std::io::Write;
                     if let Err(e) = file.write_all(json.as_bytes()) {
-                        warn!("Failed to write persistent rules to temp file {}: {}", tmp_path.display(), e);
+                        warn!(
+                            "Failed to write persistent rules to temp file {}: {}",
+                            tmp_path.display(),
+                            e
+                        );
                         let _ = std::fs::remove_file(&tmp_path);
                     } else if let Err(e) = std::fs::rename(&tmp_path, &path) {
-                        warn!("Failed to rename temp file {} to {}: {}", tmp_path.display(), path.display(), e);
+                        warn!(
+                            "Failed to rename temp file {} to {}: {}",
+                            tmp_path.display(),
+                            path.display(),
+                            e
+                        );
                         let _ = std::fs::remove_file(&tmp_path);
                     } else {
                         debug!("Saved {} rules to {}", data.rules.len(), path.display());
