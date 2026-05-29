@@ -453,10 +453,32 @@ impl FileCheckpointManager {
         let tmp_path = self
             .base_dir
             .join(format!(".manifest.{}.tmp", uuid::Uuid::new_v4()));
-        if let Err(e) = std::fs::write(&tmp_path, &data) {
+
+        let write_result = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true).mode(0o600);
+                opts.open(&tmp_path).and_then(|mut f| {
+                    std::io::Write::write_all(&mut f, data.as_bytes())
+                })
+            }
+            #[cfg(not(unix))]
+            {
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                opts.open(&tmp_path).and_then(|mut f| {
+                    std::io::Write::write_all(&mut f, data.as_bytes())
+                })
+            }
+        };
+
+        if let Err(e) = write_result {
             warn!("Failed to write checkpoint manifest: {}", e);
             return;
         }
+
         if let Err(e) = std::fs::rename(&tmp_path, self.base_dir.join(MANIFEST_FILE)) {
             warn!("Failed to finalize checkpoint manifest: {}", e);
             let _ = std::fs::remove_file(&tmp_path);
