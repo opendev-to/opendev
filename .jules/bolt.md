@@ -29,6 +29,10 @@
 **Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle (even outside `useEffect`) introduces unnecessary memory allocations and O(N) redundant string operations. This causes measurable UI lag when handling large sets of data, especially when state values updates frequently (e.g. searching/typing).
 **Action:** Always wrap expensive synchronous array filtering in `useMemo`, and hoist repetitive value normalization (like query.toLowerCase()) outside of the filtering loop.
 
+## 2024-05-24 - Inline Component Array Filtering
+**Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle inside functional components without `useMemo` (like `CommandPalette` and `NewSessionModal`) introduces unnecessary memory allocations and O(N) redundant string operations. This causes measurable UI lag when handling large sets of data, especially when state values updates frequently.
+**Action:** Always wrap expensive synchronous array filtering in `useMemo`, and hoist repetitive value normalization (like `query.toLowerCase()`) outside of the filtering loop.
+
 ## 2024-05-25 - Rules of Hooks and JSX IIFEs
 **Learning:** Attempting to apply `useMemo` optimizations directly inside an Immediately Invoked Function Expression (IIFE) within JSX violates React's Rules of Hooks. Hooks must be placed at the top level of the component body, never inside nested functions or IIFEs.
 **Action:** When extracting expensive logic (like array filtering) from a JSX IIFE into a memoized value, ensure the `useMemo` hook is hoisted to the top level of the component, and only the resulting memoized value is used within the JSX.

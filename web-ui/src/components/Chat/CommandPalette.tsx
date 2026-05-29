@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useChatStore } from '../../stores/chat';
 
 interface Command {
@@ -26,22 +26,28 @@ export function CommandPalette({ isOpen, onClose, onOpenStatus }: CommandPalette
   const sendInterrupt = useChatStore(state => state.sendInterrupt);
   const toggleSidebar = useChatStore(state => state.toggleSidebar);
 
-  const commands: Command[] = [
-    { id: 'clear', label: '/clear', description: 'Clear chat history', action: () => { clearChat(); onClose(); } },
-    { id: 'mode', label: '/mode', description: 'Toggle between Normal and Plan mode', action: () => { toggleMode(); onClose(); } },
-    { id: 'status', label: '/status', description: 'Show session status dialog', action: () => { onOpenStatus(); onClose(); } },
-    { id: 'interrupt', label: '/interrupt', description: 'Interrupt the current task', action: () => { sendInterrupt(); onClose(); } },
-    { id: 'autonomy', label: 'Cycle Autonomy', description: 'Cycle: Manual → Semi-Auto → Auto', action: () => { cycleAutonomy(); onClose(); } },
-    { id: 'thinking', label: 'Cycle Thinking', description: 'Cycle: Off → Low → Medium → High', action: () => { cycleThinkingLevel(); onClose(); } },
-    { id: 'sidebar', label: 'Toggle Sidebar', description: 'Show/hide the sessions sidebar', action: () => { toggleSidebar(); onClose(); } },
-  ];
+  // ⚡ Bolt Performance Optimization:
+  // Wrapped array filtering in useMemo and hoisted the query.toLowerCase() call outside
+  // the filtering loop. This avoids redundant string allocations and prevents an O(N)
+  // operation during every render cycle (especially on keystrokes in the search box).
+  const filtered = useMemo(() => {
+    const commands: Command[] = [
+      { id: 'clear', label: '/clear', description: 'Clear chat history', action: () => { clearChat(); onClose(); } },
+      { id: 'mode', label: '/mode', description: 'Toggle between Normal and Plan mode', action: () => { toggleMode(); onClose(); } },
+      { id: 'status', label: '/status', description: 'Show session status dialog', action: () => { onOpenStatus(); onClose(); } },
+      { id: 'interrupt', label: '/interrupt', description: 'Interrupt the current task', action: () => { sendInterrupt(); onClose(); } },
+      { id: 'autonomy', label: 'Cycle Autonomy', description: 'Cycle: Manual → Semi-Auto → Auto', action: () => { cycleAutonomy(); onClose(); } },
+      { id: 'thinking', label: 'Cycle Thinking', description: 'Cycle: Off → Low → Medium → High', action: () => { cycleThinkingLevel(); onClose(); } },
+      { id: 'sidebar', label: 'Toggle Sidebar', description: 'Show/hide the sessions sidebar', action: () => { toggleSidebar(); onClose(); } },
+    ];
 
-  const filtered = query
-    ? commands.filter(c =>
-        c.label.toLowerCase().includes(query.toLowerCase()) ||
-        c.description.toLowerCase().includes(query.toLowerCase())
-      )
-    : commands;
+    if (!query) return commands;
+    const queryLower = query.toLowerCase();
+    return commands.filter(c =>
+      c.label.toLowerCase().includes(queryLower) ||
+      c.description.toLowerCase().includes(queryLower)
+    );
+  }, [query, clearChat, onClose, toggleMode, onOpenStatus, sendInterrupt, cycleAutonomy, cycleThinkingLevel, toggleSidebar]);
 
   useEffect(() => {
     if (isOpen) {

@@ -244,6 +244,7 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
                     </div>
                   );
                 }
+
                 if (filteredDirs.length === 0) {
                   return (
                     <div className="px-5 py-6 text-center">
