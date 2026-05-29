@@ -460,17 +460,15 @@ impl FileCheckpointManager {
                 use std::os::unix::fs::OpenOptionsExt;
                 let mut opts = std::fs::OpenOptions::new();
                 opts.write(true).create_new(true).mode(0o600);
-                opts.open(&tmp_path).and_then(|mut f| {
-                    std::io::Write::write_all(&mut f, data.as_bytes())
-                })
+                opts.open(&tmp_path)
+                    .and_then(|mut f| std::io::Write::write_all(&mut f, data.as_bytes()))
             }
             #[cfg(not(unix))]
             {
                 let mut opts = std::fs::OpenOptions::new();
                 opts.write(true).create_new(true);
-                opts.open(&tmp_path).and_then(|mut f| {
-                    std::io::Write::write_all(&mut f, data.as_bytes())
-                })
+                opts.open(&tmp_path)
+                    .and_then(|mut f| std::io::Write::write_all(&mut f, data.as_bytes()))
             }
         };
 
