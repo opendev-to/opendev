@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { XMarkIcon, ChevronRightIcon, FolderIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '../../api/client';
@@ -97,6 +97,14 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
       setIsCreating(false);
     }
   };
+
+  // ⚡ Bolt: Hoist array filtering out of the JSX IIFE and memoize it.
+  // This prevents O(N) repetitive string operations (toLowerCase) on every keystroke
+  // when the user types in the filter input.
+  const filteredDirs = useMemo(() => {
+    const query = filterText.toLowerCase();
+    return directories.filter(d => d.name.toLowerCase().includes(query));
+  }, [directories, filterText]);
 
   if (!isOpen) return null;
 
@@ -222,9 +230,6 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
 
               {/* Directory rows */}
               {(() => {
-                const filteredDirs = directories.filter(d =>
-                  d.name.toLowerCase().includes(filterText.toLowerCase())
-                );
                 if (directories.length === 0 && !parentPath) {
                   return (
                     <div className="px-5 py-8 text-center">
