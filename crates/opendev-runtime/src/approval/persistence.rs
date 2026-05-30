@@ -107,14 +107,40 @@ pub(crate) fn save_persistent_rules(
 
     match serde_json::to_string_pretty(&data) {
         Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
-                warn!(
-                    "Failed to save persistent rules to {}: {}",
-                    path.display(),
-                    e
-                );
-            } else {
-                debug!("Saved {} rules to {}", data.rules.len(), path.display());
+            let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+            let write_result = {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .mode(0o600)
+                        .open(&tmp_path)
+                        .and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&tmp_path)
+                        .and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                }
+            };
+
+            match write_result.and_then(|_| std::fs::rename(&tmp_path, &path)) {
+                Ok(_) => {
+                    debug!("Saved {} rules to {}", data.rules.len(), path.display());
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp_path);
+                    warn!(
+                        "Failed to save persistent rules to {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
             }
         }
         Err(e) => {
