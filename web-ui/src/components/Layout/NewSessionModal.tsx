@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { XMarkIcon, ChevronRightIcon, FolderIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { apiClient } from '../../api/client';
@@ -35,6 +35,14 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
   const [createError, setCreateError] = useState<string | null>(null);
   const loadSession = useChatStore(state => state.loadSession);
   const bumpSessionList = useChatStore(state => state.bumpSessionList);
+
+  // Memoize filtered directories to prevent O(N) filtering and repeated .toLowerCase() on every render
+  const filteredDirs = useMemo(() => {
+    const lowerFilter = filterText.toLowerCase();
+    return directories.filter(d =>
+      d.name.toLowerCase().includes(lowerFilter)
+    );
+  }, [directories, filterText]);
 
   const fetchDirectory = async (path: string, hidden?: boolean) => {
     setIsLoadingDirs(true);
@@ -222,9 +230,6 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
 
               {/* Directory rows */}
               {(() => {
-                const filteredDirs = directories.filter(d =>
-                  d.name.toLowerCase().includes(filterText.toLowerCase())
-                );
                 if (directories.length === 0 && !parentPath) {
                   return (
                     <div className="px-5 py-8 text-center">

@@ -28,3 +28,7 @@
 ## 2024-05-24 - Array Filtering Operations in React Renders
 **Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle (even outside `useEffect`) introduces unnecessary memory allocations and O(N) redundant string operations. This causes measurable UI lag when handling large sets of data, especially when state values updates frequently (e.g. searching/typing).
 **Action:** Always wrap expensive synchronous array filtering in `useMemo`, and hoist repetitive value normalization (like query.toLowerCase()) outside of the filtering loop.
+
+## 2024-05-31 - React Rules of Hooks and Array Filtering
+**Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle inside an IIFE (Immediately Invoked Function Expression) within JSX introduces unnecessary memory allocations and O(N) redundant string operations. However, when optimizing this, hooks like `useMemo` cannot be placed inside the IIFE, as this violates React's Rules of Hooks.
+**Action:** Always wrap expensive synchronous array filtering in `useMemo` at the top level of the component, and hoist repetitive value normalization (like query.toLowerCase()) outside of the filtering loop. Use the memoized result in the JSX.
