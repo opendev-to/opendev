@@ -44,3 +44,7 @@
 ## 2024-04-18 - Replacing synchronous std::fs operations with tokio::fs in async contexts
 **Learning:** In the `SymbolCache` implementation in `crates/opendev-tools-lsp/src/cache.rs`, using synchronous `std::fs` operations (e.g., `read_to_string`, `write`, `create_dir_all`, `remove_dir_all`) inside async functions blocks the async executor thread. This is a common performance bottleneck in Rust async applications, as it prevents other async tasks from making progress on the thread handling the I/O.
 **Action:** Always verify if `std::fs` is being called within an `async fn` or an executor's context. When identifying such usage, refactor to use `tokio::fs` equivalents (e.g., `tokio::fs::read_to_string().await`) to ensure non-blocking file I/O operations and improve overall application concurrency.
+
+## 2025-06-01 - Hoisting toLowerCase in Search Panels
+**Learning:** Placing `query.toLowerCase()` inside recursive tree-search helper functions (like `searchNodeData` and `matchesQuery` in `SearchPanel.tsx`) causes massive O(N) redundant string allocations when filtering large lists inside `useMemo`, even if the input is debounced.
+**Action:** Always compute `lowerQuery = query.toLowerCase()` exactly once at the start of the `useMemo` block, and pass the already-lowercased string down to all helper functions.
