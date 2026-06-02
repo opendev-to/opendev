@@ -19,6 +19,7 @@ regex = { workspace = true }
 chrono = { workspace = true }
 url = "2"
 dirs = "6"
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
