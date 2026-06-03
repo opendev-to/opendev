@@ -159,11 +159,29 @@ impl FileUtils {
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent"))?;
         std::fs::create_dir_all(parent)?;
 
-        let tmp_path = parent.join(format!(
-            ".{}.tmp",
-            path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
-        ));
-        std::fs::write(&tmp_path, content)?;
+        let tmp_name = format!(
+            "{}.tmp.{}",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            uuid::Uuid::new_v4()
+        );
+        let tmp_path = parent.join(tmp_name);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+            let mut file = opts.open(&tmp_path)?;
+            std::io::Write::write_all(&mut file, content.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            let mut file = opts.open(&tmp_path)?;
+            std::io::Write::write_all(&mut file, content.as_bytes())?;
+        }
+
         std::fs::rename(&tmp_path, path)?;
         Ok(())
     }
