@@ -31,14 +31,41 @@ interface SearchResult {
   chainLabel?: string;
 }
 
+// ⚡ Bolt Performance Optimization:
+// Previously, matchesQuery, highlightMatch, and truncateAround used .toLowerCase()
+// on the text inside the helper function. This caused massive O(N) redundant string
+// allocations when filtering large lists inside `useMemo`, as the large text strings
+// like `fullText` were lowercased repeatedly during the search loops even if `lowerQuery`
+// was already hoisted. We optimize this by using case-insensitive regex or tracking
+// lowercased strings more efficiently without repeated allocations.
+
+function escapeRegExp(string: string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Global cache for compiled RegExp to avoid recompiling it hundreds of times
+// during a single render loop when filtering the node tree.
+const regExpCache = new Map<string, RegExp>();
+function getSearchRegExp(query: string): RegExp {
+  if (!regExpCache.has(query)) {
+    regExpCache.set(query, new RegExp(escapeRegExp(query), 'i'));
+  }
+  return regExpCache.get(query)!;
+}
+
 function matchesQuery(text: string, lowerQuery: string): boolean {
-  return text.toLowerCase().includes(lowerQuery);
+  // Avoid allocating a lowercased copy of the potentially large 'text'
+  // by using a cached, case-insensitive regular expression match.
+  return getSearchRegExp(lowerQuery).test(text);
 }
 
 function highlightMatch(text: string, lowerQuery: string): React.ReactNode {
   if (!lowerQuery) return text;
-  const idx = text.toLowerCase().indexOf(lowerQuery);
-  if (idx === -1) return text;
+  // Use regex to find index without lowercasing the entire text
+  const matchRegExp = getSearchRegExp(lowerQuery);
+  const matchResult = text.match(matchRegExp);
+  if (!matchResult || matchResult.index === undefined) return text;
+  const idx = matchResult.index;
   const before = text.slice(0, idx);
   const match = text.slice(idx, idx + lowerQuery.length);
   const after = text.slice(idx + lowerQuery.length);
@@ -105,7 +132,9 @@ function searchNodeData(data: AnyNodeData, lowerQuery: string): string | null {
 
 function truncateAround(text: string, lowerQuery: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
-  const idx = text.toLowerCase().indexOf(lowerQuery);
+  const matchRegExp = getSearchRegExp(lowerQuery);
+  const matchResult = text.match(matchRegExp);
+  const idx = matchResult?.index ?? -1;
   if (idx === -1) return text.slice(0, maxLen);
   const start = Math.max(0, idx - Math.floor((maxLen - lowerQuery.length) / 2));
   const slice = text.slice(start, start + maxLen);
@@ -123,6 +152,14 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
     const q = debouncedQuery.trim();
     if (!q) return [];
     const lowerQuery = q.toLowerCase();
+
+    // ⚡ Bolt Performance Optimization:
+    // Create the RegEx once per query and pass it down, or at least avoid
+    // repeated RegEx compilations. We've switched the helpers to use RegEx to avoid
+    // allocating new lowercased strings. However, wait, compiling a regex inside
+    // the helper is redundant. We can compile it once here.
+    // Actually, passing lowerQuery is fine, but compiling Regex per text is slightly
+    // expensive. But it's much faster than allocating huge strings in JS.
     const out: SearchResult[] = [];
 
     for (const node of nodes) {
