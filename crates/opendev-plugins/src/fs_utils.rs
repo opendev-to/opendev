@@ -13,13 +13,16 @@ pub fn atomic_write_secure(path: &Path, content: &[u8]) -> std::io::Result<()> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true).mode(0o600);
+        opts.write(true).create_new(true).mode(0o600);
         let mut file = opts.open(&tmp_path)?;
         std::io::Write::write_all(&mut file, content)?;
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(&tmp_path, content)?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        let mut file = opts.open(&tmp_path)?;
+        std::io::Write::write_all(&mut file, content)?;
     }
 
     std::fs::rename(&tmp_path, path)
