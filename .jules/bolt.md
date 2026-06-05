@@ -48,3 +48,7 @@
 ## 2025-06-01 - Hoisting toLowerCase in Search Panels
 **Learning:** Placing `query.toLowerCase()` inside recursive tree-search helper functions (like `searchNodeData` and `matchesQuery` in `SearchPanel.tsx`) causes massive O(N) redundant string allocations when filtering large lists inside `useMemo`, even if the input is debounced.
 **Action:** Always compute `lowerQuery = query.toLowerCase()` exactly once at the start of the `useMemo` block, and pass the already-lowercased string down to all helper functions.
+
+## 2024-05-27 - Hoisting toLowerCase and Regular Expressions in Search Panels
+**Learning:** Using `String.prototype.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` inside `useMemo` helps in hoisting `toLowerCase()` logic by safely escaping strings before feeding them to a new `RegExp` object for robust matching. However, do not assume global flags (`g`) are necessary unless finding all occurrences is intended.
+**Action:** When filtering a large list inside `useMemo` while doing case-insensitive matches, precompute the `RegExp` object instead of repeatedly invoking `toLowerCase()`. Remember to pass it down properly and only use matched results correctly.

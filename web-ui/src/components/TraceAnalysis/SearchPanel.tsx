@@ -31,21 +31,27 @@ interface SearchResult {
   chainLabel?: string;
 }
 
-function matchesQuery(text: string, lowerQuery: string): boolean {
-  return text.toLowerCase().includes(lowerQuery);
+function escapeRegExp(string: string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }
 
-function highlightMatch(text: string, lowerQuery: string): React.ReactNode {
-  if (!lowerQuery) return text;
-  const idx = text.toLowerCase().indexOf(lowerQuery);
-  if (idx === -1) return text;
+function matchesQuery(text: string, queryRegex: RegExp): boolean {
+  return queryRegex.test(text);
+}
+
+function highlightMatch(text: string, queryRegex: RegExp | null): React.ReactNode {
+  if (!queryRegex) return text;
+  queryRegex.lastIndex = 0;
+  const match = queryRegex.exec(text);
+  if (!match) return text;
+  const idx = match.index;
   const before = text.slice(0, idx);
-  const match = text.slice(idx, idx + lowerQuery.length);
-  const after = text.slice(idx + lowerQuery.length);
+  const matchedText = match[0];
+  const after = text.slice(idx + matchedText.length);
   return (
     <>
       {before}
-      <span className="bg-accent-main-100/30 text-text-000 rounded-sm px-px">{match}</span>
+      <span className="bg-accent-main-100/30 text-text-000 rounded-sm px-px">{matchedText}</span>
       {after}
     </>
   );
@@ -83,31 +89,33 @@ function getFullContent(data: AnyNodeData): string {
   return contentBlocksToText(ev.message?.content);
 }
 
-function searchNodeData(data: AnyNodeData, lowerQuery: string): string | null {
-  if (matchesQuery(data.preview, lowerQuery)) return data.preview;
+function searchNodeData(data: AnyNodeData, queryRegex: RegExp): string | null {
+  if (matchesQuery(data.preview, queryRegex)) return data.preview;
   const toolNames = getToolNames(data);
   for (const name of toolNames) {
-    if (matchesQuery(name, lowerQuery)) return name;
+    if (matchesQuery(name, queryRegex)) return name;
   }
-  if (matchesQuery(data.eventType, lowerQuery)) return data.eventType;
+  if (matchesQuery(data.eventType, queryRegex)) return data.eventType;
   if (data.eventType === 'tool-call' || data.eventType === 'task-call') {
     const tools = (data as ToolNodeData | TaskNodeData).tools;
     for (const tool of tools) {
-      if (tool.result && matchesQuery(tool.result, lowerQuery)) return truncateAround(tool.result, lowerQuery, 80);
+      if (tool.result && matchesQuery(tool.result, queryRegex)) return truncateAround(tool.result, queryRegex, 80);
       const inputStr = JSON.stringify(tool.input);
-      if (matchesQuery(inputStr, lowerQuery)) return truncateAround(inputStr, lowerQuery, 80);
+      if (matchesQuery(inputStr, queryRegex)) return truncateAround(inputStr, queryRegex, 80);
     }
   }
   const fullText = getFullContent(data);
-  if (fullText && matchesQuery(fullText, lowerQuery)) return truncateAround(fullText, lowerQuery, 80);
+  if (fullText && matchesQuery(fullText, queryRegex)) return truncateAround(fullText, queryRegex, 80);
   return null;
 }
 
-function truncateAround(text: string, lowerQuery: string, maxLen: number): string {
+function truncateAround(text: string, queryRegex: RegExp, maxLen: number): string {
   if (text.length <= maxLen) return text;
-  const idx = text.toLowerCase().indexOf(lowerQuery);
-  if (idx === -1) return text.slice(0, maxLen);
-  const start = Math.max(0, idx - Math.floor((maxLen - lowerQuery.length) / 2));
+  queryRegex.lastIndex = 0;
+  const match = queryRegex.exec(text);
+  if (!match) return text.slice(0, maxLen);
+  const idx = match.index;
+  const start = Math.max(0, idx - Math.floor((maxLen - match[0].length) / 2));
   const slice = text.slice(start, start + maxLen);
   return (start > 0 ? '\u2026' : '') + slice + (start + maxLen < text.length ? '\u2026' : '');
 }
@@ -122,7 +130,7 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
   const results = useMemo<SearchResult[]>(() => {
     const q = debouncedQuery.trim();
     if (!q) return [];
-    const lowerQuery = q.toLowerCase();
+    const queryRegex = new RegExp(escapeRegExp(q), 'i');
     const out: SearchResult[] = [];
 
     for (const node of nodes) {
@@ -130,7 +138,7 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
         const cData = node.data as CollapsedNodeData;
         for (let i = 0; i < cData.events.length; i++) {
           const ev = cData.events[i];
-          const matchText = searchNodeData(ev, lowerQuery);
+          const matchText = searchNodeData(ev, queryRegex);
           if (matchText) {
             out.push({
               nodeId: node.id,
@@ -146,7 +154,7 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
         }
       } else {
         const data = node.data as TraceNodeData | ToolNodeData | TaskNodeData;
-        const matchText = searchNodeData(data, lowerQuery);
+        const matchText = searchNodeData(data, queryRegex);
         if (matchText) {
           out.push({
             nodeId: node.id,
@@ -162,7 +170,7 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
     return out;
   }, [nodes, debouncedQuery]);
 
-  const lowerDebouncedQuery = debouncedQuery.trim().toLowerCase();
+  const queryRegex = useMemo(() => debouncedQuery.trim() ? new RegExp(escapeRegExp(debouncedQuery.trim()), 'i') : null, [debouncedQuery]);
 
   return (
     <div className="w-[260px] shrink-0 flex flex-col bg-bg-100 border-r border-border-300/20 font-sans overflow-hidden">
@@ -208,7 +216,7 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
               )}
             </div>
             <div className="text-[11px] text-text-200 leading-4 overflow-hidden text-ellipsis whitespace-nowrap">
-              {highlightMatch(r.matchSnippet, lowerDebouncedQuery)}
+              {highlightMatch(r.matchSnippet, queryRegex)}
             </div>
             {r.toolNames.length > 0 && (
               <div className="flex gap-1 mt-1 flex-wrap">
