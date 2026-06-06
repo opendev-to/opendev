@@ -22,12 +22,16 @@ export function RepositoryGrid({ repositories, searchQuery, onSearchChange, onAd
   // preventing unnecessary O(N) recalculations and layout thrashing.
   const filteredRepositories = useMemo(() => {
     if (!debouncedSearchQuery) return repositories;
-    const lowerQuery = debouncedSearchQuery.toLowerCase();
+
+    // Precompute case-insensitive RegExp instead of repeatedly invoking .toLowerCase()
+    // inside the array filter loop. This prevents O(N) redundant string allocations.
+    const queryRegex = new RegExp(debouncedSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
     return repositories.filter(repo =>
-      repo.name.toLowerCase().includes(lowerQuery) ||
-      repo.fullName.toLowerCase().includes(lowerQuery) ||
-      repo.description.toLowerCase().includes(lowerQuery) ||
-      repo.language.toLowerCase().includes(lowerQuery)
+      queryRegex.test(repo.name) ||
+      queryRegex.test(repo.fullName) ||
+      queryRegex.test(repo.description) ||
+      queryRegex.test(repo.language)
     );
   }, [repositories, debouncedSearchQuery]);
 

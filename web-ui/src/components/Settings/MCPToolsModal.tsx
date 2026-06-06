@@ -35,11 +35,14 @@ export function MCPToolsModal({ isOpen, serverName, tools, onClose }: MCPToolsMo
   const filteredTools = useMemo(() => {
     if (!searchQuery.trim()) return tools;
 
-    const query = searchQuery.toLowerCase();
+    // ⚡ Bolt Performance Optimization:
+    // Precompute a case-insensitive RegExp instead of repeatedly invoking .toLowerCase()
+    // inside the filter loop. This prevents O(N) redundant string allocations.
+    const queryRegex = new RegExp(searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     return tools.filter(
       tool =>
-        tool.name.toLowerCase().includes(query) ||
-        tool.description.toLowerCase().includes(query)
+        queryRegex.test(tool.name) ||
+        queryRegex.test(tool.description)
     );
   }, [tools, searchQuery]);
 

@@ -52,3 +52,6 @@
 ## 2024-05-27 - Hoisting toLowerCase and Regular Expressions in Search Panels
 **Learning:** Using `String.prototype.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` inside `useMemo` helps in hoisting `toLowerCase()` logic by safely escaping strings before feeding them to a new `RegExp` object for robust matching. However, do not assume global flags (`g`) are necessary unless finding all occurrences is intended.
 **Action:** When filtering a large list inside `useMemo` while doing case-insensitive matches, precompute the `RegExp` object instead of repeatedly invoking `toLowerCase()`. Remember to pass it down properly and only use matched results correctly.
+## 2024-06-03 - RegExp instead of toLowerCase in UseMemo
+**Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle (even inside `useMemo`) introduces unnecessary memory allocations and O(N) redundant string operations. This causes measurable UI lag when handling large sets of data, especially when state values updates frequently.
+**Action:** When filtering lists inside `useMemo` using case-insensitive text matches, precompute a case-insensitive `RegExp` object via `new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')` instead of repeatedly invoking `.toLowerCase()` on every element in the loop.

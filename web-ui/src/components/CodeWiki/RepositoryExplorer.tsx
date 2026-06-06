@@ -76,17 +76,17 @@ export function RepositoryExplorer({ selectedRepo, onRepoSelect, searchQuery }: 
   const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
 
   // ⚡ Bolt Performance Optimization:
-  // Hoisted the lowercase conversion of the search query outside of the .filter() loop.
-  // This prevents redundant string allocations per iteration.
+  // Precompute case-insensitive RegExp instead of repeatedly invoking .toLowerCase()
+  // inside the array filter loop. This prevents redundant string allocations per iteration.
   // We use useMemo to prevent excessive filtering and aggregations on every render.
   const filteredRepos = useMemo(() => {
     if (!searchQuery) return mockRepositories;
 
-    const queryLower = searchQuery.toLowerCase();
+    const queryRegex = new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     return mockRepositories.filter(repo =>
-      repo.name.toLowerCase().includes(queryLower) ||
-      repo.fullName.toLowerCase().includes(queryLower) ||
-      repo.description.toLowerCase().includes(queryLower)
+      queryRegex.test(repo.name) ||
+      queryRegex.test(repo.fullName) ||
+      queryRegex.test(repo.description)
     );
   }, [searchQuery]);
 
