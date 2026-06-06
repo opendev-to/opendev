@@ -6,6 +6,7 @@ license.workspace = true
 description = "LSP integration for OpenDev: language server management, JSON-RPC protocol, and symbol caching"
 
 [dependencies]
+uuid = { workspace = true }
 opendev-models = { workspace = true }
 opendev-config = { workspace = true }
 opendev-tools-core = { workspace = true }

@@ -152,7 +152,7 @@ impl FileUtils {
             .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {}", path.display(), e)))
     }
 
-    /// Write content to a file atomically (via tmp + rename).
+    /// Write content to a file atomically (via tmp + rename) with secure permissions (0o600).
     pub fn atomic_write(path: &Path, content: &str) -> Result<(), std::io::Error> {
         let parent = path
             .parent()
@@ -160,10 +160,27 @@ impl FileUtils {
         std::fs::create_dir_all(parent)?;
 
         let tmp_path = parent.join(format!(
-            ".{}.tmp",
-            path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
+            ".{}.tmp.{}",
+            path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+            uuid::Uuid::new_v4()
         ));
-        std::fs::write(&tmp_path, content)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+            let mut file = opts.open(&tmp_path)?;
+            std::io::Write::write_all(&mut file, content.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            let mut file = opts.open(&tmp_path)?;
+            std::io::Write::write_all(&mut file, content.as_bytes())?;
+        }
+
         std::fs::rename(&tmp_path, path)?;
         Ok(())
     }
