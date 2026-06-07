@@ -87,13 +87,15 @@ pub fn sync_provider_cache(
                         use std::os::unix::fs::OpenOptionsExt;
                         let mut opts = std::fs::OpenOptions::new();
                         opts.write(true).create_new(true).mode(0o600);
-                        opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                        opts.open(&tmp_path)
+                            .and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
                     }
                     #[cfg(not(unix))]
                     {
                         let mut opts = std::fs::OpenOptions::new();
                         opts.write(true).create_new(true);
-                        opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                        opts.open(&tmp_path)
+                            .and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
                     }
                 };
 
@@ -236,13 +238,15 @@ pub async fn sync_provider_cache_async(
                         use std::os::unix::fs::OpenOptionsExt;
                         let mut opts = std::fs::OpenOptions::new();
                         opts.write(true).create_new(true).mode(0o600);
-                        opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                        opts.open(&tmp_path)
+                            .and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
                     }
                     #[cfg(not(unix))]
                     {
                         let mut opts = std::fs::OpenOptions::new();
                         opts.write(true).create_new(true);
-                        opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                        opts.open(&tmp_path)
+                            .and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
                     }
                 };
 
