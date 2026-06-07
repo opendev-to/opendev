@@ -78,7 +78,27 @@ pub fn sync_provider_cache(
                 }
                 let path = providers_dir.join(format!("{provider_id}.json"));
                 let json = serde_json::to_string_pretty(&converted).unwrap_or_default();
-                if let Err(e) = std::fs::write(&path, json) {
+
+                let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+
+                let write_result = {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        let mut opts = std::fs::OpenOptions::new();
+                        opts.write(true).create_new(true).mode(0o600);
+                        opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let mut opts = std::fs::OpenOptions::new();
+                        opts.write(true).create_new(true);
+                        opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                    }
+                };
+
+                if let Err(e) = write_result.and_then(|_| std::fs::rename(&tmp_path, &path)) {
+                    let _ = std::fs::remove_file(&tmp_path);
                     debug!("Failed to write cache for provider {}: {}", provider_id, e);
                 }
             }
@@ -207,7 +227,27 @@ pub async fn sync_provider_cache_async(
                 }
                 let path = providers_dir.join(format!("{provider_id}.json"));
                 let json = serde_json::to_string_pretty(&converted).unwrap_or_default();
-                if let Err(e) = std::fs::write(&path, json) {
+
+                let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+
+                let write_result = {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        let mut opts = std::fs::OpenOptions::new();
+                        opts.write(true).create_new(true).mode(0o600);
+                        opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let mut opts = std::fs::OpenOptions::new();
+                        opts.write(true).create_new(true);
+                        opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+                    }
+                };
+
+                if let Err(e) = write_result.and_then(|_| std::fs::rename(&tmp_path, &path)) {
+                    let _ = std::fs::remove_file(&tmp_path);
                     debug!("Failed to write cache for provider {}: {}", provider_id, e);
                 }
             }
