@@ -7,6 +7,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { XMarkIcon, MagnifyingGlassIcon, ClipboardIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { useDebounce } from '../../hooks/useDebounce';
 import { WrenchScrewdriverIcon } from '@heroicons/react/24/solid';
 import type { MCPTool } from '../../types/mcp';
 
@@ -22,6 +23,11 @@ export function MCPToolsModal({ isOpen, serverName, tools, onClose }: MCPToolsMo
   const [selectedTool, setSelectedTool] = useState<MCPTool | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
+  // ⚡ Bolt Performance Optimization:
+  // Debouncing the search query to prevent excessive array filtering on every keystroke.
+  // The query filters through an array `tools.filter`, which might cause UI jank (O(N) layout thrashing) for large sets of tools.
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+
   // Reset state when modal opens or tools change
   useEffect(() => {
     if (isOpen) {
@@ -33,21 +39,21 @@ export function MCPToolsModal({ isOpen, serverName, tools, onClose }: MCPToolsMo
 
   // Filter tools based on search query
   const filteredTools = useMemo(() => {
-    if (!searchQuery.trim()) return tools;
+    if (!debouncedSearchQuery.trim()) return tools;
 
     // ⚡ Bolt Performance Optimization:
     // Precompute a case-insensitive RegExp instead of repeatedly invoking .toLowerCase()
     // inside the filter loop. This prevents O(N) redundant string allocations.
-    const queryRegex = new RegExp(searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const queryRegex = new RegExp(debouncedSearchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     return tools.filter(
       tool =>
         queryRegex.test(tool.name) ||
         queryRegex.test(tool.description)
     );
-  }, [tools, searchQuery]);
+  }, [tools, debouncedSearchQuery]);
 
   // Auto-select first tool when filtered list changes
-  useMemo(() => {
+  useEffect(() => {
     if (filteredTools.length > 0 && !filteredTools.find(t => t.name === selectedTool?.name)) {
       setSelectedTool(filteredTools[0]);
     } else if (filteredTools.length === 0) {
