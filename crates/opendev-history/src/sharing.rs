@@ -154,7 +154,18 @@ pub async fn share_session(session: &Session, endpoint: &str) -> Result<String, 
         let path = std::env::temp_dir().join(&filename);
 
         let html = render_session_html(&anonymized);
-        std::fs::write(&path, html).map_err(|e| format!("Failed to write HTML file: {}", e))?;
+
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+
+        let mut file = opts.open(&path).map_err(|e| format!("Failed to create HTML file: {}", e))?;
+        use std::io::Write;
+        file.write_all(html.as_bytes()).map_err(|e| format!("Failed to write HTML file: {}", e))?;
 
         let url = format!("file://{}", path.display());
         info!(path = %path.display(), "Session shared as local HTML");
