@@ -102,8 +102,9 @@ export function NewSessionModal({ isOpen, onClose }: NewSessionModalProps) {
   // This prevents O(N) repetitive string operations (toLowerCase) on every keystroke
   // when the user types in the filter input.
   const filteredDirs = useMemo(() => {
-    const query = filterText.toLowerCase();
-    return directories.filter(d => d.name.toLowerCase().includes(query));
+    if (!filterText) return directories;
+    const queryRegex = new RegExp(filterText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    return directories.filter(d => queryRegex.test(d.name));
   }, [directories, filterText]);
 
   if (!isOpen) return null;

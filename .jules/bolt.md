@@ -55,3 +55,7 @@
 ## 2024-06-03 - RegExp instead of toLowerCase in UseMemo
 **Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle (even inside `useMemo`) introduces unnecessary memory allocations and O(N) redundant string operations. This causes measurable UI lag when handling large sets of data, especially when state values updates frequently.
 **Action:** When filtering lists inside `useMemo` using case-insensitive text matches, precompute a case-insensitive `RegExp` object via `new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')` instead of repeatedly invoking `.toLowerCase()` on every element in the loop.
+
+## 2024-06-10 - Refactoring toLowerCase in React UseMemo
+**Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle (even inside `useMemo`) introduces unnecessary memory allocations and O(N) redundant string operations. In `NewSessionModal` and `CommandPalette`, refactoring `.toLowerCase()` logic by safely escaping strings before feeding them to a new `RegExp` object for robust matching improves UI responsiveness.
+**Action:** Always precompute a case-insensitive `RegExp` object via `new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')` instead of repeatedly invoking `.toLowerCase()` on every element in the loop.

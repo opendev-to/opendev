@@ -27,9 +27,9 @@ export function CommandPalette({ isOpen, onClose, onOpenStatus }: CommandPalette
   const toggleSidebar = useChatStore(state => state.toggleSidebar);
 
   // ⚡ Bolt Performance Optimization:
-  // Wrapped array filtering in useMemo and hoisted the query.toLowerCase() call outside
-  // the filtering loop. This avoids redundant string allocations and prevents an O(N)
-  // operation during every render cycle (especially on keystrokes in the search box).
+  // Wrapped array filtering in useMemo and precomputed a case-insensitive RegExp
+  // This avoids redundant string allocations and prevents an O(N) repetitive
+  // toLowerCase operations during every render cycle (especially on keystrokes in the search box).
   const filtered = useMemo(() => {
     const commands: Command[] = [
       { id: 'clear', label: '/clear', description: 'Clear chat history', action: () => { clearChat(); onClose(); } },
@@ -42,10 +42,10 @@ export function CommandPalette({ isOpen, onClose, onOpenStatus }: CommandPalette
     ];
 
     if (!query) return commands;
-    const queryLower = query.toLowerCase();
+    const queryRegex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     return commands.filter(c =>
-      c.label.toLowerCase().includes(queryLower) ||
-      c.description.toLowerCase().includes(queryLower)
+      queryRegex.test(c.label) ||
+      queryRegex.test(c.description)
     );
   }, [query, clearChat, onClose, toggleMode, onOpenStatus, sendInterrupt, cycleAutonomy, cycleThinkingLevel, toggleSidebar]);
 
