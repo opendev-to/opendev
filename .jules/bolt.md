@@ -59,3 +59,7 @@
 ## 2024-06-10 - Refactoring toLowerCase in React UseMemo
 **Learning:** Performing array filtering with repeated inner `.toLowerCase()` calls during every render cycle (even inside `useMemo`) introduces unnecessary memory allocations and O(N) redundant string operations. In `NewSessionModal` and `CommandPalette`, refactoring `.toLowerCase()` logic by safely escaping strings before feeding them to a new `RegExp` object for robust matching improves UI responsiveness.
 **Action:** Always precompute a case-insensitive `RegExp` object via `new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')` instead of repeatedly invoking `.toLowerCase()` on every element in the loop.
+
+## 2024-06-25 - React useDeferredValue vs useDebounce for local filtering
+**Learning:** Using `useDebounce` with an arbitrary delay (like 300ms) on text inputs that filter local arrays artificially introduces UI latency and "jank" feeling, as the user has to wait even if their machine could compute the result instantly.
+**Action:** Always prefer React's built-in `useDeferredValue` for local array filtering or rendering. It allows the input field to remain immediately responsive while pushing the expensive filtering work to the background without enforcing a strict, arbitrary time delay.

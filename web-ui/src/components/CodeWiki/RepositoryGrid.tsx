@@ -1,8 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useDeferredValue } from 'react';
 import { MagnifyingGlassIcon, PlusIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { RepositoryCard } from './RepositoryCard';
 import { Repository } from './RepositoryExplorer';
-import { useDebounce } from '../../hooks/useDebounce';
 
 interface RepositoryGridProps {
   repositories: Repository[];
@@ -12,20 +11,22 @@ interface RepositoryGridProps {
 }
 
 export function RepositoryGrid({ repositories, searchQuery, onSearchChange, onAddRepository }: RepositoryGridProps) {
-  // Debounce the searchQuery to prevent expensive array filtering and reductions
-  // on every single keystroke.
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+  // ⚡ Bolt Performance Optimization:
+  // Use useDeferredValue instead of useDebounce for local array filtering.
+  // This prevents artificial UI lag (waiting 300ms) and allows React to prioritize
+  // typing updates while rendering the filtered list in the background.
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   // ⚡ Bolt Performance Optimization:
   // Memoize the filtered repositories array so it is only recalculated
-  // when the repositories list or the debounced search query changes,
+  // when the repositories list or the deferred search query changes,
   // preventing unnecessary O(N) recalculations and layout thrashing.
   const filteredRepositories = useMemo(() => {
-    if (!debouncedSearchQuery) return repositories;
+    if (!deferredSearchQuery) return repositories;
 
     // Precompute case-insensitive RegExp instead of repeatedly invoking .toLowerCase()
     // inside the array filter loop. This prevents O(N) redundant string allocations.
-    const queryRegex = new RegExp(debouncedSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const queryRegex = new RegExp(deferredSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
     return repositories.filter(repo =>
       queryRegex.test(repo.name) ||
@@ -33,7 +34,7 @@ export function RepositoryGrid({ repositories, searchQuery, onSearchChange, onAd
       queryRegex.test(repo.description) ||
       queryRegex.test(repo.language)
     );
-  }, [repositories, debouncedSearchQuery]);
+  }, [repositories, deferredSearchQuery]);
 
   // ⚡ Bolt Performance Optimization:
   // Memoize the aggregations derived from filteredRepositories.

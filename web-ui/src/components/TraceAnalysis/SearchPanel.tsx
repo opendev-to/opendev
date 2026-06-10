@@ -1,8 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useDeferredValue } from 'react';
 import type { AnyFlowNode } from '../../utils/trace/collapseGraph';
 import type { TraceNodeData, ToolNodeData, TaskNodeData, CollapsedNodeData, AnyNodeData, ContentBlock } from '../../types/trace';
 import { getToolNames } from '../../types/trace';
-import { useDebounce } from '../../hooks/useDebounce';
 
 const NODE_TYPE_DOT_CLASSES: Record<string, string> = {
   user: 'bg-accent-secondary-100',
@@ -124,11 +123,13 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
   const [query, setQuery] = useState('');
 
   // ⚡ Bolt Performance Optimization:
-  // Debouncing the search query to prevent excessive filtering of nodes on every keystroke
-  const debouncedQuery = useDebounce(query, 300);
+  // Use useDeferredValue instead of useDebounce for local array filtering.
+  // This prevents artificial UI lag (waiting 300ms) and allows React to prioritize
+  // typing updates while rendering the filtered list in the background.
+  const deferredQuery = useDeferredValue(query);
 
   const results = useMemo<SearchResult[]>(() => {
-    const q = debouncedQuery.trim();
+    const q = deferredQuery.trim();
     if (!q) return [];
     const queryRegex = new RegExp(escapeRegExp(q), 'i');
     const out: SearchResult[] = [];
@@ -168,9 +169,9 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
     }
 
     return out;
-  }, [nodes, debouncedQuery]);
+  }, [nodes, deferredQuery]);
 
-  const queryRegex = useMemo(() => debouncedQuery.trim() ? new RegExp(escapeRegExp(debouncedQuery.trim()), 'i') : null, [debouncedQuery]);
+  const queryRegex = useMemo(() => deferredQuery.trim() ? new RegExp(escapeRegExp(deferredQuery.trim()), 'i') : null, [deferredQuery]);
 
   return (
     <div className="w-[260px] shrink-0 flex flex-col bg-bg-100 border-r border-border-300/20 font-sans overflow-hidden">
@@ -195,7 +196,7 @@ export function SearchPanel({ nodes, onSelectNode }: Props) {
         )}
       </div>
 
-      {debouncedQuery.trim() && (
+      {deferredQuery.trim() && (
         <div className="px-3 pb-1.5 text-[10px] text-text-400">
           {results.length} result{results.length !== 1 ? 's' : ''}
         </div>

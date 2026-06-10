@@ -5,9 +5,8 @@
  * Uses a master-detail pattern for optimal information architecture.
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import { XMarkIcon, MagnifyingGlassIcon, ClipboardIcon, CheckIcon } from '@heroicons/react/24/outline';
-import { useDebounce } from '../../hooks/useDebounce';
 import { WrenchScrewdriverIcon } from '@heroicons/react/24/solid';
 import type { MCPTool } from '../../types/mcp';
 
@@ -24,9 +23,10 @@ export function MCPToolsModal({ isOpen, serverName, tools, onClose }: MCPToolsMo
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   // ⚡ Bolt Performance Optimization:
-  // Debouncing the search query to prevent excessive array filtering on every keystroke.
-  // The query filters through an array `tools.filter`, which might cause UI jank (O(N) layout thrashing) for large sets of tools.
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+  // Use useDeferredValue instead of useDebounce for local array filtering.
+  // This prevents artificial UI lag (waiting 300ms) and allows React to prioritize
+  // typing updates while rendering the filtered list in the background.
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   // Reset state when modal opens or tools change
   useEffect(() => {
@@ -39,18 +39,18 @@ export function MCPToolsModal({ isOpen, serverName, tools, onClose }: MCPToolsMo
 
   // Filter tools based on search query
   const filteredTools = useMemo(() => {
-    if (!debouncedSearchQuery.trim()) return tools;
+    if (!deferredSearchQuery.trim()) return tools;
 
     // ⚡ Bolt Performance Optimization:
     // Precompute a case-insensitive RegExp instead of repeatedly invoking .toLowerCase()
     // inside the filter loop. This prevents O(N) redundant string allocations.
-    const queryRegex = new RegExp(debouncedSearchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const queryRegex = new RegExp(deferredSearchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     return tools.filter(
       tool =>
         queryRegex.test(tool.name) ||
         queryRegex.test(tool.description)
     );
-  }, [tools, debouncedSearchQuery]);
+  }, [tools, deferredSearchQuery]);
 
   // Auto-select first tool when filtered list changes
   useEffect(() => {
