@@ -136,9 +136,25 @@ pub fn default_ignore_file() -> Option<&'static PathBuf> {
                 content.push('\n');
             }
             // Write to a temp file that persists for the process lifetime
-            let path = std::env::temp_dir().join("opendev-search-excludes.ignore");
-            std::fs::write(&path, &content).ok()?;
-            Some(path)
+            let filename = format!("opendev-search-excludes-{}.ignore", uuid::Uuid::new_v4());
+            let path = std::env::temp_dir().join(&filename);
+
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+
+            if let Ok(mut file) = opts.open(&path) {
+                use std::io::Write;
+                if file.write_all(content.as_bytes()).is_ok() {
+                    return Some(path);
+                }
+            }
+            None
         })
         .as_ref()
 }
