@@ -142,7 +142,7 @@ fn generate_output_path(url: &str) -> PathBuf {
         .unwrap_or_default()
         .as_millis();
 
-    screenshot_dir().join(format!("{domain}_{timestamp}.png"))
+    screenshot_dir().join(format!("{domain}_{timestamp}_{}.png", uuid::Uuid::new_v4()))
 }
 
 /// Find a headless browser binary on the system.
@@ -282,7 +282,21 @@ async fn capture_screenshot(
 
     // Save as HTML instead of PNG
     let html_dest = dest.with_extension("html");
-    match std::fs::write(&html_dest, &body) {
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+
+    let write_result = opts.open(&html_dest).and_then(|mut f| {
+        use std::io::Write;
+        f.write_all(body.as_bytes())
+    });
+
+    match write_result {
         Ok(_) => {
             let mut metadata = HashMap::new();
             metadata.insert(

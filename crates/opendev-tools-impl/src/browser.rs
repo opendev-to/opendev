@@ -262,10 +262,23 @@ impl BrowserTool {
         // Save HTML snapshot
         let screenshot_dir = std::env::temp_dir().join("opendev-screenshots");
         std::fs::create_dir_all(&screenshot_dir).ok();
-        let filename = format!("browser_{}.html", std::process::id());
+        let filename = format!("browser_{}.html", uuid::Uuid::new_v4());
         let path = screenshot_dir.join(&filename);
 
-        match std::fs::write(&path, &body) {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+
+        let write_result = opts.open(&path).and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(body.as_bytes())
+        });
+
+        match write_result {
             Ok(_) => {
                 let mut metadata = HashMap::new();
                 metadata.insert(
