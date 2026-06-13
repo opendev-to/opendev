@@ -28,7 +28,14 @@ pub fn init_tracing(verbose: bool, tui_mode: bool) {
             if let Ok(meta) = std::fs::metadata(&log_path)
                 && meta.len() > MAX_LOG_SIZE
             {
-                let _ = std::fs::write(&log_path, b"");
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).truncate(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    opts.mode(0o600);
+                }
+                let _ = opts.open(&log_path);
             }
 
             if let Ok(file) = std::fs::OpenOptions::new()
@@ -147,7 +154,32 @@ pub fn install_panic_handler() {
             if let Ok(()) = std::fs::create_dir_all(&crash_dir) {
                 let filename = format!("crash-{}.log", timestamp);
                 let crash_path = crash_dir.join(&filename);
-                if std::fs::write(&crash_path, &report).is_ok() {
+
+                let temp_suffix = uuid::Uuid::new_v4();
+                let temp_path = crash_dir.join(format!(".{filename}.{temp_suffix}.tmp"));
+
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    opts.mode(0o600);
+                }
+
+                let write_success = match opts.open(&temp_path) {
+                    Ok(mut file) => {
+                        use std::io::Write;
+                        if file.write_all(report.as_bytes()).is_ok() {
+                            std::fs::rename(&temp_path, &crash_path).is_ok()
+                        } else {
+                            let _ = std::fs::remove_file(&temp_path);
+                            false
+                        }
+                    }
+                    Err(_) => false,
+                };
+
+                if write_success {
                     eprintln!(
                         "\nOpenDev crashed unexpectedly. A crash report has been saved to:\n  {}\n\nPlease include this file when reporting the issue.\n",
                         crash_path.display()

@@ -130,7 +130,27 @@ pub async fn handle_channel(action: ChannelAction, working_dir: &std::path::Path
                         if let Some(parent) = pid_path.parent() {
                             let _ = std::fs::create_dir_all(parent);
                         }
-                        let _ = std::fs::write(&pid_path, pid.to_string());
+
+                        let temp_suffix = uuid::Uuid::new_v4();
+                        let temp_path = pid_path.with_extension(format!("{}.tmp", temp_suffix));
+
+                        let mut opts = std::fs::OpenOptions::new();
+                        opts.write(true).create_new(true);
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::OpenOptionsExt;
+                            opts.mode(0o600);
+                        }
+
+                        if let Ok(mut file) = opts.open(&temp_path) {
+                            use std::io::Write;
+                            if file.write_all(pid.to_string().as_bytes()).is_ok() {
+                                let _ = std::fs::rename(&temp_path, &pid_path);
+                            } else {
+                                let _ = std::fs::remove_file(&temp_path);
+                            }
+                        }
+
                         println!("Telegram bot running in background (PID: {pid}).");
                         println!("Stop with: kill {pid}");
                     }
