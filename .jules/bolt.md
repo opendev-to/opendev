@@ -63,3 +63,7 @@
 ## 2024-06-25 - React useDeferredValue vs useDebounce for local filtering
 **Learning:** Using `useDebounce` with an arbitrary delay (like 300ms) on text inputs that filter local arrays artificially introduces UI latency and "jank" feeling, as the user has to wait even if their machine could compute the result instantly.
 **Action:** Always prefer React's built-in `useDeferredValue` for local array filtering or rendering. It allows the input field to remain immediately responsive while pushing the expensive filtering work to the background without enforcing a strict, arbitrary time delay.
+
+## 2024-06-26 - Eliminating toLowerCase() on Large Output Strings in Render
+**Learning:** Performing `toLowerCase()` on potentially massive strings (like `stdout` from a shell command) during every component render cycle (e.g., inside result summarization in `ToolCallMessage`) causes severe performance degradation, memory bloat, and layout thrashing as it creates large, redundant string allocations synchronously.
+**Action:** Use case-insensitive regular expressions (e.g., `/pattern/i.test(largeString)`) instead of `.toLowerCase().includes()` when checking for substrings in large text blocks during rendering.

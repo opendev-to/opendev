@@ -144,7 +144,7 @@ function summarizeToolArgs(toolName: string, toolArgs: any): string {
 function formatToolResult(toolName: string, toolArgs: any, result: any): string[] {
   if (result?.success === false) {
     const errorMsg = result?.error || 'Unknown error';
-    if (errorMsg.toLowerCase().includes('interrupted')) {
+    if (/interrupted/i.test(errorMsg)) {
       return ['User interrupted'];
     }
     return [`Error: ${errorMsg}`];
@@ -266,20 +266,17 @@ function formatShellResult(toolArgs: any, result: any): string[] {
     return stderr ? [stderr.split('\n')[0]] : [`Exit code ${exitCode}`];
   }
 
-  const normalizedCmd = command.toLowerCase();
-  const normalizedStdout = stdout.toLowerCase();
-
   // Special git command handling
-  if (normalizedCmd.includes('git ')) {
-    if (normalizedCmd.includes('push')) return ['Changes pushed to remote'];
-    if (normalizedCmd.includes('commit')) return ['Changes committed'];
-    if (normalizedCmd.includes('pull')) return ['Changes pulled from remote'];
+  if (/git /i.test(command)) {
+    if (/push/i.test(command)) return ['Changes pushed to remote'];
+    if (/commit/i.test(command)) return ['Changes committed'];
+    if (/pull/i.test(command)) return ['Changes pulled from remote'];
     return ['Git command completed'];
   }
 
   // Special npm command handling
-  if (normalizedCmd.includes('npm install')) {
-    if (normalizedStdout.includes('added') && normalizedStdout.includes('package')) {
+  if (/npm install/i.test(command)) {
+    if (/added/i.test(stdout) && /package/i.test(stdout)) {
       return ['Packages installed successfully'];
     }
     return ['npm install completed'];
