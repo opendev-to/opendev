@@ -106,3 +106,8 @@
 ## 2025-09-08 - [Reverted overly strict permissions on file write tool]
 **Learning:** Enforcing restrictive `.mode(0o600)` on temporary files created during atomic writes in general-purpose file modification tools (like `file_write.rs`) is dangerous. Since the permissions carry over upon rename, it prevents other system users, web servers, or container volumes from reading codebase files, causing widespread access regressions.
 **Prevention:** Do not enforce `.mode(0o600)` during atomic writes unless the target file explicitly stores sensitive application state, secrets, or localized caching data. For generic codebase file updates, rely on the `umask` defaults (e.g., standard `std::fs::write` behavior) or preserve the existing file's permissions, while retaining `create_new(true)` with randomized names to provide defense-in-depth against TOCTOU.
+
+## 2026-06-17 - Fix TOCTOU vulnerability in memory consolidation
+**Vulnerability:** Using `std::fs::write` for creating a lock file (`.consolidation.lock`) is vulnerable to Time-of-Check to Time-of-Use (TOCTOU) symlink attacks. It doesn't guarantee exclusive creation, and could be exploited if an attacker symlinks the lock file to a sensitive location.
+**Learning:** The standard library's `std::fs::write` internally truncates and writes, which is unsafe for lock files. In a multi-user or concurrent environment, this can lead to privilege escalation or data corruption if symlinked to a different file.
+**Prevention:** Always use `std::fs::OpenOptions` with `.create_new(true)` when creating lock files. This ensures the file is created atomically and fails if it already exists or if it's a symlink to an existing file.
