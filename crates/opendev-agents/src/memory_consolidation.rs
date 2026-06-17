@@ -98,12 +98,10 @@ pub async fn consolidate(working_dir: &Path) -> Option<ConsolidationReport> {
     let mut open_opts = std::fs::OpenOptions::new();
     open_opts.write(true).create_new(true);
 
-    let lock_result = open_opts
-        .open(&lock_path)
-        .and_then(|mut f| {
-            use std::io::Write;
-            f.write_all(b"locked")
-        });
+    let lock_result = open_opts.open(&lock_path).and_then(|mut f| {
+        use std::io::Write;
+        f.write_all(b"locked")
+    });
 
     if let Err(e) = lock_result {
         warn!("Failed to acquire consolidation lock: {e}");
