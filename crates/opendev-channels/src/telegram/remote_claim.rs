@@ -61,7 +61,11 @@ impl RemoteSessionClaim {
         // We use a randomized temporary file, `OpenOptions` with `.create_new(true)` and `.mode(0o600)`,
         // and an atomic rename to safely create the pid file.
         let temp_suffix = uuid::Uuid::new_v4();
-        let temp_path = base_dir.join(format!(".{}.{}.tmp", token_fingerprint(bot_token), temp_suffix));
+        let temp_path = base_dir.join(format!(
+            ".{}.{}.tmp",
+            token_fingerprint(bot_token),
+            temp_suffix
+        ));
 
         let mut opts = fs::OpenOptions::new();
         opts.write(true).create_new(true);
