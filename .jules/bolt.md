@@ -67,3 +67,7 @@
 ## 2024-06-26 - Eliminating toLowerCase() on Large Output Strings in Render
 **Learning:** Performing `toLowerCase()` on potentially massive strings (like `stdout` from a shell command) during every component render cycle (e.g., inside result summarization in `ToolCallMessage`) causes severe performance degradation, memory bloat, and layout thrashing as it creates large, redundant string allocations synchronously.
 **Action:** Use case-insensitive regular expressions (e.g., `/pattern/i.test(largeString)`) instead of `.toLowerCase().includes()` when checking for substrings in large text blocks during rendering.
+
+## 2024-07-28 - RegExp test instead of repeated sequential includes
+**Learning:** Checking for multiple substring matches in React render methods by chaining sequential `.includes()` calls on the same target string (e.g., `str.includes('A') || str.includes('B')`) creates redundant operations. In components that render frequently or iterate over large arrays (like formatting log lines in `ToolCallMessage`), this results in excessive memory allocation and poor performance.
+**Action:** Replace sequences of `.includes()` calls with a single precompiled case-insensitive regular expression (e.g., `/a|b/i.test(str)`) defined outside of the component to improve rendering performance and minimize memory bloat.

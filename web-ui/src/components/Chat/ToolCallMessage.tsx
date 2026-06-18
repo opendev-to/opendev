@@ -7,6 +7,12 @@ interface ToolCallMessageProps {
   message: Message;
 }
 
+// ⚡ Bolt Performance Optimization:
+// Precompile RegExp objects outside the component to prevent multiple repetitive
+// string allocations and .includes() evaluations during the render cycle.
+const SUCCESS_PATTERN = /read|created|updated|changes|packages installed|completed/i;
+const ERROR_PATTERN = /error|failed|interrupted|exit code/i;
+
 // Terminal-style tool display utilities
 function getToolDisplayParts(toolName: string): { verb: string; label: string } {
   const toolMap: Record<string, { verb: string; label: string }> = {
@@ -552,13 +558,13 @@ export function ToolCallMessage({ message, hasResult }: ToolCallMessageExtProps)
             {summaryLines.map((line: string, index: number) => {
               const lineStr = typeof line === 'string' ? line : String(line);
               // Check if this line indicates success or failure
-              const isSuccess = successOverride ?? (
-                lineStr.includes('Read') || lineStr.includes('Created') || lineStr.includes('Updated') ||
-                lineStr.includes('Changes') || lineStr.includes('Packages installed') || lineStr.includes('completed')
-              );
+              // ⚡ Bolt Performance Optimization:
+              // Replaced sequential .includes() with precompiled RegExp .test()
+              // for better rendering performance and less memory bloat.
+              const isSuccess = successOverride ?? SUCCESS_PATTERN.test(lineStr);
               const isError = message.tool_error
                 ? true
-                : lineStr.includes('Error') || lineStr.includes('Failed') || lineStr.includes('interrupted') || lineStr.includes('Exit code');
+                : ERROR_PATTERN.test(lineStr);
 
               return (
                 <div key={index} className={`font-mono text-sm mb-1 leading-6 ${
