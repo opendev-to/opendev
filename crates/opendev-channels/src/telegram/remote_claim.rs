@@ -55,7 +55,29 @@ impl RemoteSessionClaim {
             }
         }
 
-        fs::write(&pid_file, pid.to_string())?;
+        // SECURITY: Mitigate TOCTOU arbitrary file overwrite attacks.
+        // Writing to shared directories like `/tmp` using predictable filenames and permissive
+        // operations like `fs::write` allows a local attacker to pre-create a symlink and overwrite sensitive files.
+        // We use a randomized temporary file, `OpenOptions` with `.create_new(true)` and `.mode(0o600)`,
+        // and an atomic rename to safely create the pid file.
+        let temp_suffix = uuid::Uuid::new_v4();
+        let temp_path = base_dir.join(format!(".{}.{}.tmp", token_fingerprint(bot_token), temp_suffix));
+
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+
+        {
+            use std::io::Write;
+            let mut file = opts.open(&temp_path)?;
+            file.write_all(pid.to_string().as_bytes())?;
+        }
+
+        fs::rename(&temp_path, &pid_file)?;
         Ok(Self { pid_file, pid })
     }
 
@@ -148,7 +170,21 @@ mod tests {
 
         assert!(claim.is_current_owner());
 
-        fs::write(&claim.pid_file, "999999").expect("overwrite pid file");
+        let temp_suffix = uuid::Uuid::new_v4();
+        let temp_path = dir.path().join(format!(".token-a.{}.tmp", temp_suffix));
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        {
+            use std::io::Write;
+            let mut file = opts.open(&temp_path).expect("open temp file");
+            file.write_all(b"999999").expect("write temp file");
+        }
+        fs::rename(&temp_path, &claim.pid_file).expect("overwrite pid file");
 
         assert!(!claim.is_current_owner());
     }
@@ -159,7 +195,22 @@ mod tests {
         let pid_file = dir
             .path()
             .join(format!("{}.pid", token_fingerprint("token-b")));
-        fs::write(&pid_file, "999999").expect("seed stale pid");
+
+        let temp_suffix = uuid::Uuid::new_v4();
+        let temp_path = dir.path().join(format!(".token-b.{}.tmp", temp_suffix));
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        {
+            use std::io::Write;
+            let mut file = opts.open(&temp_path).expect("open temp file");
+            file.write_all(b"999999").expect("write temp file");
+        }
+        fs::rename(&temp_path, &pid_file).expect("seed stale pid");
 
         let claim = RemoteSessionClaim::claim_in_dir("token-b", dir.path()).expect("claim");
 
