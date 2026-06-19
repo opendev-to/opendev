@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useDeferredValue } from 'react';
 import {
   FolderIcon,
   DocumentTextIcon,
@@ -76,19 +76,25 @@ export function RepositoryExplorer({ selectedRepo, onRepoSelect, searchQuery }: 
   const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
 
   // ⚡ Bolt Performance Optimization:
+  // Use useDeferredValue instead of useDebounce for local array filtering.
+  // This prevents artificial UI lag (waiting 300ms) and allows React to prioritize
+  // typing updates while rendering the filtered list in the background.
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
+  // ⚡ Bolt Performance Optimization:
   // Precompute case-insensitive RegExp instead of repeatedly invoking .toLowerCase()
   // inside the array filter loop. This prevents redundant string allocations per iteration.
   // We use useMemo to prevent excessive filtering and aggregations on every render.
   const filteredRepos = useMemo(() => {
-    if (!searchQuery) return mockRepositories;
+    if (!deferredSearchQuery) return mockRepositories;
 
-    const queryRegex = new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const queryRegex = new RegExp(deferredSearchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     return mockRepositories.filter(repo =>
       queryRegex.test(repo.name) ||
       queryRegex.test(repo.fullName) ||
       queryRegex.test(repo.description)
     );
-  }, [searchQuery]);
+  }, [deferredSearchQuery]);
 
   const totalFiles = useMemo(() => {
     return filteredRepos.reduce((sum, repo) => sum + repo.files, 0);
