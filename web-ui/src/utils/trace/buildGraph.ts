@@ -221,7 +221,9 @@ export function mergeToolCallNodes(
     const childNode = nodeMap.get(childId)!;
 
     let toolCalls = collectToolCalls(node, childNode);
-    const nodesToAbsorb: string[] = [];
+    // ⚡ Bolt Performance Optimization:
+    // Replace array with Set to prevent O(N) .has() lookups during graph traversal
+    const nodesToAbsorb = new Set<string>();
 
     const parallelStack = allChildren.filter(cid => {
       if (cid === childId || toRemove.has(cid)) return false;
@@ -233,7 +235,7 @@ export function mergeToolCallNodes(
 
     while (parallelStack.length > 0) {
       const parId = parallelStack.pop()!;
-      if (toRemove.has(parId) || nodesToAbsorb.includes(parId)) continue;
+      if (toRemove.has(parId) || nodesToAbsorb.has(parId)) continue;
       const parNode = nodeMap.get(parId);
       if (!parNode) continue;
 
@@ -249,7 +251,8 @@ export function mergeToolCallNodes(
       if (parResultId) {
         const parResultNode = nodeMap.get(parResultId)!;
         toolCalls = [...toolCalls, ...collectToolCalls(parNode, parResultNode)];
-        nodesToAbsorb.push(parId, parResultId);
+        nodesToAbsorb.add(parId);
+        nodesToAbsorb.add(parResultId);
 
         for (const cid of parChildren) {
           if (cid === parResultId || toRemove.has(cid)) continue;

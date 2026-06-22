@@ -71,3 +71,7 @@
 ## 2024-07-28 - RegExp test instead of repeated sequential includes
 **Learning:** Checking for multiple substring matches in React render methods by chaining sequential `.includes()` calls on the same target string (e.g., `str.includes('A') || str.includes('B')`) creates redundant operations. In components that render frequently or iterate over large arrays (like formatting log lines in `ToolCallMessage`), this results in excessive memory allocation and poor performance.
 **Action:** Replace sequences of `.includes()` calls with a single precompiled case-insensitive regular expression (e.g., `/a|b/i.test(str)`) defined outside of the component to improve rendering performance and minimize memory bloat.
+
+## 2024-07-29 - O(N) Array Includes Lookups in Graph Traversal
+**Learning:** Using an array to track visited or absorbed nodes and performing `.includes()` checks on it during a graph traversal (like in `mergeToolCallNodes` within `buildGraph.ts`) introduces O(N^2) complexity and creates a performance bottleneck when processing large session traces with many parallel executions.
+**Action:** Always use a `Set` (e.g., `nodesToAbsorb = new Set<string>()`) and perform `.has()` checks for O(1) lookups when tracking elements during graph traversal algorithms.
