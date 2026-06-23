@@ -188,8 +188,36 @@ async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<Conso
     );
     let consolidated_path = memory_dir.join(&consolidated_filename);
     let full_content = format!("{frontmatter}{merged_content}");
-    if let Err(e) = std::fs::write(&consolidated_path, &full_content) {
+    let tmp_path = consolidated_path.with_file_name(format!(
+        ".{}.tmp.{}",
+        consolidated_path.file_name().unwrap_or_default().to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+
+    let write_result = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+            opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, full_content.as_bytes()))
+        }
+        #[cfg(not(unix))]
+        {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, full_content.as_bytes()))
+        }
+    };
+
+    if let Err(e) = write_result {
         warn!("Failed to write consolidated file: {e}");
+        let _ = std::fs::remove_file(&tmp_path);
+        return None;
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &consolidated_path) {
+        warn!("Failed to rename consolidated file: {e}");
+        let _ = std::fs::remove_file(&tmp_path);
         return None;
     }
 
@@ -373,7 +401,33 @@ fn load_meta(path: &Path) -> ConsolidationMeta {
 
 fn save_meta(path: &Path, meta: &ConsolidationMeta) {
     if let Ok(json) = serde_json::to_string_pretty(meta) {
-        let _ = std::fs::write(path, json);
+        let tmp_path = path.with_file_name(format!(
+            ".{}.tmp.{}",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            uuid::Uuid::new_v4()
+        ));
+
+        let write_result = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true).mode(0o600);
+                opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+            }
+            #[cfg(not(unix))]
+            {
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, json.as_bytes()))
+            }
+        };
+
+        if write_result.is_ok() {
+            let _ = std::fs::rename(&tmp_path, path);
+        } else {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
     }
 }
 
@@ -419,8 +473,29 @@ fn regenerate_index(dir: &Path) -> std::io::Result<()> {
     };
 
     let index_path = dir.join("MEMORY.md");
-    let tmp_path = dir.join("MEMORY.md.tmp");
-    std::fs::write(&tmp_path, final_content)?;
+    let tmp_path = index_path.with_file_name(format!(
+        ".MEMORY.md.tmp.{}",
+        uuid::Uuid::new_v4()
+    ));
+
+    {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true).mode(0o600);
+            let mut file = opts.open(&tmp_path)?;
+            std::io::Write::write_all(&mut file, final_content.as_bytes())?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            let mut file = opts.open(&tmp_path)?;
+            std::io::Write::write_all(&mut file, final_content.as_bytes())?;
+        }
+    }
+
     std::fs::rename(&tmp_path, &index_path)?;
     Ok(())
 }
