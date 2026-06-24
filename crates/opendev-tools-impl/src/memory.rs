@@ -600,8 +600,13 @@ fn update_memory_index(dir: &Path) -> std::io::Result<()> {
 
     // Atomic write
     let index_path = dir.join("MEMORY.md");
-    let tmp_path = dir.join("MEMORY.md.tmp");
-    std::fs::write(&tmp_path, final_content)?;
+    let tmp_path = dir.join(format!("MEMORY.md.{}.tmp", uuid::Uuid::new_v4()));
+    {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        let mut f = opts.open(&tmp_path)?;
+        std::io::Write::write_all(&mut f, final_content.as_bytes())?;
+    }
     std::fs::rename(&tmp_path, &index_path)?;
 
     Ok(())

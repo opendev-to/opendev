@@ -249,7 +249,9 @@ impl BaseTool for MultiEditTool {
             let dir = path.parent().unwrap_or(Path::new("."));
             let tmp_path = dir.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
 
-            if let Err(e) = std::fs::write(&tmp_path, &content) {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            if let Err(e) = opts.open(&tmp_path).and_then(|mut f| std::io::Write::write_all(&mut f, content.as_bytes())) {
                 return ToolResult::fail(format!("Failed to write temp file: {e}"));
             }
             if let Err(e) = std::fs::rename(&tmp_path, &path) {
