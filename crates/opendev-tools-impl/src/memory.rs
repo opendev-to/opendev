@@ -231,7 +231,26 @@ fn memory_write(dir: &Path, file: &str, content: &str) -> ToolResult {
     }
 
     let path = dir.join(file);
-    match std::fs::write(&path, content) {
+    let tmp_path = dir.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+
+    let write_result = opts.open(&tmp_path).and_then(|mut f| {
+        std::io::Write::write_all(&mut f, content.as_bytes())
+    }).and_then(|_| {
+        std::fs::rename(&tmp_path, &path)
+    });
+
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    match write_result {
         Ok(_) => {
             let has_type = content.contains("type:");
             let mut msg = format!("Written {} bytes to {file}", content.len());
@@ -600,13 +619,20 @@ fn update_memory_index(dir: &Path) -> std::io::Result<()> {
 
     // Atomic write
     let index_path = dir.join("MEMORY.md");
-    let tmp_path = dir.join(format!("MEMORY.md.{}.tmp", uuid::Uuid::new_v4()));
+    let tmp_path = dir.join(format!(".MEMORY.md.{}.tmp", uuid::Uuid::new_v4()));
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
     {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create_new(true);
-        let mut f = opts.open(&tmp_path)?;
-        std::io::Write::write_all(&mut f, final_content.as_bytes())?;
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
     }
+
+    let mut file = opts.open(&tmp_path)?;
+    std::io::Write::write_all(&mut file, final_content.as_bytes())?;
+    drop(file);
+
     std::fs::rename(&tmp_path, &index_path)?;
 
     Ok(())

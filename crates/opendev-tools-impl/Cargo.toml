@@ -25,7 +25,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 regex = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 reqwest = { workspace = true }
 base64 = "0.22"
 dirs = "6"

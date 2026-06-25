@@ -147,7 +147,27 @@ impl SessionMemoryCollector {
         let content = format!("{frontmatter}{notes}");
         let path = memory_dir.join(&filename);
 
-        match std::fs::write(&path, &content) {
+        // Atomic write using a randomized temp file with secure permissions
+        let tmp_path = memory_dir.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+
+        let write_result = opts.open(&tmp_path).and_then(|mut f| {
+            std::io::Write::write_all(&mut f, content.as_bytes())
+        }).and_then(|_| {
+            std::fs::rename(&tmp_path, &path)
+        });
+
+        if write_result.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+
+        match write_result {
             Ok(_) => debug!(
                 "Written session notes to {filename} ({} bytes)",
                 content.len()
@@ -204,13 +224,20 @@ fn update_memory_index_after_session(dir: &Path) -> std::io::Result<()> {
     };
 
     let index_path = dir.join("MEMORY.md");
-    let tmp_path = dir.join(format!("MEMORY.md.{}.tmp", uuid::Uuid::new_v4()));
+    let tmp_path = dir.join(format!(".MEMORY.md.{}.tmp", uuid::Uuid::new_v4()));
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
     {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create_new(true);
-        let mut f = opts.open(&tmp_path)?;
-        std::io::Write::write_all(&mut f, final_content.as_bytes())?;
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
     }
+
+    let mut file = opts.open(&tmp_path)?;
+    std::io::Write::write_all(&mut file, final_content.as_bytes())?;
+    drop(file);
+
     std::fs::rename(&tmp_path, &index_path)?;
     Ok(())
 }
