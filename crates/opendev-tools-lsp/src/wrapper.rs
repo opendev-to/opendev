@@ -318,8 +318,6 @@ async fn notify_did_open(
     file_path: &Path,
     uri: &str,
 ) -> Result<(), LspError> {
-    // ⚡ Bolt: Replace synchronous std::fs::read_to_string with tokio::fs::read_to_string().await
-    // to prevent blocking the async executor thread during file I/O.
     let content = tokio::fs::read_to_string(file_path)
         .await
         .map_err(|e| LspError::FileNotFound(format!("{}: {}", file_path.display(), e)))?;
