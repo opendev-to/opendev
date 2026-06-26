@@ -226,8 +226,17 @@ impl ContextTracer {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = std::fs::File::create(path)?;
+        let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let file = opts.open(&tmp_path)?;
         serde_json::to_writer_pretty(file, &trace_data)?;
+        std::fs::rename(&tmp_path, path)?;
         tracing::debug!("Context trace exported to {}", path.display());
         Ok(())
     }

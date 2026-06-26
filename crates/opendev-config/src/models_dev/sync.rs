@@ -108,7 +108,16 @@ pub fn sync_provider_cache(
     }
 
     // Touch marker
-    let _ = std::fs::File::create(&marker);
+    let tmp_path = marker.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let _ = opts.open(&tmp_path);
+    let _ = std::fs::rename(&tmp_path, &marker);
 
     Ok(true)
 }
@@ -258,7 +267,16 @@ pub async fn sync_provider_cache_async(
         }
     }
 
-    let _ = std::fs::File::create(&marker);
+    let tmp_path = marker.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let _ = opts.open(&tmp_path);
+    let _ = std::fs::rename(&tmp_path, &marker);
     Ok(true)
 }
 

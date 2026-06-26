@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn test_event_recorder_roundtrip() {
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    let path = tmp.path().to_path_buf();
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("events.jsonl");
 
     // Record some events
     {
@@ -46,8 +46,8 @@ fn test_event_recorder_roundtrip() {
 
 #[test]
 fn test_recorded_event_sequence_numbers() {
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    let path = tmp.path().to_path_buf();
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("events.jsonl");
 
     let mut recorder = EventRecorder::new(&path).unwrap();
     recorder.record(&AppEvent::Tick);
@@ -66,8 +66,8 @@ fn test_recorded_event_sequence_numbers() {
 
 #[test]
 fn test_subagent_event_roundtrip() {
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    let path = tmp.path().to_path_buf();
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("events.jsonl");
 
     let event = AppEvent::SubagentFinished {
         subagent_id: "sa-1".to_string(),

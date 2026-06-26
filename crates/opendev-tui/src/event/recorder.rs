@@ -569,7 +569,9 @@ impl EventRecorder {
     ///
     /// Returns `None` if the file cannot be created.
     pub fn new(path: &Path) -> Option<Self> {
-        let file = std::fs::File::create(path).ok()?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        let file = opts.open(path).ok()?;
         Some(Self {
             file: std::io::BufWriter::new(file),
             seq: 0,
