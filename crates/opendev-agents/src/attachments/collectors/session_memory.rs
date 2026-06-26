@@ -157,11 +157,10 @@ impl SessionMemoryCollector {
             opts.mode(0o600);
         }
 
-        let write_result = opts.open(&tmp_path).and_then(|mut f| {
-            std::io::Write::write_all(&mut f, content.as_bytes())
-        }).and_then(|_| {
-            std::fs::rename(&tmp_path, &path)
-        });
+        let write_result = opts
+            .open(&tmp_path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, content.as_bytes()))
+            .and_then(|_| std::fs::rename(&tmp_path, &path));
 
         if write_result.is_err() {
             let _ = std::fs::remove_file(&tmp_path);
