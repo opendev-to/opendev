@@ -104,7 +104,20 @@ impl ConfigLoader {
             );
             // Best-effort write-back of migrated config
             if let Ok(json) = serde_json::to_string_pretty(&migrated) {
-                let _ = std::fs::write(path, json);
+                let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+                let mut opts = std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                #[cfg(unix)]
+                std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+                if let Ok(mut file) = opts.open(&tmp_path) {
+                    let success = std::io::Write::write_all(&mut file, json.as_bytes()).is_ok();
+                    drop(file);
+                    if success {
+                        let _ = std::fs::rename(&tmp_path, path);
+                    } else {
+                        let _ = std::fs::remove_file(&tmp_path);
+                    }
+                }
             }
         }
 
