@@ -12,6 +12,7 @@ interface ToolCallMessageProps {
 // string allocations and .includes() evaluations during the render cycle.
 const SUCCESS_PATTERN = /read|created|updated|changes|packages installed|completed/i;
 const ERROR_PATTERN = /error|failed|interrupted|exit code/i;
+const TOOL_MARKER_ERROR_PATTERN = /::tool_error::|::interrupted::/;
 
 // Terminal-style tool display utilities
 function getToolDisplayParts(toolName: string): { verb: string; label: string } {
@@ -482,7 +483,10 @@ export function ToolCallMessage({ message, hasResult }: ToolCallMessageExtProps)
       } catch {
         resultData = {
           output: toolResult,
-          success: !toolResult.includes('::tool_error::') && !toolResult.includes('::interrupted::')
+          // ⚡ Bolt Performance Optimization:
+          // Replaced sequential .includes() with precompiled RegExp .test() to avoid
+          // multiple redundant O(N) string allocations during render cycle.
+          success: !TOOL_MARKER_ERROR_PATTERN.test(toolResult)
         };
       }
     }

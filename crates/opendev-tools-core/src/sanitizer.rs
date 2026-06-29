@@ -431,7 +431,25 @@ impl ToolResultSanitizer {
             content.to_string()
         };
 
-        match std::fs::write(&path, &to_write) {
+        let temp_filename = format!("temp_{}_{}", uuid::Uuid::new_v4(), filename);
+        let temp_path = dir.join(&temp_filename);
+
+        let write_result = (|| -> std::io::Result<()> {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut file = opts.open(&temp_path)?;
+            use std::io::Write;
+            file.write_all(to_write.as_bytes())?;
+            std::fs::rename(&temp_path, &path)?;
+            Ok(())
+        })();
+
+        match write_result {
             Ok(()) => {
                 debug!(
                     path = %path.display(),
