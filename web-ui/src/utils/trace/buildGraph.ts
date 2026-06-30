@@ -549,8 +549,8 @@ export function layoutGraph<T extends {
   let nextSecondaryLane = maxPrimaryLane + 1;
 
   const sortedSecondary = [...secondaryComps.entries()].sort((a, b) => {
-    const minA = Math.min(...a[1].map(n => getNodeTimestamp(n.data)));
-    const minB = Math.min(...b[1].map(n => getNodeTimestamp(n.data)));
+    const minA = compMinTime.get(a[0]) ?? 0;
+    const minB = compMinTime.get(b[0]) ?? 0;
     return minA - minB;
   });
 
