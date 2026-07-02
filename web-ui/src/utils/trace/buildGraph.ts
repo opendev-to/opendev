@@ -470,8 +470,9 @@ export function layoutGraph<T extends {
     queue.push({ id: r.id, lane: 0 });
     queued.add(r.id);
   }
-  while (queue.length > 0) {
-    const { id, lane } = queue.shift()!;
+  let qIdx = 0;
+  while (qIdx < queue.length) {
+    const { id, lane } = queue[qIdx++];
     if (nodeLane.has(id)) continue;
     nodeLane.set(id, lane);
     const node = nodeMap.get(id);
@@ -560,8 +561,9 @@ export function layoutGraph<T extends {
     const visited = new Set<string>();
     const order: string[] = [];
     const bfsQ = compRoots.map(n => n.id);
-    while (bfsQ.length > 0) {
-      const id = bfsQ.shift()!;
+    let bfsQIdx = 0;
+    while (bfsQIdx < bfsQ.length) {
+      const id = bfsQ[bfsQIdx++];
       if (visited.has(id)) continue;
       visited.add(id);
       order.push(id);

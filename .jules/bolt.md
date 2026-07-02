@@ -75,3 +75,7 @@
 ## 2024-07-29 - O(N) Array Includes Lookups in Graph Traversal
 **Learning:** Using an array to track visited or absorbed nodes and performing `.includes()` checks on it during a graph traversal (like in `mergeToolCallNodes` within `buildGraph.ts`) introduces O(N^2) complexity and creates a performance bottleneck when processing large session traces with many parallel executions.
 **Action:** Always use a `Set` (e.g., `nodesToAbsorb = new Set<string>()`) and perform `.has()` checks for O(1) lookups when tracking elements during graph traversal algorithms.
+
+## 2024-08-01 - O(N^2) Performance Bottleneck in JavaScript Queues using Array.shift()
+**Learning:** Using `Array.shift()` inside a queue loop (like BFS traversals) causes an O(N^2) performance bottleneck because it shifts all remaining contiguous array elements in memory on every iteration.
+**Action:** Replace `.shift()` with an explicit index pointer (e.g., `let qIdx = 0; queue[qIdx++]`) to process elements sequentially without array mutation overhead, maintaining O(N) complexity.
