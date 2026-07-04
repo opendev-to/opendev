@@ -150,7 +150,11 @@ pub async fn share_session(session: &Session, endpoint: &str) -> Result<String, 
 
     if endpoint.is_empty() {
         // Save to local HTML file.
-        let filename = format!("opendev-session-{}.html", anonymized.id);
+        // SECURITY: Mitigate TOCTOU arbitrary file overwrite attacks.
+        // Generate a random UUID to ensure the filename is unpredictable,
+        // preventing symlink attacks in shared temporary directories.
+        let temp_suffix = uuid::Uuid::new_v4();
+        let filename = format!("opendev-session-{}-{}.html", anonymized.id, temp_suffix);
         let path = std::env::temp_dir().join(&filename);
 
         let html = render_session_html(&anonymized);
