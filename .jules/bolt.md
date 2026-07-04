@@ -78,3 +78,7 @@
 ## 2024-07-30 - O(N log N) Array Allocations in Sort Comparators
 **Learning:** Computing minimums of component arrays inside a `sort` comparator using `Math.min(...array.map(...))` creates massive performance bottlenecks and O(N log N) redundant array allocations and spread operations. For large components, it can even trigger maximum call stack size exceeded errors.
 **Action:** Always precompute aggregate values like minimum times before sorting, or rely on already-cached values (like `compMinTime`) for O(1) lookups inside the sort comparator.
+
+## 2024-08-01 - Array.shift() Performance in Queue Loops
+**Learning:** Using `Array.shift()` inside a queue loop (like BFS traversals) causes an O(N^2) performance bottleneck because it shifts all remaining contiguous array elements.
+**Action:** Replace `.shift()` with an explicit index pointer (e.g., `let qIdx = 0; queue[qIdx++]`) to maintain O(N) complexity during array traversal operations.
