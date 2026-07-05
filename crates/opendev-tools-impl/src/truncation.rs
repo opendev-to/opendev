@@ -189,7 +189,18 @@ fn save_overflow(dir: &Path, text: &str) -> std::io::Result<PathBuf> {
         text.to_string()
     };
 
-    std::fs::write(&filepath, &to_write)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+
+    let mut file = opts.open(&filepath)?;
+    use std::io::Write;
+    file.write_all(to_write.as_bytes())?;
+
     Ok(filepath)
 }
 
