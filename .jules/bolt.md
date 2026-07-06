@@ -82,3 +82,7 @@
 ## 2024-08-01 - Array.shift() Performance in Queue Loops
 **Learning:** Using `Array.shift()` inside a queue loop (like BFS traversals) causes an O(N^2) performance bottleneck because it shifts all remaining contiguous array elements.
 **Action:** Replace `.shift()` with an explicit index pointer (e.g., `let qIdx = 0; queue[qIdx++]`) to maintain O(N) complexity during array traversal operations.
+
+## 2024-08-02 - Maximum Call Stack Size Exceeded with Math.max and Spread
+**Learning:** Using `Math.max(...iterable)` with a spread operator on iterables like `Map.values()` (e.g., `Math.max(...nodeLane.values())` in `buildGraph.ts`) causes O(N) array allocations and passes all items as individual arguments. For large graphs, this exceeds the JavaScript engine's maximum call stack size limit (usually ~65,000), causing the application to crash.
+**Action:** Always compute the maximum value using a simple `for...of` loop over the iterable instead of using the spread operator with `Math.max` for unbounded data sets.
