@@ -548,7 +548,14 @@ export function layoutGraph<T extends {
     laneCurrentY.set(lane, yTop + NODE_HEIGHT + NODE_GAP);
   }
 
-  const maxPrimaryLane = nodeLane.size > 0 ? Math.max(...nodeLane.values()) : 0;
+  let maxPrimaryLane = 0;
+  // OPTIMIZATION: Avoid Math.max(...iter) which causes O(N) array allocation and can exceed stack limits
+  for (const lane of nodeLane.values()) {
+    if (lane > maxPrimaryLane) {
+      maxPrimaryLane = lane;
+    }
+  }
+
   let nextSecondaryLane = maxPrimaryLane + 1;
 
   const sortedSecondary = [...secondaryComps.entries()].sort((a, b) => {

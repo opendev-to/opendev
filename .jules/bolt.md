@@ -82,3 +82,6 @@
 ## 2024-08-01 - Array.shift() Performance in Queue Loops
 **Learning:** Using `Array.shift()` inside a queue loop (like BFS traversals) causes an O(N^2) performance bottleneck because it shifts all remaining contiguous array elements.
 **Action:** Replace `.shift()` with an explicit index pointer (e.g., `let qIdx = 0; queue[qIdx++]`) to maintain O(N) complexity during array traversal operations.
+## 2024-08-02 - Spread Operator Performance on Large Iterables
+**Learning:** Using `Math.max(...iterable)` with a spread operator on iterables like `Map.values()` causes O(N) array allocations and can exceed the JavaScript engine's maximum call stack size limit on large data structures.
+**Action:** Always compute the maximum value using a simple `for...of` loop for unbounded data sets to prevent application crashes and improve performance.
