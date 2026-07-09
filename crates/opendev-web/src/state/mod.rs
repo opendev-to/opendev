@@ -370,7 +370,7 @@ impl AppState {
         // Deny all pending approvals.
         {
             let mut approvals = self.inner.pending_approvals.lock().await;
-            for (_id, slot) in approvals.iter_mut() {
+            for slot in approvals.values_mut() {
                 if let Some(tx) = slot.tx.take() {
                     let _ = tx.send(ApprovalResult {
                         approved: false,
@@ -384,7 +384,7 @@ impl AppState {
         // Cancel all pending ask-user requests.
         {
             let mut ask_users = self.inner.pending_ask_users.lock().await;
-            for (_id, slot) in ask_users.iter_mut() {
+            for slot in ask_users.values_mut() {
                 if let Some(tx) = slot.tx.take() {
                     let _ = tx.send(AskUserResult {
                         answers: None,
@@ -398,7 +398,7 @@ impl AppState {
         // Reject all pending plan approvals.
         {
             let mut plan_approvals = self.inner.pending_plan_approvals.lock().await;
-            for (_id, slot) in plan_approvals.iter_mut() {
+            for slot in plan_approvals.values_mut() {
                 if let Some(tx) = slot.tx.take() {
                     let _ = tx.send(PlanApprovalResult {
                         action: "reject".to_string(),
