@@ -154,7 +154,10 @@ fn test_parse_response_uses_reasoning_content_when_content_empty() {
     let resp = caller.parse_action_response(&body);
     assert!(resp.success);
     assert_eq!(resp.content.as_deref(), Some("I am Kimi Code 2.7."));
-    assert_eq!(resp.reasoning_content.as_deref(), Some("I am Kimi Code 2.7."));
+    assert_eq!(
+        resp.reasoning_content.as_deref(),
+        Some("I am Kimi Code 2.7.")
+    );
 }
 
 #[test]
