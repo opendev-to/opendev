@@ -105,7 +105,7 @@ impl ToolHandler for ProcessHandler {
                 RuleAction::AutoDeny => {
                     return PreCheckResult::Deny(format!(
                         "Command denied by rule: {}",
-                        &rule.description,
+                        rule.description,
                     ));
                 }
                 RuleAction::AutoApprove => {
