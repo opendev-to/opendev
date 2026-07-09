@@ -243,18 +243,42 @@ pub(super) fn pull_url_skills(base_url: &str) -> Result<Vec<PathBuf>, String> {
                     if let Some(parent) = dest.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    if let Err(e) = std::fs::write(&dest, &content) {
-                        warn!(
-                            file = %dest.display(),
-                            error = %e,
-                            "Failed to write cached skill file"
-                        );
-                    } else {
-                        debug!(
-                            file = %dest.display(),
-                            url = file_url,
-                            "Downloaded skill file"
-                        );
+
+                    let tmp_name = format!(
+                        "{}.tmp.{}",
+                        dest.file_name().unwrap_or_default().to_string_lossy(),
+                        uuid::Uuid::new_v4()
+                    );
+                    let tmp_path = dest.with_file_name(tmp_name);
+
+                    let write_result = {
+                        let mut opts = std::fs::OpenOptions::new();
+                        opts.write(true).create_new(true);
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::OpenOptionsExt;
+                            opts.mode(0o600);
+                        }
+                        opts.open(&tmp_path)
+                            .and_then(|mut f| std::io::Write::write_all(&mut f, content.as_bytes()))
+                    };
+
+                    match write_result.and_then(|_| std::fs::rename(&tmp_path, &dest)) {
+                        Ok(_) => {
+                            debug!(
+                                file = %dest.display(),
+                                url = file_url,
+                                "Downloaded skill file"
+                            );
+                        }
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&tmp_path);
+                            warn!(
+                                file = %dest.display(),
+                                error = %e,
+                                "Failed to write cached skill file"
+                            );
+                        }
                     }
                 }
                 Err(e) => {
