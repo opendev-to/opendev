@@ -143,7 +143,7 @@ async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<Conso
     );
 
     // Phase 2: Backup
-    if let Err(e) = std::fs::create_dir_all(backup_dir) {
+    if let Err(e) = tokio::fs::create_dir_all(backup_dir).await {
         warn!("Failed to create backup directory: {e}");
         return None;
     }
@@ -151,7 +151,7 @@ async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<Conso
     let mut backed_up = 0;
     for file in &session_files {
         let dest = backup_dir.join(&file.filename);
-        if let Err(e) = std::fs::copy(&file.path, &dest) {
+        if let Err(e) = tokio::fs::copy(&file.path, &dest).await {
             warn!("Failed to backup {}: {e}", file.filename);
         } else {
             backed_up += 1;
@@ -217,19 +217,19 @@ async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<Conso
 
     if let Err(e) = write_result {
         warn!("Failed to write consolidated file: {e}");
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = tokio::fs::remove_file(&tmp_path).await;
         return None;
     }
-    if let Err(e) = std::fs::rename(&tmp_path, &consolidated_path) {
+    if let Err(e) = tokio::fs::rename(&tmp_path, &consolidated_path).await {
         warn!("Failed to rename consolidated file: {e}");
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = tokio::fs::remove_file(&tmp_path).await;
         return None;
     }
 
     // Phase 4: Prune — remove session files that were consolidated
     let mut pruned = 0;
     for file in &session_files {
-        if let Err(e) = std::fs::remove_file(&file.path) {
+        if let Err(e) = tokio::fs::remove_file(&file.path).await {
             warn!(
                 "Failed to remove consolidated session file {}: {e}",
                 file.filename

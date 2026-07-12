@@ -86,3 +86,7 @@
 ## 2024-08-02 - Maximum Call Stack Size Exceeded with Math.max and Spread
 **Learning:** Using `Math.max(...iterable)` with a spread operator on iterables like `Map.values()` (e.g., `Math.max(...nodeLane.values())` in `buildGraph.ts`) causes O(N) array allocations and passes all items as individual arguments. For large graphs, this exceeds the JavaScript engine's maximum call stack size limit (usually ~65,000), causing the application to crash.
 **Action:** Always compute the maximum value using a simple `for...of` loop over the iterable instead of using the spread operator with `Math.max` for unbounded data sets.
+
+## 2024-08-03 - Replacing synchronous std::fs operations with tokio::fs in memory_consolidation.rs
+**Learning:** In `crates/opendev-agents/src/memory_consolidation.rs`, using synchronous `std::fs` operations (e.g., `create_dir_all`, `copy`, `remove_file`, `rename`) inside the async functions `consolidate` and `run_consolidation` blocks the async executor thread, degrading concurrent performance.
+**Action:** Replace `std::fs` calls within async functions with `tokio::fs` equivalents (e.g., `tokio::fs::create_dir_all(...).await`) to ensure non-blocking file I/O operations and improve overall application concurrency.
