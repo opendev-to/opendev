@@ -226,7 +226,26 @@ fn save_schedules(path: &std::path::Path, schedules: &[ScheduleEntry]) -> Result
     }
     let json =
         serde_json::to_string_pretty(schedules).map_err(|e| format!("Serialization error: {e}"))?;
-    std::fs::write(path, json).map_err(|e| format!("Write error: {e}"))
+
+    let temp_suffix = uuid::Uuid::new_v4();
+    let temp_path = path.with_extension(format!("{}.tmp", temp_suffix));
+
+    let write_result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        std::io::Write::write_all(&mut file, json.as_bytes())?;
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Write error: {e}"));
+    }
+
+    std::fs::rename(&temp_path, path).map_err(|e| format!("Rename error: {e}"))
 }
 
 #[cfg(test)]
