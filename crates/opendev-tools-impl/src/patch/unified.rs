@@ -153,7 +153,8 @@ fn apply_hunks(cwd: &Path, file: &str, hunks: &[Hunk]) -> Result<(), String> {
     }
 
     // Write result
-    if let Some(parent) = path.parent() {
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
+    if !parent.as_os_str().is_empty() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create directory: {e}"))?;
     }
 
@@ -165,5 +166,34 @@ fn apply_hunks(cwd: &Path, file: &str, hunks: &[Hunk]) -> Result<(), String> {
         content
     };
 
-    std::fs::write(&path, content).map_err(|e| format!("Cannot write {file}: {e}"))
+    let temp_path = if parent.as_os_str().is_empty() {
+        std::path::PathBuf::from(format!(".tmp-{}", uuid::Uuid::new_v4()))
+    } else {
+        parent.join(format!(".tmp-{}", uuid::Uuid::new_v4()))
+    };
+
+    let write_res = (|| -> std::io::Result<()> {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        use std::io::Write;
+        f.write_all(content.as_bytes())?;
+        f.sync_all()?;
+        Ok(())
+    })();
+
+    match write_res {
+        Ok(_) => {
+            if let Err(e) = std::fs::rename(&temp_path, &path) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(format!("Cannot rename temp file for {file}: {e}"));
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(format!("Cannot write {file}: {e}"))
+        }
+    }
 }
