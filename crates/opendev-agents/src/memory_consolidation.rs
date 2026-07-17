@@ -95,13 +95,15 @@ pub async fn consolidate(working_dir: &Path) -> Option<ConsolidationReport> {
     let backup_dir = paths.memory_backup_dir();
 
     // Acquire lock
-    let mut open_opts = std::fs::OpenOptions::new();
+    let mut open_opts = tokio::fs::OpenOptions::new();
     open_opts.write(true).create_new(true);
 
-    let lock_result = open_opts.open(&lock_path).and_then(|mut f| {
-        use std::io::Write;
-        f.write_all(b"locked")
-    });
+    let lock_result = async {
+        let mut f = open_opts.open(&lock_path).await?;
+        use tokio::io::AsyncWriteExt;
+        f.write_all(b"locked").await
+    }
+    .await;
 
     if let Err(e) = lock_result {
         warn!("Failed to acquire consolidation lock: {e}");
@@ -119,7 +121,7 @@ pub async fn consolidate(working_dir: &Path) -> Option<ConsolidationReport> {
     save_meta(&meta_path, &meta);
 
     // Release lock
-    let _ = std::fs::remove_file(&lock_path);
+    let _ = tokio::fs::remove_file(&lock_path).await;
 
     result
 }
@@ -200,18 +202,24 @@ async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<Conso
     let write_result = {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut opts = std::fs::OpenOptions::new();
-            opts.write(true).create_new(true).mode(0o600);
-            opts.open(&tmp_path)
-                .and_then(|mut f| std::io::Write::write_all(&mut f, full_content.as_bytes()))
+            let mut opts = tokio::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            opts.mode(0o600);
+            async {
+                let mut f = opts.open(&tmp_path).await?;
+                use tokio::io::AsyncWriteExt;
+                f.write_all(full_content.as_bytes()).await
+            }.await
         }
         #[cfg(not(unix))]
         {
-            let mut opts = std::fs::OpenOptions::new();
+            let mut opts = tokio::fs::OpenOptions::new();
             opts.write(true).create_new(true);
-            opts.open(&tmp_path)
-                .and_then(|mut f| std::io::Write::write_all(&mut f, full_content.as_bytes()))
+            async {
+                let mut f = opts.open(&tmp_path).await?;
+                use tokio::io::AsyncWriteExt;
+                f.write_all(full_content.as_bytes()).await
+            }.await
         }
     };
 
