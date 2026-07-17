@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn test_create_default_composer_section_count() {
     let dir = tempfile::TempDir::new().unwrap();
-    let composer = create_default_composer(dir.path());
+    let mut composer = create_default_composer(dir.path());
     // Should have many sections registered
     assert!(composer.section_count() > 15);
 }

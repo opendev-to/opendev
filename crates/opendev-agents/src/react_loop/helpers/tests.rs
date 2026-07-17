@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use super::super::*;
+use crate::prompts::embedded;
 use crate::subagents::spec::{PermissionAction, PermissionRule};
 use crate::traits::{AgentError, AgentResult, LlmResponse};
 fn make_loop() -> ReactLoop {
