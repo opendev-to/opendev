@@ -165,5 +165,37 @@ fn apply_hunks(cwd: &Path, file: &str, hunks: &[Hunk]) -> Result<(), String> {
         content
     };
 
-    std::fs::write(&path, content).map_err(|e| format!("Cannot write {file}: {e}"))
+    let temp_filename = format!(".{}.tmp", uuid::Uuid::new_v4());
+    let temp_path = match path.parent() {
+        Some(parent) => parent.join(&temp_filename),
+        None => std::path::PathBuf::from(&temp_filename),
+    };
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+
+    let mut temp_file = match opts.open(&temp_path) {
+        Ok(f) => f,
+        Err(e) => return Err(format!("Cannot create temporary file {}: {e}", temp_path.display())),
+    };
+
+    if let Err(e) = std::io::Write::write_all(&mut temp_file, content.as_bytes()) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Cannot write to temporary file {}: {e}", temp_path.display()));
+    }
+
+    if let Err(e) = temp_file.sync_all() {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Cannot sync temporary file {}: {e}", temp_path.display()));
+    }
+
+    // Explicitly drop the file before rename to prevent PermissionDenied on Windows
+    drop(temp_file);
+
+    if let Err(e) = std::fs::rename(&temp_path, &path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Cannot rename temporary file to {file}: {e}"));
+    }
+
+    Ok(())
 }
