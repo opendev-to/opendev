@@ -68,7 +68,9 @@ impl SessionManager {
     pub fn write_project_marker(&self, working_dir: &Path) {
         let marker = self.session_dir.join("OPENDEV_PROJECT_PATH");
         let temp_suffix = uuid::Uuid::new_v4();
-        let tmp_marker = self.session_dir.join(format!(".OPENDEV_PROJECT_PATH.{}.tmp", temp_suffix));
+        let tmp_marker = self
+            .session_dir
+            .join(format!(".OPENDEV_PROJECT_PATH.{}.tmp", temp_suffix));
 
         let write_result = (|| -> std::io::Result<()> {
             let mut opts = std::fs::OpenOptions::new();
