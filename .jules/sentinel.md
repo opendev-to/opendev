@@ -173,3 +173,7 @@
 **Vulnerability:** Used `std::fs::write` to persist patch content to disk in `crates/opendev-tools-impl/src/patch/unified.rs`. This function uses permissive default attributes and does not enforce exclusive file creation, making it vulnerable to symlink-based arbitrary file overwrite attacks.
 **Learning:** For atomic writes to be entirely secure and robust against system crashes, `file.sync_all()` must be called before the file is closed and renamed. Furthermore, temporary files must be manually deleted if the write operation fails to avoid resource leaks. Using a dependency like `uuid` requires ensuring the `v4` feature flag is enabled in `Cargo.toml`.
 **Prevention:** Replaced `std::fs::write` with an atomic write pattern utilizing a randomized UUID temporary filename, `std::fs::OpenOptions` with `.create_new(true)`, a `file.sync_all()` call, and error handling to remove the temp file on failure.
+## 2025-02-18 - Fix TOCTOU vulnerability in session manager
+**Vulnerability:** A TOCTOU symlink vulnerability due to use of std::fs::write in write_project_marker
+**Learning:** std::fs::write does not guarantee exclusive file creation and can follow symlinks, leading to arbitrary file overwrite. Must use OpenOptions with .create_new(true) and random temp file rename for atomic writes.
+**Prevention:** Always implement secure atomic writes by generating a UUID tmp file with create_new(true) before renaming it to the target.

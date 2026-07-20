@@ -67,7 +67,29 @@ impl SessionManager {
     /// whose original working directory has been deleted.
     pub fn write_project_marker(&self, working_dir: &Path) {
         let marker = self.session_dir.join("OPENDEV_PROJECT_PATH");
-        let _ = std::fs::write(&marker, working_dir.to_string_lossy().as_bytes());
+
+        let tmp_path =
+            marker.with_file_name(format!("OPENDEV_PROJECT_PATH.tmp.{}", uuid::Uuid::new_v4()));
+
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+        {
+            use std::io::Write;
+            let success = f
+                .write_all(working_dir.to_string_lossy().as_bytes())
+                .is_ok()
+                && f.sync_data().is_ok();
+
+            drop(f);
+
+            if success {
+                let _ = std::fs::rename(&tmp_path, &marker);
+            } else {
+                let _ = std::fs::remove_file(&tmp_path);
+            }
+        }
     }
 
     /// Get the current session (if any).
