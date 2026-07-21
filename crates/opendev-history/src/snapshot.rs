@@ -4,6 +4,7 @@
 //! that captures a tree hash at every agent step, enabling perfect per-step
 //! undo/revert without touching the user's real git repo.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -478,7 +479,18 @@ impl SnapshotManager {
             // Ensure project path marker exists (backfill for repos created before cleanup)
             let marker = self.shadow_dir.join("OPENDEV_PROJECT_PATH");
             if !marker.exists() {
-                let _ = std::fs::write(&marker, &self.project_dir);
+                let tmp_marker = marker.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_marker)
+                {
+                    let _ = f.write_all(self.project_dir.as_bytes());
+                    let _ = f.sync_all();
+                    drop(f);
+                    let _ = std::fs::rename(&tmp_marker, &marker);
+                    let _ = std::fs::remove_file(&tmp_marker);
+                }
             }
             return true;
         }
@@ -489,7 +501,18 @@ impl SnapshotManager {
                 self.initialized = true;
                 // Write project path marker for orphan detection during cleanup
                 let marker = self.shadow_dir.join("OPENDEV_PROJECT_PATH");
-                let _ = std::fs::write(&marker, &self.project_dir);
+                let tmp_marker = marker.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_marker)
+                {
+                    let _ = f.write_all(self.project_dir.as_bytes());
+                    let _ = f.sync_all();
+                    drop(f);
+                    let _ = std::fs::rename(&tmp_marker, &marker);
+                    let _ = std::fs::remove_file(&tmp_marker);
+                }
                 info!(
                     "Shadow snapshot repo initialized at {}",
                     self.shadow_dir.display()
