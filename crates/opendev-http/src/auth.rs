@@ -187,7 +187,9 @@ impl CredentialStore {
         }
 
         // Write to temp file, then rename (atomic)
-        let tmp_path = self.path.with_extension("tmp");
+        let tmp_path = self
+            .path
+            .with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
         let json = serde_json::to_string_pretty(data)?;
 
         #[cfg(unix)]

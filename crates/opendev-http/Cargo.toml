@@ -14,7 +14,7 @@ tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
-uuid = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
