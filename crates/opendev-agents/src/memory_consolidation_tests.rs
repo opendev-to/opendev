@@ -106,8 +106,8 @@ fn test_load_save_meta() {
     assert_eq!(loaded.files_processed, 5);
 }
 
-#[test]
-fn test_regenerate_index() {
+#[tokio::test]
+async fn test_regenerate_index() {
     let dir = TempDir::new().unwrap();
 
     std::fs::write(
@@ -121,7 +121,7 @@ fn test_regenerate_index() {
     )
     .unwrap();
 
-    regenerate_index(dir.path()).unwrap();
+    regenerate_index(dir.path()).await.unwrap();
 
     let index = std::fs::read_to_string(dir.path().join("MEMORY.md")).unwrap();
     assert!(index.contains("# Memory Index"));

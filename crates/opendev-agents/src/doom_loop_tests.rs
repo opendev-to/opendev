@@ -141,7 +141,7 @@ fn test_recovery_action_redirect_returns_nudge() {
     // Trigger first detection (Redirect)
     det.check(&[tc.clone()]);
     det.check(&[tc.clone()]);
-    let (action, warning) = det.check(&[tc.clone()]);
+    let (action, _warning) = det.check(&[tc.clone()]);
     assert_eq!(action, DoomLoopAction::Redirect);
 
     let recovery = det.recovery_action(&action);
@@ -164,7 +164,7 @@ fn test_recovery_action_notify_returns_step_back() {
     det.check(&[tc.clone()]);
 
     // Second detection (Notify)
-    let (action, warning) = det.check(&[tc.clone()]);
+    let (action, _warning) = det.check(&[tc.clone()]);
     assert_eq!(action, DoomLoopAction::Notify);
 
     let recovery = det.recovery_action(&action);

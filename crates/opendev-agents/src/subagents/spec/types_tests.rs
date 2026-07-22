@@ -1,4 +1,3 @@
-use super::super::permissions::PermissionAction;
 use super::*;
 
 #[test]

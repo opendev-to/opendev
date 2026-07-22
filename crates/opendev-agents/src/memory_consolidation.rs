@@ -248,7 +248,7 @@ async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<Conso
     }
 
     // Update MEMORY.md index
-    let _ = regenerate_index(memory_dir);
+    let _ = regenerate_index(memory_dir).await;
 
     info!(
         "Consolidation complete: {} files merged, {} pruned, {} backed up",
@@ -446,11 +446,11 @@ fn save_meta(path: &Path, meta: &ConsolidationMeta) {
     }
 }
 
-fn regenerate_index(dir: &Path) -> std::io::Result<()> {
-    let entries = std::fs::read_dir(dir)?;
+async fn regenerate_index(dir: &Path) -> std::io::Result<()> {
+    let mut entries = tokio::fs::read_dir(dir).await?;
     let mut files: Vec<(String, String)> = Vec::new();
 
-    for entry in entries.flatten() {
+    while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -464,7 +464,7 @@ fn regenerate_index(dir: &Path) -> std::io::Result<()> {
             continue;
         }
 
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
         let desc = extract_desc(&content);
         files.push((name, desc));
     }
@@ -493,22 +493,25 @@ fn regenerate_index(dir: &Path) -> std::io::Result<()> {
     {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut opts = std::fs::OpenOptions::new();
+            use tokio::io::AsyncWriteExt;
+            let mut opts = tokio::fs::OpenOptions::new();
             opts.write(true).create_new(true).mode(0o600);
-            let mut file = opts.open(&tmp_path)?;
-            std::io::Write::write_all(&mut file, final_content.as_bytes())?;
+            let mut file = opts.open(&tmp_path).await?;
+            file.write_all(final_content.as_bytes()).await?;
+            file.sync_all().await?;
         }
         #[cfg(not(unix))]
         {
-            let mut opts = std::fs::OpenOptions::new();
+            use tokio::io::AsyncWriteExt;
+            let mut opts = tokio::fs::OpenOptions::new();
             opts.write(true).create_new(true);
-            let mut file = opts.open(&tmp_path)?;
-            std::io::Write::write_all(&mut file, final_content.as_bytes())?;
+            let mut file = opts.open(&tmp_path).await?;
+            file.write_all(final_content.as_bytes()).await?;
+            file.sync_all().await?;
         }
     }
 
-    std::fs::rename(&tmp_path, &index_path)?;
+    tokio::fs::rename(&tmp_path, &index_path).await?;
     Ok(())
 }
 
