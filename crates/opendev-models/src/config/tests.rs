@@ -65,19 +65,28 @@ fn test_get_api_key_custom_provider_prefers_config_key() {
 #[test]
 fn test_get_api_key_custom_provider_openai_env_fallback() {
     // Unknown provider without config key → falls back to OPENAI_API_KEY
-    // (only run assertion if OPENAI_API_KEY is actually set to avoid flaky test)
+    // We isolate this test by ensuring OPENAI_API_KEY is set.
+    let old_key = std::env::var("OPENAI_API_KEY").ok();
+    unsafe {
+        std::env::set_var("OPENAI_API_KEY", "dummy-key-for-test");
+    }
+
     let config_no_key = AppConfig {
         model_provider: "unknown_test_provider_123".to_string(),
         api_key: None,
         ..AppConfig::default()
     };
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        if !key.is_empty() {
-            assert!(config_no_key.get_api_key().is_ok());
-            return;
+
+    assert_eq!(config_no_key.get_api_key().unwrap(), "dummy-key-for-test");
+
+    // Cleanup
+    unsafe {
+        if let Some(key) = old_key {
+            std::env::set_var("OPENAI_API_KEY", key);
+        } else {
+            std::env::remove_var("OPENAI_API_KEY");
         }
     }
-    assert!(config_no_key.get_api_key().is_err());
 }
 
 #[test]
