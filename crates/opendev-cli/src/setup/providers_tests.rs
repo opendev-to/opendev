@@ -81,6 +81,20 @@ fn test_provider_choices() {
     assert!(choices.len() >= 2);
     assert!(choices.iter().any(|(id, _, _)| id == "openai"));
     assert!(choices.iter().any(|(id, _, _)| id == "anthropic"));
+    assert!(!choices.iter().any(|(id, _, _)| id == "openai-chatgpt"));
+}
+
+#[test]
+fn test_chatgpt_provider_config_does_not_request_an_api_key() {
+    let config = ProviderSetup::get_provider_config(&test_registry(), "openai-chatgpt").unwrap();
+    assert!(config.env_var.is_empty());
+    assert!(config.models.is_empty());
+}
+
+#[test]
+fn test_chatgpt_model_choices_use_the_dynamic_openai_catalog() {
+    let models = ProviderSetup::get_provider_models(&test_registry(), "openai-chatgpt");
+    assert!(models.iter().any(|(id, _, _)| id == "gpt-4o"));
 }
 
 #[test]

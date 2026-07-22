@@ -9,6 +9,18 @@ fn test_timeout_config_default() {
 }
 
 #[test]
+fn test_api_error_message_preserves_top_level_and_plaintext_400_details() {
+    assert_eq!(
+        api_error_message(400, r#"{"message":"model is unavailable"}"#),
+        "model is unavailable"
+    );
+    assert_eq!(
+        api_error_message(400, "invalid request body"),
+        "invalid request body"
+    );
+}
+
+#[test]
 fn test_http_client_debug() {
     let client =
         HttpClient::new("https://api.example.com/v1/chat", HeaderMap::new(), None).unwrap();
@@ -152,4 +164,50 @@ fn test_http_client_debug_with_circuit_breaker() {
     let debug = format!("{:?}", client);
     assert!(debug.contains("circuit_breaker"));
     assert!(debug.contains("openai"));
+}
+
+#[tokio::test]
+async fn regular_clients_follow_same_origin_redirects() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut first, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 4096];
+        let _ = first.read(&mut request).await.unwrap();
+        first
+            .write_all(
+                format!(
+                    "HTTP/1.1 307 Temporary Redirect\r\nlocation: http://{address}/final\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+
+        let (mut second, _) = listener.accept().await.unwrap();
+        let _ = second.read(&mut request).await.unwrap();
+        let body = r#"{"ok":true}"#;
+        second
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+
+    let client =
+        HttpClient::new(format!("http://{address}/start"), HeaderMap::new(), None).unwrap();
+    let result = client
+        .post_json(&serde_json::json!({}), None)
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert_eq!(result.body.unwrap()["ok"], true);
 }

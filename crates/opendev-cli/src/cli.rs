@@ -160,6 +160,10 @@ pub enum ConfigAction {
     Show,
 }
 
+#[cfg(test)]
+#[path = "cli_tests.rs"]
+mod tests;
+
 /// MCP subcommands.
 #[derive(Subcommand, Debug)]
 pub enum McpAction {

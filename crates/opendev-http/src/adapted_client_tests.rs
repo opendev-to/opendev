@@ -13,6 +13,16 @@ fn test_adapter_for_provider_openai() {
 }
 
 #[test]
+fn test_adapter_for_provider_openai_chatgpt() {
+    let adapter = AdaptedClient::adapter_for_provider("openai-chatgpt").unwrap();
+    assert_eq!(adapter.provider_name(), "openai-chatgpt");
+    assert_eq!(
+        adapter.api_url(),
+        "https://chatgpt.com/backend-api/codex/responses"
+    );
+}
+
+#[test]
 fn test_adapter_for_provider_gemini() {
     let adapter = AdaptedClient::adapter_for_provider("gemini").unwrap();
     assert_eq!(adapter.provider_name(), "gemini");
@@ -32,6 +42,22 @@ fn test_adapter_for_provider_groq_is_none() {
 #[test]
 fn test_adapter_for_provider_unknown_is_none() {
     assert!(AdaptedClient::adapter_for_provider("custom").is_none());
+}
+
+#[test]
+fn headerless_chatgpt_responses_are_treated_as_sse() {
+    assert!(is_sse_response("", true));
+    assert!(is_sse_response(" ", true));
+    assert!(is_sse_response("text/event-stream; charset=utf-8", false));
+    assert!(!is_sse_response("", false));
+    assert!(!is_sse_response("application/json", true));
+}
+
+#[test]
+fn only_chatgpt_merges_streamed_output_into_a_sparse_final_response() {
+    assert!(should_merge_streamed_chatgpt_output("openai-chatgpt"));
+    assert!(!should_merge_streamed_chatgpt_output("openai"));
+    assert!(!should_merge_streamed_chatgpt_output("anthropic"));
 }
 
 #[test]
@@ -63,6 +89,113 @@ fn test_resolve_provider_auto_detect() {
 #[test]
 fn test_resolve_provider_fallback_to_openai() {
     assert_eq!(AdaptedClient::resolve_provider("", "unknown-key"), "openai");
+}
+
+#[test]
+fn curl_headers_are_written_to_a_private_config_file() {
+    let config = curl_header_config(&["Authorization: Bearer not-in-argv".to_string()]).unwrap();
+    let contents = std::fs::read_to_string(config.path()).unwrap();
+    assert!(contents.contains("Authorization: Bearer not-in-argv"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(config.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+}
+
+#[tokio::test]
+async fn curl_transport_preserves_a_401_status_and_sends_auth_from_config() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 4096];
+        let count = socket.read(&mut request).await.unwrap();
+        assert!(
+            String::from_utf8_lossy(&request[..count])
+                .to_ascii_lowercase()
+                .contains("authorization: bearer config-only-token")
+        );
+        let body = r#"{"error":{"message":"expired"}}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+
+    let client = AdaptedClient::new(
+        HttpClient::new(format!("http://{address}"), HeaderMap::new(), None).unwrap(),
+    )
+    .with_curl_transport("Authorization: Bearer config-only-token".to_string());
+    let result = client
+        .post_json(&serde_json::json!({"ping": true}), None)
+        .await
+        .unwrap();
+    assert_eq!(result.status, Some(401));
+    assert!(!result.retryable);
+}
+
+#[tokio::test]
+async fn curl_transport_preserves_redirects_for_dashscope_compatibility() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut first, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 4096];
+        let _ = first.read(&mut request).await.unwrap();
+        first
+            .write_all(
+                format!(
+                    "HTTP/1.1 307 Temporary Redirect\r\nlocation: http://{address}/final\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+
+        let (mut second, _) = listener.accept().await.unwrap();
+        let count = second.read(&mut request).await.unwrap();
+        assert!(String::from_utf8_lossy(&request[..count]).starts_with("POST /final"));
+        let body = r#"{"ok":true}"#;
+        second
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+
+    let client = AdaptedClient::new(
+        HttpClient::new(format!("http://{address}/start"), HeaderMap::new(), None).unwrap(),
+    )
+    .with_curl_transport("Authorization: Bearer redirect-token".to_string());
+    let result = client
+        .post_json(&serde_json::json!({"ping": true}), None)
+        .await
+        .unwrap();
+    assert!(result.success);
+    assert_eq!(result.body.unwrap()["ok"], true);
 }
 
 // --- Streaming error classification (issues #13, #110) ---
@@ -210,5 +343,32 @@ async fn test_streaming_503_stays_retryable_after_exhausted_retries() {
     assert!(
         result.retryable,
         "transient 503 must stay retryable so the react loop can back off and retry"
+    );
+}
+
+#[tokio::test]
+async fn test_streaming_non_sse_body_is_reported_for_diagnosis() {
+    let url = spawn_static_server("HTTP/1.1 200 OK", "upstream protocol mismatch").await;
+    let client = streaming_client_for(&url);
+
+    let cb = FnStreamCallback(|_| {});
+    let error = client
+        .post_json_streaming(
+            &serde_json::json!({"model": "gpt-4o", "messages": []}),
+            None,
+            &cb,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("Unexpected non-SSE response"),
+        "error was: {error}"
+    );
+    assert!(error.contains("application/json"), "error was: {error}");
+    assert!(
+        error.contains("upstream protocol mismatch"),
+        "error was: {error}"
     );
 }

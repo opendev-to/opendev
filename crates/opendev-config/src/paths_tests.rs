@@ -151,8 +151,12 @@ fn test_legacy_detection_and_fresh_install_layout() {
     // Fresh install: no ~/.opendev — all base dirs must avoid it.
     let fresh = Paths::new(Some(PathBuf::from("/tmp/wd")));
 
-    // Legacy install: ~/.opendev exists — everything points at it.
+    // A directory containing only runtime artifacts is not a legacy install.
     std::fs::create_dir_all(home.join(APP_DIR_NAME)).unwrap();
+    let artifact_only = Paths::new(Some(PathBuf::from("/tmp/wd")));
+
+    // Legacy install: a legacy settings file exists — everything points at it.
+    std::fs::write(home.join(APP_DIR_NAME).join(SETTINGS_FILE_NAME), "{}").unwrap();
     #[cfg_attr(windows, allow(unused_variables))]
     let legacy = Paths::new(Some(PathBuf::from("/tmp/wd")));
 
@@ -174,6 +178,14 @@ fn test_legacy_detection_and_fresh_install_layout() {
         assert!(
             !dir.starts_with(&legacy_dir),
             "fresh install must not use legacy dir: {}",
+            dir.display()
+        );
+    }
+
+    for dir in artifact_only.all_base_dirs() {
+        assert!(
+            !dir.starts_with(&legacy_dir),
+            "artifact-only legacy dir must not shadow XDG paths: {}",
             dir.display()
         );
     }

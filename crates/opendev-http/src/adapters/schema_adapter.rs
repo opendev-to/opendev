@@ -15,7 +15,10 @@ pub fn adapt_for_provider(schemas: &[Value], provider: &str) -> Vec<Value> {
     let provider = provider.to_lowercase();
 
     // No adaptation needed for standard providers
-    if matches!(provider.as_str(), "openai" | "anthropic" | "openrouter") {
+    if matches!(
+        provider.as_str(),
+        "openai" | "openai-chatgpt" | "anthropic" | "openrouter"
+    ) {
         return schemas.to_vec();
     }
 

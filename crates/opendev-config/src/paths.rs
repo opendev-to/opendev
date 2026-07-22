@@ -95,11 +95,14 @@ impl Paths {
             };
         }
 
-        // Legacy: if ~/.opendev exists, use it (don't force migration)
+        // Legacy: use ~/.opendev only when it contains an actual configuration.
+        //
+        // Runtime artifacts such as a plans directory must not make a fresh
+        // legacy directory shadow an existing XDG settings.json file.
         let legacy_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp"))
             .join(APP_DIR_NAME);
-        if legacy_dir.exists() {
+        if legacy_dir.join(SETTINGS_FILE_NAME).is_file() {
             warn_legacy_dir_once(&legacy_dir);
             return Self {
                 working_dir,

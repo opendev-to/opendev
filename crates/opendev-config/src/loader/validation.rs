@@ -57,6 +57,7 @@ impl ConfigLoader {
         [
             "model_provider",
             "model",
+            "experimental",
             "model_vlm",
             "model_vlm_provider",
             "api_key",
@@ -170,6 +171,20 @@ impl ConfigLoader {
         }
         if config.max_tokens == 0 {
             errors.push("max_tokens must be positive".to_string());
+        }
+        if config.model_provider == "openai-chatgpt" {
+            if !config.experimental.chatgpt_auth {
+                errors.push(
+                    "model_provider openai-chatgpt requires experimental.chatgpt_auth = true"
+                        .to_string(),
+                );
+            }
+            if config.api_key.is_some() {
+                errors.push("openai-chatgpt does not accept api_key".to_string());
+            }
+            if config.api_base_url.is_some() {
+                errors.push("openai-chatgpt does not accept api_base_url".to_string());
+            }
         }
 
         if errors.is_empty() {

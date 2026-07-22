@@ -25,6 +25,25 @@ pub(crate) fn default_max_tokens() -> u32 {
     16384
 }
 
+// ── ExperimentalConfig ──
+
+/// Explicit opt-ins for features that are not part of the default provider set.
+///
+/// Every experimental integration must remain disabled when this section is
+/// absent so existing configurations retain their current behaviour.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExperimentalConfig {
+    /// Permit the separately authenticated ChatGPT/Codex provider.
+    #[serde(default)]
+    pub chatgpt_auth: bool,
+}
+
+impl ExperimentalConfig {
+    fn is_default(value: &Self) -> bool {
+        value == &Self::default()
+    }
+}
+
 // ── AutoModeConfig ──
 
 /// Auto mode configuration.
@@ -98,6 +117,10 @@ pub struct AppConfig {
     pub model_provider: String,
     #[serde(default = "default_model")]
     pub model: String,
+
+    /// Explicit opt-ins for experimental functionality.
+    #[serde(default, skip_serializing_if = "ExperimentalConfig::is_default")]
+    pub experimental: ExperimentalConfig,
 
     // Vision/Multi-modal model
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,6 +281,7 @@ impl Default for AppConfig {
         Self {
             model_provider: default_model_provider(),
             model: default_model(),
+            experimental: ExperimentalConfig::default(),
             model_vlm: None,
             model_vlm_provider: None,
             api_key: None,
@@ -321,6 +345,12 @@ impl AppConfig {
     /// 4. `self.api_key` (stored in config by the setup wizard)
     /// 5. `OPENAI_API_KEY` (last resort for truly unknown providers)
     pub fn get_api_key_with_env(&self, registry_env_var: Option<&str>) -> Result<String, String> {
+        if self.model_provider == "openai-chatgpt" {
+            return Err(
+                "openai-chatgpt uses locally stored ChatGPT OAuth credentials, not an API key"
+                    .to_string(),
+            );
+        }
         // Try registry env var first (authoritative for models.dev providers)
         if let Some(env_var) = registry_env_var
             && !env_var.is_empty()

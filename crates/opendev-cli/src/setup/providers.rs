@@ -56,15 +56,29 @@ pub struct ProviderSetup;
 impl ProviderSetup {
     /// Return a list of `(id, name, description)` for the wizard menu.
     pub fn provider_choices(registry: &ModelRegistry) -> Vec<(String, String, String)> {
-        registry
+        let choices: Vec<_> = registry
             .list_providers()
             .iter()
             .map(|p| (p.id.clone(), p.name.clone(), p.description.clone()))
-            .collect()
+            .collect();
+        choices
     }
 
     /// Get full config for a provider by ID.
     pub fn get_provider_config(registry: &ModelRegistry, id: &str) -> Option<ProviderConfig> {
+        if id == "openai-chatgpt" {
+            return Some(ProviderConfig {
+                id: id.to_string(),
+                name: "ChatGPT/Codex OAuth (experimental)".to_string(),
+                description: "Standalone ChatGPT subscription authentication".to_string(),
+                env_var: String::new(),
+                api_base_url: String::new(),
+                api_format: ApiFormat::OpenAi,
+                // OpenAI owns model metadata. The chooser below uses its
+                // current registry list instead of pinning a stale default.
+                models: Vec::new(),
+            });
+        }
         let provider = registry.get_provider(id)?;
         let api_format = if id == "anthropic" {
             ApiFormat::Anthropic
@@ -99,8 +113,17 @@ impl ProviderSetup {
         registry: &ModelRegistry,
         provider_id: &str,
     ) -> Vec<(String, String, String)> {
+        // ChatGPT OAuth shares OpenAI's model catalogue for picker purposes.
+        // The registry is dynamically refreshed from models.dev, matching
+        // OpenCode's no-Codex-executable setup flow. Availability is still
+        // determined by the authenticated ChatGPT backend at request time.
+        let catalog_provider_id = if provider_id == "openai-chatgpt" {
+            "openai"
+        } else {
+            provider_id
+        };
         registry
-            .get_provider(provider_id)
+            .get_provider(catalog_provider_id)
             .map(|p| {
                 p.list_models(None)
                     .iter()

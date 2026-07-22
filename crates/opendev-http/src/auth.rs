@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::models::HttpError;
 
@@ -31,6 +32,33 @@ struct AuthData {
     keys: HashMap<String, String>,
     #[serde(default)]
     tokens: HashMap<String, TokenEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chatgpt_oauth: Option<ChatGptOAuthCredential>,
+}
+
+/// OAuth credentials for the explicit `openai-chatgpt` provider.
+///
+/// This type is intentionally separate from generic token metadata so callers
+/// cannot accidentally treat it as an API key or forward it to another
+/// provider. Its custom `Debug` implementation never reveals a secret.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatGptOAuthCredential {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
+
+impl std::fmt::Debug for ChatGptOAuthCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChatGptOAuthCredential")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .field("account_id", &self.account_id)
+            .finish()
+    }
 }
 
 /// A stored token with optional metadata.
@@ -151,6 +179,34 @@ impl CredentialStore {
         data.tokens.get(name).map(|e| e.token.clone())
     }
 
+    /// Persist the sole ChatGPT OAuth credential under its fixed namespace.
+    pub fn store_chatgpt_oauth(
+        &mut self,
+        credential: ChatGptOAuthCredential,
+    ) -> Result<(), HttpError> {
+        let mut data = self.load_fresh();
+        data.chatgpt_oauth = Some(credential);
+        self.save(&data)
+    }
+
+    /// Load the ChatGPT OAuth credential from disk, bypassing the in-memory
+    /// cache. Refresh-token rotation by another OpenDev process must not be
+    /// overwritten by a stale store snapshot.
+    pub fn get_chatgpt_oauth(&mut self) -> Option<ChatGptOAuthCredential> {
+        self.load_fresh().chatgpt_oauth
+    }
+
+    /// Remove locally stored ChatGPT OAuth credentials. This does not revoke a
+    /// remote OAuth grant.
+    pub fn remove_chatgpt_oauth(&mut self) -> Result<bool, HttpError> {
+        let mut data = self.load_fresh();
+        let removed = data.chatgpt_oauth.take().is_some();
+        if removed {
+            self.save(&data)?;
+        }
+        Ok(removed)
+    }
+
     /// Load credentials from file, caching the result.
     fn load(&mut self) -> &AuthData {
         if let Some(ref cached) = self.cache {
@@ -178,6 +234,30 @@ impl CredentialStore {
         self.cache.as_ref().expect("cache was just set to Some")
     }
 
+    /// Read the credentials from disk even when a cache is already populated.
+    fn load_fresh(&mut self) -> AuthData {
+        let data = self.read_from_disk();
+        self.cache = Some(data.clone());
+        data
+    }
+
+    fn read_from_disk(&self) -> AuthData {
+        if !self.path.exists() {
+            return AuthData::default();
+        }
+
+        #[cfg(unix)]
+        self.check_permissions();
+
+        match std::fs::read_to_string(&self.path) {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Err(e) => {
+                warn!("Failed to load credentials from {:?}: {}", self.path, e);
+                AuthData::default()
+            }
+        }
+    }
+
     /// Save credentials with restrictive permissions.
     fn save(&mut self, data: &AuthData) -> Result<(), HttpError> {
         self.cache = Some(data.clone());
@@ -186,8 +266,17 @@ impl CredentialStore {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Write to temp file, then rename (atomic)
-        let tmp_path = self.path.with_extension("tmp");
+        // Write to a unique same-directory temp file, then rename atomically.
+        // A fixed filename races concurrent OpenDev processes and can expose a
+        // partially written credential file.
+        let filename = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("auth.json");
+        let tmp_path = self
+            .path
+            .with_file_name(format!(".{filename}.{}.tmp", Uuid::new_v4()));
         let json = serde_json::to_string_pretty(data)?;
 
         #[cfg(unix)]
@@ -195,7 +284,13 @@ impl CredentialStore {
             use std::os::unix::fs::OpenOptionsExt;
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create_new(true).mode(0o600);
-            std::io::Write::write_all(&mut opts.open(&tmp_path)?, json.as_bytes())?;
+            let write_result = (|| -> Result<(), std::io::Error> {
+                std::io::Write::write_all(&mut opts.open(&tmp_path)?, json.as_bytes())
+            })();
+            if let Err(error) = write_result {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(error.into());
+            }
         }
 
         #[cfg(not(unix))]

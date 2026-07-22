@@ -4199,6 +4199,7 @@ name = "opendev-http"
 version = "0.1.9"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
  "fastrand",
@@ -4209,11 +4210,13 @@ dependencies = [
  "reqwest 0.13.2",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
 ]
 

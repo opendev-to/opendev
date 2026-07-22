@@ -7,6 +7,23 @@ fn test_default_config() {
     assert_eq!(config.temperature, 0.6);
     assert_eq!(config.max_tokens, 16384);
     assert!(config.enable_bash);
+    assert!(!config.experimental.chatgpt_auth);
+}
+
+#[test]
+fn test_chatgpt_provider_never_resolves_an_api_key() {
+    let config = AppConfig {
+        model_provider: "openai-chatgpt".to_string(),
+        api_key: Some("must-not-be-used".to_string()),
+        ..AppConfig::default()
+    };
+
+    assert!(
+        config
+            .get_api_key()
+            .unwrap_err()
+            .contains("OAuth credentials")
+    );
 }
 
 #[test]
@@ -16,6 +33,21 @@ fn test_config_roundtrip() {
     let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.model_provider, config.model_provider);
     assert_eq!(deserialized.model, config.model);
+}
+
+#[test]
+fn test_disabled_chatgpt_experiment_is_omitted_from_normal_config_serialization() {
+    let normal = serde_json::to_value(AppConfig::default()).unwrap();
+    assert!(normal.get("experimental").is_none());
+
+    let chatgpt = AppConfig {
+        experimental: ExperimentalConfig { chatgpt_auth: true },
+        ..AppConfig::default()
+    };
+    assert_eq!(
+        serde_json::to_value(chatgpt).unwrap()["experimental"]["chatgpt_auth"],
+        true
+    );
 }
 
 #[test]

@@ -9,6 +9,7 @@
 pub mod adapted_client;
 pub mod adapters;
 pub mod auth;
+pub mod chatgpt_auth;
 pub mod circuit_breaker;
 pub mod client;
 pub mod models;
@@ -17,7 +18,7 @@ pub mod streaming;
 pub mod user_store;
 
 pub use adapted_client::AdaptedClient;
-pub use auth::CredentialStore;
+pub use auth::{ChatGptOAuthCredential, CredentialStore};
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 pub use client::HttpClient;
 pub use models::{HttpError, HttpResult, RetryConfig, classify_retryable_error, parse_retry_after};

@@ -89,7 +89,7 @@ clap = { version = "4", features = ["derive"] }
 dirs-next = "2"
 
 # TypeScript type generation
-ts-rs = { version = "10", features = ["serde-json-impl", "chrono-impl"] }
+ts-rs = { version = "10", features = ["serde-json-impl", "chrono-impl", "no-serde-warnings"] }
 
 # Testing
 tempfile = "3"
@@ -116,3 +116,5 @@ opendev-hooks = { version = "0.1.6", path = "crates/opendev-hooks" }
 opendev-plugins = { version = "0.1.6", path = "crates/opendev-plugins" }
 opendev-sandbox = { version = "0.1.6", path = "crates/opendev-sandbox" }
 url = "2"
+base64 = "0.22"
+sha2 = "0.10"

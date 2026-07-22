@@ -14,6 +14,7 @@ pub mod groq;
 pub mod mistral;
 pub mod ollama;
 pub mod openai;
+pub mod openai_chatgpt;
 pub mod schema_adapter;
 
 pub use base::ProviderAdapter;

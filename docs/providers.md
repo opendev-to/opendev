@@ -39,6 +39,45 @@ Environment variables always win. This lets you override stored credentials per-
 
 ## Supported Providers
 
+### Experimental ChatGPT/Codex OAuth
+
+`openai-chatgpt` is an opt-in, experimental ChatGPT/Codex OAuth provider. It
+is not an OpenAI Platform API-key provider, cannot be pointed at a custom
+`api_base_url`, and never falls back to `OPENAI_API_KEY`.
+
+**Release status: compatibility approval pending.** OpenAI's public guidance
+documents ChatGPT OAuth and device-code login for the Codex CLI, not for a
+separate third-party provider. Do not enable or distribute this integration
+until an OpenDev maintainer has recorded Phase 0 approval for the standalone
+OAuth profile, supported account/workspace types, and protocol ownership. The
+implementation and mocked tests exist to support that review; they are not an
+authorization to use a ChatGPT subscription as a general API replacement.
+
+After that approval, use the first-run setup flow: select **OpenAI**, then
+choose **ChatGPT Pro/Plus (browser)** or **ChatGPT Pro/Plus (headless)**. The
+wizard always asks you to sign in and, after a successful sign-in, replaces
+the previous local OAuth credential. It then loads OpenAI model
+metadata from OpenDev's dynamically refreshed models.dev catalogue (the same
+catalogue approach used by OpenCode), and writes `experimental.chatgpt_auth = true`,
+`model_provider = "openai-chatgpt"`, and the selected model to
+`~/.opendev/settings.json`. The model list is discovery metadata, not an entitlement
+guarantee; an unavailable model is reported by the backend rather than falling
+back to Platform API-key authentication.
+
+Browser login uses a loopback PKCE callback. `--headless` uses the device-code
+flow, shows a verification URL and code, then polls until it can exchange the
+returned authorization code with its PKCE verifier. Device login can require a
+personal security setting or workspace-admin permission. Credentials are stored
+only in OpenDev's local auth store; the flow does not require `codex` or read
+Codex's credential store. To sign in again, change accounts, or recover from a
+missing/expired credential, rerun `opendev setup` and select the ChatGPT option.
+
+The initial credential backend is the plaintext `~/.opendev/auth.json` file
+with owner-only permissions on Unix. Do not run multiple OpenDev processes
+that refresh the same ChatGPT credential at once: refresh-token rotation is
+single-flight within a process, and OpenDev warns about the cross-process
+limitation.
+
 ### OpenAI
 
 - Env var: `OPENAI_API_KEY`

@@ -11,6 +11,8 @@ use std::io;
 
 use opendev_config::models_dev::{ModelRegistry, sync_provider_cache};
 use opendev_config::{ConfigLoader, Paths};
+use opendev_http::CredentialStore;
+use opendev_http::chatgpt_auth::ChatGptAuthenticator;
 use opendev_models::AppConfig;
 use thiserror::Error;
 use tracing::info;
@@ -111,13 +113,27 @@ pub async fn run_setup_wizard() -> Result<AppConfig, SetupError> {
     // ─── Section 1: Provider & Authentication ───────────────────────────
     rail_section("Provider & Authentication");
 
-    let provider_id = select_provider(&registry)?;
+    let selected_provider_id = select_provider(&registry)?;
+    let authentication = if selected_provider_id == "openai" {
+        Some(select_openai_authentication()?)
+    } else {
+        None
+    };
+    let (provider_id, chatgpt_headless) = resolve_provider_authentication(
+        selected_provider_id,
+        authentication.unwrap_or(OpenAiAuthentication::ApiKey),
+    );
     let provider_config = ProviderSetup::get_provider_config(&registry, &provider_id)
         .ok_or(SetupError::NoProvider)?;
+    let is_chatgpt = provider_id == "openai-chatgpt";
+    let api_key = if is_chatgpt {
+        run_chatgpt_setup_login(chatgpt_headless).await?;
+        String::new()
+    } else {
+        get_api_key(&provider_config)?
+    };
 
-    let api_key = get_api_key(&provider_config)?;
-
-    if !api_key.is_empty() && rail_confirm("Validate API key?", true)? {
+    if !is_chatgpt && !api_key.is_empty() && rail_confirm("Validate API key?", true)? {
         let spinner = rail_spinner_start("Validating API key...");
         let result = ProviderSetup::validate_api_key(&provider_config, &api_key).await;
         spinner.stop();
@@ -145,7 +161,9 @@ pub async fn run_setup_wizard() -> Result<AppConfig, SetupError> {
     rail_dim("These use your main model by default. Override only if needed.");
 
     let mut collected_keys: HashMap<String, String> = HashMap::new();
-    collected_keys.insert(provider_id.clone(), api_key.clone());
+    if !is_chatgpt {
+        collected_keys.insert(provider_id.clone(), api_key.clone());
+    }
 
     let (vlm_provider, vlm_model) = configure_slot(
         &registry,
@@ -184,7 +202,10 @@ pub async fn run_setup_wizard() -> Result<AppConfig, SetupError> {
     let config = AppConfig {
         model_provider: provider_id.clone(),
         model: model_id.clone(),
-        api_key: Some(api_key),
+        api_key: (!is_chatgpt).then_some(api_key),
+        experimental: opendev_models::ExperimentalConfig {
+            chatgpt_auth: is_chatgpt,
+        },
         auto_save_interval: 5,
         model_vlm: Some(vlm_model.clone()),
         model_vlm_provider: Some(vlm_provider.clone()),
@@ -217,6 +238,58 @@ pub async fn run_setup_wizard() -> Result<AppConfig, SetupError> {
     rail_outro();
 
     Ok(config)
+}
+
+async fn run_chatgpt_setup_login(headless: bool) -> Result<(), SetupError> {
+    let authenticator = ChatGptAuthenticator::new(CredentialStore::new(None))
+        .map_err(|error| SetupError::ValidationFailed(error.to_string()))?;
+    rail_dim(
+        "Signing in with ChatGPT. A successful login replaces any previous local ChatGPT credential.",
+    );
+    if headless {
+        let login = authenticator
+            .begin_device_login(None)
+            .await
+            .map_err(|error| SetupError::ValidationFailed(error.to_string()))?;
+        rail_dim(&format!(
+            "Visit {} and enter {}. Never share this device code.",
+            login.verification_url, login.user_code
+        ));
+        authenticator
+            .finish_device_login(login, None)
+            .await
+            .map_err(|error| SetupError::ValidationFailed(error.to_string()))?;
+    } else {
+        let login = authenticator
+            .begin_browser_login()
+            .await
+            .map_err(|error| SetupError::ValidationFailed(error.to_string()))?;
+        rail_dim(&format!(
+            "Open this URL to authenticate: {}",
+            login.authorization_url
+        ));
+        open_browser(&login.authorization_url);
+        authenticator
+            .finish_browser_login(login, None)
+            .await
+            .map_err(|error| SetupError::ValidationFailed(error.to_string()))?;
+    }
+    rail_success("ChatGPT/Codex login saved in OpenDev's local credential store");
+    Ok(())
+}
+
+fn open_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut value = std::process::Command::new("cmd");
+        value.args(["/C", "start"]);
+        value
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+    let _ = command.arg(url).spawn();
 }
 
 // ── Slot configuration ─────────────────────────────────────────────────────
@@ -439,6 +512,77 @@ fn select_provider(registry: &ModelRegistry) -> Result<String, SetupError> {
         .unwrap_or(&provider_id);
     rail_answer(provider_name);
     Ok(provider_id)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAiAuthentication {
+    ApiKey,
+    ChatGptBrowser,
+    ChatGptHeadless,
+}
+
+fn select_openai_authentication() -> Result<OpenAiAuthentication, SetupError> {
+    let choices = vec![
+        (
+            "api_key".to_string(),
+            "OpenAI API key".to_string(),
+            "Use Platform API credit and OPENAI_API_KEY".to_string(),
+        ),
+        (
+            "chatgpt_browser".to_string(),
+            "ChatGPT Pro/Plus (browser)".to_string(),
+            "Sign in with an eligible ChatGPT/Codex account".to_string(),
+        ),
+        (
+            "chatgpt_headless".to_string(),
+            "ChatGPT Pro/Plus (headless)".to_string(),
+            "Use device-code login on a remote or headless machine".to_string(),
+        ),
+    ];
+
+    rail_label("Authentication", "choose how to authenticate with OpenAI");
+    let mut menu = InteractiveMenu::new(choices, "Select OpenAI Authentication", 9);
+    let choice = menu.show()?.ok_or(SetupError::Cancelled)?;
+
+    match choice.as_str() {
+        "api_key" => {
+            rail_answer("OpenAI API key");
+            Ok(OpenAiAuthentication::ApiKey)
+        }
+        "chatgpt_browser" => {
+            acknowledge_chatgpt_account_risk()?;
+            rail_answer("ChatGPT Pro/Plus (browser)");
+            Ok(OpenAiAuthentication::ChatGptBrowser)
+        }
+        "chatgpt_headless" => {
+            acknowledge_chatgpt_account_risk()?;
+            rail_answer("ChatGPT Pro/Plus (headless)");
+            Ok(OpenAiAuthentication::ChatGptHeadless)
+        }
+        _ => Err(SetupError::Cancelled),
+    }
+}
+
+fn acknowledge_chatgpt_account_risk() -> Result<(), SetupError> {
+    if rail_confirm(
+        "Use experimental ChatGPT/Codex account authentication (not Platform API credit)?",
+        false,
+    )? {
+        Ok(())
+    } else {
+        Err(SetupError::Cancelled)
+    }
+}
+
+fn resolve_provider_authentication(
+    provider_id: String,
+    authentication: OpenAiAuthentication,
+) -> (String, bool) {
+    match (provider_id.as_str(), authentication) {
+        ("openai", OpenAiAuthentication::ChatGptBrowser) => ("openai-chatgpt".to_string(), false),
+        ("openai", OpenAiAuthentication::ChatGptHeadless) => ("openai-chatgpt".to_string(), true),
+        _ => (provider_id, false),
+    }
 }
 
 fn get_api_key(provider_config: &ProviderConfig) -> Result<String, SetupError> {

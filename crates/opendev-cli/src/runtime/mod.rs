@@ -17,7 +17,7 @@ pub use tools::build_system_prompt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use tracing::{debug, info};
 
 use opendev_agents::llm_calls::{LlmCallConfig, LlmCaller};
@@ -25,9 +25,9 @@ use opendev_agents::react_loop::{ReactLoop, ReactLoopConfig};
 use opendev_context::{ArtifactIndex, ContextCompactor};
 use opendev_history::SessionManager;
 use opendev_history::topic_detector::TopicDetector;
-use opendev_http::HttpClient;
 use opendev_http::adapted_client::AdaptedClient;
 use opendev_http::adapters::base::ProviderAdapter;
+use opendev_http::{CredentialStore, HttpClient};
 use opendev_mcp::McpManager;
 use opendev_models::AppConfig;
 use opendev_repl::HandlerRegistry;
@@ -103,6 +103,10 @@ impl AgentRuntime {
         working_dir: &Path,
         session_manager: SessionManager,
     ) -> Result<Self, String> {
+        if config.model_provider == "openai-chatgpt" && !config.experimental.chatgpt_auth {
+            return Err("openai-chatgpt requires experimental.chatgpt_auth = true".to_string());
+        }
+
         // Set up tool registry with overflow storage for truncated tool outputs.
         let overflow_dir = working_dir.join(".opendev").join("tool-output");
         // Clean up overflow files older than 7 days on startup.
@@ -223,174 +227,15 @@ impl AgentRuntime {
         // Effective base URL: config override > registry > provider default
         let effective_base_url = config.api_base_url.clone().or(registry_base_url);
 
-        let (api_url, headers, adapter): (
-            String,
-            HeaderMap,
-            Option<Box<dyn opendev_http::adapters::base::ProviderAdapter>>,
-        ) = match provider.as_str() {
-            "anthropic" => {
-                let adapter = opendev_http::adapters::anthropic::AnthropicAdapter::new();
-                let url = effective_base_url.unwrap_or_else(|| adapter.api_url().to_string());
-                let mut hdrs = HeaderMap::new();
-                // Anthropic uses x-api-key header (not Bearer)
-                if let Ok(val) = HeaderValue::from_str(&api_key) {
-                    hdrs.insert("x-api-key", val);
-                }
-                hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                for (key, value) in adapter.extra_headers() {
-                    if let (Ok(k), Ok(v)) = (
-                        reqwest::header::HeaderName::from_bytes(key.as_bytes()),
-                        HeaderValue::from_str(&value),
-                    ) {
-                        hdrs.insert(k, v);
-                    }
-                }
-                (
-                    url,
-                    hdrs,
-                    Some(
-                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
-                    ),
-                )
-            }
-            "openai" => {
-                // OpenAI uses /v1/responses (Responses API) with Bearer auth
-                let adapter = opendev_http::adapters::openai::OpenAiAdapter::new();
-                let url = effective_base_url.unwrap_or_else(|| adapter.api_url().to_string());
-                let mut hdrs = HeaderMap::new();
-                if let Ok(val) = HeaderValue::from_str(&format!("Bearer {api_key}")) {
-                    hdrs.insert(AUTHORIZATION, val);
-                }
-                hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                (
-                    url,
-                    hdrs,
-                    Some(
-                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
-                    ),
-                )
-            }
-            "ollama" => {
-                let adapter = opendev_http::adapters::ollama::OllamaAdapter::new();
-                let url = effective_base_url.unwrap_or_else(|| adapter.api_url().to_string());
-                let mut hdrs = HeaderMap::new();
-                hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                (
-                    url,
-                    hdrs,
-                    Some(
-                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
-                    ),
-                )
-            }
-            "gemini" | "google" => {
-                let adapter = opendev_http::adapters::gemini::GeminiAdapter::new(&config.model);
-                let api_url = effective_base_url
-                    .map(|base| {
-                        opendev_http::adapters::gemini::gemini_api_url(&base, &config.model)
-                    })
-                    .unwrap_or_else(|| {
-                        opendev_http::adapters::gemini::gemini_api_url(
-                            adapter.api_url(),
-                            &config.model,
-                        )
-                    });
-                let mut hdrs = HeaderMap::new();
-                // Gemini uses x-goog-api-key header
-                if let Ok(val) = HeaderValue::from_str(&api_key) {
-                    hdrs.insert("x-goog-api-key", val);
-                }
-                hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                (
-                    api_url,
-                    hdrs,
-                    Some(
-                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
-                    ),
-                )
-            }
-            "azure" => {
-                let base = effective_base_url
-                    .as_deref()
-                    .unwrap_or("https://api.openai.com");
-                let deployment = &config.model;
-                let url = format!(
-                    "{}/openai/deployments/{deployment}/chat/completions?api-version=2024-10-21",
-                    base.trim_end_matches('/')
-                );
-                let mut hdrs = HeaderMap::new();
-                if let Ok(val) = HeaderValue::from_str(&api_key) {
-                    hdrs.insert("api-key", val);
-                }
-                hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                let adapter = opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
-                    url.clone(),
-                );
-                (
-                    url,
-                    hdrs,
-                    Some(
-                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
-                    ),
-                )
-            }
-            provider => {
-                // OpenAI-compatible providers — use registry/config base URL or fall back
-                let url = effective_base_url
-                    .map(|base| {
-                        let trimmed = base.trim_end_matches('/');
-                        if trimmed.ends_with("/chat/completions") {
-                            trimmed.to_string()
-                        } else {
-                            format!("{trimmed}/chat/completions")
-                        }
-                    })
-                    .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_string());
-
-                let mut hdrs = HeaderMap::new();
-                if let Ok(val) = HeaderValue::from_str(&format!("Bearer {api_key}")) {
-                    hdrs.insert(AUTHORIZATION, val);
-                }
-                hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-                if provider == "openrouter"
-                    && let Ok(val) = HeaderValue::from_str("https://opendev.ai")
-                {
-                    hdrs.insert("HTTP-Referer", val);
-                }
-                let adapter = opendev_http::adapters::chat_completions::ChatCompletionsAdapter::new(
-                    url.clone(),
-                );
-                (
-                    url,
-                    hdrs,
-                    Some(
-                        Box::new(adapter) as Box<dyn opendev_http::adapters::base::ProviderAdapter>
-                    ),
-                )
-            }
-        };
-
-        let circuit_breaker =
-            std::sync::Arc::new(opendev_http::CircuitBreaker::with_defaults(&provider));
-        let raw_http_client = HttpClient::new(api_url.clone(), headers, None)
-            .map_err(|e| format!("Failed to create HTTP client: {e}"))?
-            .with_circuit_breaker(circuit_breaker);
-
-        // DashScope Coding Plan endpoint rejects reqwest — must use curl subprocess.
-        let needs_curl = api_url.contains("coding-intl.dashscope.aliyuncs.com");
-        let curl_auth = needs_curl.then(|| format!("Authorization: Bearer {api_key}"));
-
-        let http_client = Arc::new({
-            let client = match adapter {
-                Some(a) => AdaptedClient::with_adapter(raw_http_client, a),
-                None => AdaptedClient::new(raw_http_client),
-            };
-            if let Some(auth) = curl_auth {
-                client.with_curl_transport(auth)
-            } else {
-                client
-            }
-        });
+        // Keep startup and model-switch construction on the same path.  In
+        // particular, this prevents an OpenAI-owned model switch from quietly
+        // changing a ChatGPT OAuth session into Platform API-key auth.
+        let http_client = Arc::new(Self::build_http_client(
+            &provider,
+            &api_key,
+            &config.model,
+            effective_base_url.as_deref(),
+        )?);
 
         // Check model capabilities via models.dev metadata
         let (supports_temperature, model_max_tokens, model_context_length) = {
@@ -716,13 +561,18 @@ impl AgentRuntime {
 }
 
 impl AgentRuntime {
-    /// Drop the tool-approval channel sender so Bash and MCP tools auto-execute
-    /// without prompting. The corresponding receiver is only consumed by the TUI;
-    /// callers that don't run a TUI (non-interactive `-p` mode, or interactive with
-    /// `--dangerously-skip-permissions`) must call this or the approval gate will
-    /// block forever on a response that never comes.
+    /// Drop interactive approval channels for headless execution.
+    ///
+    /// The corresponding receivers are only consumed by the TUI. In particular,
+    /// `EnterPlanMode` must be re-registered without its TUI approval sender:
+    /// otherwise a non-interactive `-p` request that creates a plan waits forever
+    /// for an approval response no process can provide.
     pub fn disable_tool_approvals(&mut self) {
         self.tool_approval_tx = None;
+        self.tool_registry
+            .register(Arc::new(PresentPlanTool::with_todo_manager(Arc::clone(
+                &self.todo_manager,
+            ))));
     }
 
     /// Compose the system prompt for the current turn.
@@ -803,14 +653,20 @@ impl AgentRuntime {
             };
 
         // Detect current provider
-        let current_provider = {
-            if let Some((pid, _, _)) = registry.find_model_by_id(old_model) {
-                pid.to_string()
-            } else {
-                // Can't determine current provider — force rebuild
-                String::new()
-            }
+        let current_provider = if self.config.model_provider == "openai-chatgpt"
+            && registry
+                .find_model_by_id(old_model)
+                .is_some_and(|(provider, _, _)| provider == "openai")
+        {
+            "openai-chatgpt".to_string()
+        } else if let Some((pid, _, _)) = registry.find_model_by_id(old_model) {
+            pid.to_string()
+        } else {
+            // Can't determine current provider — force rebuild.
+            String::new()
         };
+        let target_provider =
+            select_transport_provider(&new_provider_id, &self.config.model_provider);
 
         // Update model name
         self.llm_caller.config.model = new_model.to_string();
@@ -843,18 +699,14 @@ impl AgentRuntime {
         }
 
         // If provider changed, rebuild the HTTP client
-        if new_provider_id != current_provider {
+        if target_provider != current_provider {
             let (api_key, base_url) =
-                resolve_switch_credentials(&registry, &new_provider_id, &self.config)?;
-            let new_client = Self::build_http_client(
-                &new_provider_id,
-                &api_key,
-                new_model,
-                base_url.as_deref(),
-            )?;
+                resolve_switch_credentials(&registry, target_provider, &self.config)?;
+            let new_client =
+                Self::build_http_client(target_provider, &api_key, new_model, base_url.as_deref())?;
             self.http_client = Arc::new(new_client);
             info!(
-                provider = %new_provider_id,
+                provider = %target_provider,
                 model = new_model,
                 "Rebuilt HTTP client for new provider"
             );
@@ -908,6 +760,20 @@ impl AgentRuntime {
                     hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
                     (
                         url,
+                        hdrs,
+                        Some(Box::new(adapter) as Box<dyn ProviderAdapter>),
+                    )
+                }
+                "openai-chatgpt" => {
+                    let adapter =
+                        opendev_http::adapters::openai_chatgpt::OpenAiChatGptAdapter::new();
+                    let mut hdrs = HeaderMap::new();
+                    hdrs.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                    // The ChatGPT Codex endpoint only emits its streaming event
+                    // protocol when the client explicitly requests it.
+                    hdrs.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+                    (
+                        adapter.api_url().to_string(),
                         hdrs,
                         Some(Box::new(adapter) as Box<dyn ProviderAdapter>),
                     )
@@ -1006,6 +872,14 @@ impl AgentRuntime {
         let raw = HttpClient::new(api_url, headers, None)
             .map_err(|e| format!("Failed to create HTTP client: {e}"))?
             .with_circuit_breaker(circuit_breaker);
+        let raw = if provider == "openai-chatgpt" {
+            let auth =
+                opendev_http::chatgpt_auth::ChatGptAuthenticator::new(CredentialStore::new(None))
+                    .map_err(|e| format!("Failed to initialize ChatGPT authentication: {e}"))?;
+            raw.with_request_authenticator(Arc::new(auth))
+        } else {
+            raw
+        };
 
         let client = match adapter {
             Some(a) => AdaptedClient::with_adapter(raw, a),
@@ -1021,6 +895,17 @@ impl AgentRuntime {
     }
 }
 
+/// Model metadata identifies capability ownership, not necessarily billing or
+/// authentication. A ChatGPT OAuth session must keep its transport mode when
+/// moving between OpenAI-owned models.
+fn select_transport_provider<'a>(model_owner: &'a str, configured_provider: &str) -> &'a str {
+    if model_owner == "openai" && configured_provider == "openai-chatgpt" {
+        "openai-chatgpt"
+    } else {
+        model_owner
+    }
+}
+
 /// Resolve the API key and base URL for a provider switch.
 ///
 /// Falls back to built-in provider defaults when the registry has no entry
@@ -1032,6 +917,13 @@ fn resolve_switch_credentials(
     provider_id: &str,
     config: &opendev_models::AppConfig,
 ) -> Result<(String, Option<String>), String> {
+    if provider_id == "openai-chatgpt" {
+        if !config.experimental.chatgpt_auth {
+            return Err("openai-chatgpt requires experimental.chatgpt_auth = true".to_string());
+        }
+        return Ok((String::new(), None));
+    }
+
     let provider_info = registry.get_provider_or_builtin(provider_id);
     let registry_env = provider_info.as_ref().map(|pi| pi.api_key_env.as_str());
     let api_key = config

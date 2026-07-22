@@ -153,6 +153,25 @@ fn test_validate_zero_max_tokens() {
 }
 
 #[test]
+fn test_validate_chatgpt_provider_requires_explicit_opt_in_and_rejects_key_settings() {
+    let mut config = AppConfig {
+        model_provider: "openai-chatgpt".to_string(),
+        ..AppConfig::default()
+    };
+    let err = ConfigLoader::validate(&config).unwrap_err().to_string();
+    assert!(err.contains("experimental.chatgpt_auth"));
+
+    config.experimental.chatgpt_auth = true;
+    assert!(ConfigLoader::validate(&config).is_ok());
+
+    config.api_key = Some("not-allowed".to_string());
+    config.api_base_url = Some("https://untrusted.invalid".to_string());
+    let err = ConfigLoader::validate(&config).unwrap_err().to_string();
+    assert!(err.contains("does not accept api_key"));
+    assert!(err.contains("does not accept api_base_url"));
+}
+
+#[test]
 fn test_validate_multiple_errors() {
     let mut config = AppConfig::default();
     config.model = String::new();

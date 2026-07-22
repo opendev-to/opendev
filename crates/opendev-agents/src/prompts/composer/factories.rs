@@ -130,7 +130,7 @@ pub fn create_default_composer(templates_dir: impl AsRef<Path>) -> PromptCompose
     composer.register_section_with_policy(
         "provider_openai",
         "system/main/main-provider-openai.md",
-        Some(ctx_eq("model_provider", "openai")),
+        Some(ctx_in("model_provider", &["openai", "openai-chatgpt"])),
         80,
         CachePolicy::Static,
     );

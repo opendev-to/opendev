@@ -8,8 +8,92 @@ use crate::adapters::detect_provider_from_key;
 use crate::client::HttpClient;
 use crate::models::{HttpError, HttpResult};
 use crate::streaming::{StreamCallback, StreamEvent};
+use std::io::Write;
+use std::path::Path;
+use tempfile::NamedTempFile;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
+
+/// Create a short-lived curl configuration file for secret headers. Passing
+/// bearer tokens with `--header` exposes them in the child process argument
+/// list; curl's config format keeps the value out of argv instead. The file is
+/// unlinked when its guard drops after the subprocess exits.
+fn curl_header_config(headers: &[String]) -> Result<NamedTempFile, HttpError> {
+    let mut config = tempfile::Builder::new()
+        .prefix("opendev-curl-")
+        .suffix(".conf")
+        .tempfile()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(config.path(), std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    for header in headers {
+        // HTTP header values cannot legally contain a line break. Reject one
+        // instead of allowing it to introduce arbitrary curl config options.
+        if header.contains(['\r', '\n']) {
+            return Err(HttpError::Auth(
+                "invalid header value for curl transport".into(),
+            ));
+        }
+        let escaped = header.replace('\\', "\\\\").replace('"', "\\\"");
+        writeln!(config, "header = \"{escaped}\"")?;
+    }
+    config.flush()?;
+    Ok(config)
+}
+
+fn curl_response_status(headers_path: &Path) -> Option<u16> {
+    let headers = std::fs::read_to_string(headers_path).ok()?;
+    // `--location` may produce multiple response blocks; use the final one.
+    headers
+        .split("\r\n\r\n")
+        .filter_map(|block| block.lines().next())
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .filter_map(|status| status.parse::<u16>().ok())
+        .last()
+}
+
+fn curl_header_value(headers_path: &Path, name: &str) -> Option<String> {
+    let headers = std::fs::read_to_string(headers_path).ok()?;
+    let final_block = headers
+        .split("\r\n\r\n")
+        .filter(|block| block.starts_with("HTTP/"))
+        .last()?;
+    final_block.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case(name)
+            .then(|| value.trim().to_string())
+    })
+}
+
+/// Make an unexpected HTTP response useful for diagnosis without copying an
+/// unbounded body (which may contain private provider output) into an error.
+fn response_body_preview(bytes: &[u8]) -> String {
+    const MAX_CHARS: usize = 512;
+
+    let mut preview = String::from_utf8_lossy(bytes)
+        .chars()
+        .take(MAX_CHARS)
+        .collect::<String>();
+    if bytes.len() > preview.len() {
+        preview.push('…');
+    }
+    preview.replace(['\r', '\n', '\t'], " ")
+}
+
+/// ChatGPT's Codex endpoint currently streams valid SSE while omitting the
+/// Content-Type header.  A present, non-SSE content type remains the signal for
+/// the JSON fallback; an absent header is handled as an SSE stream.
+fn is_sse_response(content_type: &str, is_chatgpt: bool) -> bool {
+    let content_type = content_type.trim();
+    content_type.contains("text/event-stream") || (is_chatgpt && content_type.is_empty())
+}
+
+fn should_merge_streamed_chatgpt_output(provider: &str) -> bool {
+    provider == "openai-chatgpt"
+}
 
 /// Per-block accumulator for Anthropic extended-thinking output during SSE streaming.
 ///
@@ -76,6 +160,7 @@ impl AdaptedClient {
     /// Recognized providers:
     /// - `"anthropic"` → [`AnthropicAdapter`](crate::adapters::anthropic::AnthropicAdapter)
     /// - `"openai"` → [`OpenAiAdapter`](crate::adapters::openai::OpenAiAdapter)
+    /// - `"openai-chatgpt"` → ChatGPT Codex Responses adapter
     /// - `"gemini"` | `"google"` → [`GeminiAdapter`](crate::adapters::gemini::GeminiAdapter)
     ///
     /// Returns `None` for providers that use the Chat Completions format natively
@@ -84,6 +169,9 @@ impl AdaptedClient {
         match provider {
             "anthropic" => Some(Box::new(crate::adapters::anthropic::AnthropicAdapter::new())),
             "openai" => Some(Box::new(crate::adapters::openai::OpenAiAdapter::new())),
+            "openai-chatgpt" => Some(Box::new(
+                crate::adapters::openai_chatgpt::OpenAiChatGptAdapter::new(),
+            )),
             "gemini" | "google" => {
                 Some(Box::new(crate::adapters::gemini::GeminiAdapter::default()))
             }
@@ -163,6 +251,13 @@ impl AdaptedClient {
 
         let body = serde_json::to_vec(payload)
             .map_err(|e| HttpError::Other(format!("serialize error: {e}")))?;
+        let curl_config = curl_header_config(&[
+            auth_header.to_string(),
+            "Content-Type: application/json".to_string(),
+        ])?;
+        let response_headers = tempfile::Builder::new()
+            .prefix("opendev-curl-response-")
+            .tempfile()?;
 
         let mut child = tokio::process::Command::new("curl")
             .args([
@@ -173,10 +268,14 @@ impl AdaptedClient {
                 "--request",
                 "POST",
                 url,
-                "--header",
-                auth_header,
-                "--header",
-                "Content-Type: application/json",
+                "--config",
+                curl_config.path().to_str().ok_or_else(|| {
+                    HttpError::Other("curl config path was not valid UTF-8".to_string())
+                })?,
+                "--dump-header",
+                response_headers.path().to_str().ok_or_else(|| {
+                    HttpError::Other("curl header path was not valid UTF-8".to_string())
+                })?,
                 "--data-binary",
                 "@-",
             ])
@@ -213,8 +312,38 @@ impl AdaptedClient {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let status = curl_response_status(response_headers.path());
+        let retry_after = curl_header_value(response_headers.path(), "retry-after");
+        let retry_after_ms = curl_header_value(response_headers.path(), "retry-after-ms");
         match serde_json::from_str::<serde_json::Value>(&stdout) {
             Ok(body_val) => {
+                let status = status.unwrap_or(200);
+                if self.client.is_retryable_status(status) {
+                    let mut result =
+                        HttpResult::retryable_status(status, Some(body_val), retry_after)
+                            .with_request_id(request_id);
+                    result.retry_after_ms = retry_after_ms;
+                    return Ok(result);
+                }
+                if status >= 400 {
+                    let msg = body_val
+                        .get("error")
+                        .and_then(|error| error.get("message"))
+                        .and_then(|message| message.as_str())
+                        .unwrap_or("API error")
+                        .to_string();
+                    return Ok(HttpResult {
+                        success: false,
+                        status: Some(status),
+                        body: Some(body_val),
+                        error: Some(format!("[request_id={request_id}] {msg}")),
+                        interrupted: false,
+                        retryable: false,
+                        request_id: Some(request_id),
+                        retry_after: None,
+                        retry_after_ms: None,
+                    });
+                }
                 if let Some(err_obj) = body_val.get("error") {
                     let msg = err_obj
                         .get("message")
@@ -234,7 +363,7 @@ impl AdaptedClient {
                         retry_after_ms: None,
                     });
                 }
-                Ok(HttpResult::ok(200, body_val).with_request_id(request_id))
+                Ok(HttpResult::ok(status, body_val).with_request_id(request_id))
             }
             Err(e) => {
                 let msg = format!("parse error: {e}");
@@ -336,15 +465,24 @@ impl AdaptedClient {
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
+            .trim()
             .to_string();
         debug!(content_type = %content_type, status = %response.status(), "Streaming response headers received");
-        // If the response isn't SSE, fall back to reading as JSON
-        if !content_type.contains("text/event-stream") {
+        // If the response explicitly isn't SSE, fall back to reading as JSON.
+        // The ChatGPT Codex endpoint may omit Content-Type on valid SSE; do
+        // not apply that compatibility exception to unrelated providers.
+        if !is_sse_response(&content_type, adapter.provider_name() == "openai-chatgpt") {
             warn!(content_type = %content_type, "Streaming fallback: response is not SSE, reading as JSON");
-            let body = response
-                .json::<serde_json::Value>()
-                .await
-                .map_err(|e| HttpError::Other(format!("Failed to parse response: {e}")))?;
+            let status = response.status();
+            let bytes = response.bytes().await.map_err(|e| {
+                HttpError::Other(format!("Failed to read non-SSE response body: {e}"))
+            })?;
+            let body = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| {
+                HttpError::Other(format!(
+                    "Unexpected non-SSE response (status {status}, content-type {content_type:?}): {e}; body: {}",
+                    response_body_preview(&bytes)
+                ))
+            })?;
 
             // Check for API error
             if let Some(error_obj) = body.get("error") {
@@ -356,7 +494,7 @@ impl AdaptedClient {
             }
 
             let converted_body = adapter.convert_response(body);
-            return Ok(HttpResult::ok(200, converted_body));
+            return Ok(HttpResult::ok(status.as_u16(), converted_body));
         }
 
         // Read SSE events from the response body
@@ -653,7 +791,64 @@ impl AdaptedClient {
         // Convert the final accumulated response through the adapter
         match final_body {
             Some(body) => {
-                let converted = adapter.convert_response(body);
+                let mut converted = adapter.convert_response(body);
+
+                // The ChatGPT Codex stream can emit a complete function-call
+                // sequence while its final `response.completed` payload omits
+                // the corresponding `output` item. Preserve the streamed call
+                // when that converted final payload has no tool calls.
+                if should_merge_streamed_chatgpt_output(adapter.provider_name())
+                    && let Some(choice) = converted
+                        .get_mut("choices")
+                        .and_then(serde_json::Value::as_array_mut)
+                        .and_then(|choices| choices.first_mut())
+                {
+                    let needs_streamed_tool_calls = choice
+                        .get("message")
+                        .and_then(|message| message.get("tool_calls"))
+                        .and_then(serde_json::Value::as_array)
+                        .is_none_or(|calls| calls.is_empty());
+                    let needs_streamed_text = choice
+                        .get("message")
+                        .and_then(|message| message.get("content"))
+                        .is_none_or(|content| {
+                            content.is_null() || content.as_str().is_none_or(str::is_empty)
+                        });
+                    if needs_streamed_text
+                        && !accumulated_text.is_empty()
+                        && let Some(message) = choice.get_mut("message")
+                    {
+                        message["content"] = serde_json::Value::String(accumulated_text.clone());
+                    }
+                    let needs_streamed_reasoning = choice
+                        .get("message")
+                        .and_then(|message| message.get("reasoning_content"))
+                        .is_none_or(|content| {
+                            content.is_null() || content.as_str().is_none_or(str::is_empty)
+                        });
+                    if needs_streamed_reasoning
+                        && !accumulated_reasoning.is_empty()
+                        && let Some(message) = choice.get_mut("message")
+                    {
+                        message["reasoning_content"] =
+                            serde_json::Value::String(accumulated_reasoning.clone());
+                    }
+                    if needs_streamed_tool_calls && !tool_calls.is_empty() {
+                        let mut finalized = tool_calls;
+                        for (idx, args) in &current_tool_args {
+                            if let Some(call) = finalized.get_mut(*idx)
+                                && let Some(function) = call.get_mut("function")
+                            {
+                                function["arguments"] = serde_json::Value::String(args.clone());
+                            }
+                        }
+                        if let Some(message) = choice.get_mut("message") {
+                            message["tool_calls"] = serde_json::Value::Array(finalized);
+                            choice["finish_reason"] =
+                                serde_json::Value::String("tool_calls".to_string());
+                        }
+                    }
+                }
                 debug!("Streaming complete, final response converted");
                 Ok(HttpResult::ok(200, converted))
             }
@@ -753,6 +948,13 @@ impl AdaptedClient {
 
         let body = serde_json::to_vec(payload)
             .map_err(|e| HttpError::Other(format!("serialize error: {e}")))?;
+        let curl_config = curl_header_config(&[
+            auth_header.to_string(),
+            "Content-Type: application/json".to_string(),
+        ])?;
+        let response_headers = tempfile::Builder::new()
+            .prefix("opendev-curl-response-")
+            .tempfile()?;
 
         let mut child = tokio::process::Command::new("curl")
             .args([
@@ -764,10 +966,14 @@ impl AdaptedClient {
                 "--request",
                 "POST",
                 url,
-                "--header",
-                auth_header,
-                "--header",
-                "Content-Type: application/json",
+                "--config",
+                curl_config.path().to_str().ok_or_else(|| {
+                    HttpError::Other("curl config path was not valid UTF-8".to_string())
+                })?,
+                "--dump-header",
+                response_headers.path().to_str().ok_or_else(|| {
+                    HttpError::Other("curl header path was not valid UTF-8".to_string())
+                })?,
                 "--data-binary",
                 "@-",
             ])
@@ -909,6 +1115,29 @@ impl AdaptedClient {
         }
 
         let _ = child.wait().await;
+        let status = curl_response_status(response_headers.path()).unwrap_or(200);
+        if self.client.is_retryable_status(status) {
+            let mut result = HttpResult::retryable_status(
+                status,
+                None,
+                curl_header_value(response_headers.path(), "retry-after"),
+            );
+            result.retry_after_ms = curl_header_value(response_headers.path(), "retry-after-ms");
+            return Ok(result);
+        }
+        if status >= 400 {
+            return Ok(HttpResult {
+                success: false,
+                status: Some(status),
+                body: None,
+                error: Some(format!("curl streaming request failed with HTTP {status}")),
+                interrupted: false,
+                retryable: false,
+                request_id: None,
+                retry_after: None,
+                retry_after_ms: None,
+            });
+        }
 
         // Finalize tool call arguments
         for (idx, args) in &current_tool_args {

@@ -6,7 +6,30 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use crate::chatgpt_auth::RequestAuthenticator;
 use crate::models::{HttpError, HttpResult, RetryConfig};
+
+fn api_error_message(status: u16, body: &str) -> String {
+    let json_message = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .or_else(|| value.get("message"))
+                .or_else(|| value.get("detail"))
+                .and_then(|message| message.as_str().map(ToOwned::to_owned))
+        });
+    if let Some(message) = json_message.filter(|message| !message.trim().is_empty()) {
+        return message;
+    }
+
+    let body = body.trim();
+    if body.is_empty() {
+        format!("HTTP {status}")
+    } else {
+        body.chars().take(1_024).collect()
+    }
+}
 
 /// Timeout configuration for HTTP requests.
 #[derive(Debug, Clone)]
@@ -34,9 +57,15 @@ impl Default for TimeoutConfig {
 /// - Cancellation via `CancellationToken` (checked between retries and via `tokio::select!`)
 pub struct HttpClient {
     client: reqwest::Client,
+    /// A separate transport for requests that attach refreshable OAuth
+    /// credentials. Redirects are disabled here so those credentials can
+    /// never be forwarded to a different origin.
+    authenticated_client: reqwest::Client,
     api_url: String,
     retry_config: RetryConfig,
     circuit_breaker: Option<std::sync::Arc<crate::circuit_breaker::CircuitBreaker>>,
+    /// Optional dynamic auth applied immediately before every physical send.
+    authenticator: Option<std::sync::Arc<dyn RequestAuthenticator>>,
 }
 
 impl HttpClient {
@@ -48,23 +77,47 @@ impl HttpClient {
     ) -> Result<Self, HttpError> {
         let timeout = timeout.unwrap_or_default();
         let client = reqwest::Client::builder()
+            .default_headers(headers.clone())
+            .connect_timeout(timeout.connect)
+            .timeout(timeout.read)
+            .build()?;
+        let authenticated_client = reqwest::Client::builder()
             .default_headers(headers)
             .connect_timeout(timeout.connect)
             .timeout(timeout.read)
+            // Dynamic OAuth headers must never be carried through a redirect
+            // to an origin other than the source-pinned backend endpoint.
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
 
         Ok(Self {
             client,
+            authenticated_client,
             api_url: api_url.into(),
             retry_config: RetryConfig::default(),
             circuit_breaker: None,
+            authenticator: None,
         })
+    }
+
+    fn request_client(&self) -> &reqwest::Client {
+        if self.authenticator.is_some() {
+            &self.authenticated_client
+        } else {
+            &self.client
+        }
     }
 
     /// Create a client with custom retry configuration.
     pub fn with_retry_config(mut self, config: RetryConfig) -> Self {
         self.retry_config = config;
         self
+    }
+
+    /// Shared by the curl fallback so both physical transports classify HTTP
+    /// statuses with the same retry policy.
+    pub(crate) fn is_retryable_status(&self, status: u16) -> bool {
+        self.retry_config.is_retryable_status(status)
     }
 
     /// Attach a circuit breaker to this client.
@@ -76,6 +129,16 @@ impl HttpClient {
         cb: std::sync::Arc<crate::circuit_breaker::CircuitBreaker>,
     ) -> Self {
         self.circuit_breaker = Some(cb);
+        self
+    }
+
+    /// Attach refresh-aware request authentication. Unlike default headers,
+    /// these are generated per send so retries cannot reuse an expired token.
+    pub fn with_request_authenticator(
+        mut self,
+        authenticator: std::sync::Arc<dyn RequestAuthenticator>,
+    ) -> Self {
+        self.authenticator = Some(authenticator);
         self
     }
 
@@ -98,6 +161,7 @@ impl HttpClient {
         }
 
         let mut last_result: Option<HttpResult> = None;
+        let mut used_auth_retry = false;
 
         for attempt in 0..=self.retry_config.max_retries {
             // Check cancellation before each attempt
@@ -107,7 +171,18 @@ impl HttpClient {
                 return Ok(HttpResult::interrupted());
             }
 
-            let result = self.execute_request(payload, cancel).await;
+            let mut result = self.execute_request(payload, cancel).await;
+            // A token can be revoked after the pre-send expiry check. Refresh
+            // once and replay this physical request without consuming normal
+            // 429/5xx retry budget or opening the circuit on the first 401.
+            if matches!(&result, Ok(response) if response.status == Some(401))
+                && !used_auth_retry
+                && let Some(authenticator) = &self.authenticator
+            {
+                used_auth_retry = true;
+                authenticator.force_refresh(cancel).await?;
+                result = self.execute_request(payload, cancel).await;
+            }
 
             match result {
                 Ok(hr) if hr.success => {
@@ -215,8 +290,8 @@ impl HttpClient {
         let request_id = Uuid::new_v4().to_string();
         debug!(request_id = %request_id, api_url = %self.api_url, "Sending LLM request");
 
-        let request = self
-            .client
+        let mut request = self
+            .request_client()
             .post(&self.api_url)
             .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
             .header(
@@ -224,8 +299,11 @@ impl HttpClient {
                 HeaderValue::from_str(&request_id)
                     .unwrap_or_else(|_| HeaderValue::from_static("unknown")),
             )
-            .json(payload)
-            .send();
+            .json(payload);
+        if let Some(authenticator) = &self.authenticator {
+            request = request.headers(authenticator.headers_for_request(cancel).await?);
+        }
+        let request = request.send();
 
         let response = match cancel {
             Some(token) => {
@@ -351,6 +429,17 @@ impl HttpClient {
         payload: &serde_json::Value,
         cancel: Option<&CancellationToken>,
     ) -> Result<reqwest::Response, HttpError> {
+        self.send_streaming_request_inner(url, payload, cancel, false)
+            .await
+    }
+
+    async fn send_streaming_request_inner(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+        cancel: Option<&CancellationToken>,
+        used_auth_retry: bool,
+    ) -> Result<reqwest::Response, HttpError> {
         // Check circuit breaker
         if let Some(cb) = &self.circuit_breaker {
             cb.check()?;
@@ -369,8 +458,8 @@ impl HttpClient {
             let request_id = Uuid::new_v4().to_string();
             debug!(request_id = %request_id, api_url = %url, attempt, "Sending streaming LLM request");
 
-            let request = self
-                .client
+            let mut request = self
+                .request_client()
                 .post(url)
                 .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
                 .header(
@@ -378,8 +467,11 @@ impl HttpClient {
                     HeaderValue::from_str(&request_id)
                         .unwrap_or_else(|_| HeaderValue::from_static("unknown")),
                 )
-                .json(payload)
-                .send();
+                .json(payload);
+            if let Some(authenticator) = &self.authenticator {
+                request = request.headers(authenticator.headers_for_request(cancel).await?);
+            }
+            let request = request.send();
 
             let response = match cancel {
                 Some(token) => {
@@ -410,15 +502,7 @@ impl HttpClient {
                             .and_then(|v| v.to_str().ok())
                             .map(String::from);
                         let body = resp.text().await.unwrap_or_default();
-                        let error_msg = serde_json::from_str::<serde_json::Value>(&body)
-                            .ok()
-                            .and_then(|v| {
-                                v.get("error")
-                                    .and_then(|e| e.get("message"))
-                                    .and_then(|m| m.as_str())
-                                    .map(String::from)
-                            })
-                            .unwrap_or_else(|| format!("HTTP {status}"));
+                        let error_msg = api_error_message(status, &body);
 
                         // Transient status (429/5xx): if retries run out, surface
                         // as RetriesExhausted so callers still classify it as
@@ -450,18 +534,23 @@ impl HttpClient {
                             "Streaming request exhausted {} retries",
                             self.retry_config.max_retries
                         );
+                    } else if status == 401 && !used_auth_retry && self.authenticator.is_some() {
+                        // Drop the stale response before re-sending with one
+                        // forced refresh. This does not consume retry budget.
+                        drop(resp);
+                        self.authenticator
+                            .as_ref()
+                            .expect("checked authenticator")
+                            .force_refresh(cancel)
+                            .await?;
+                        return Box::pin(
+                            self.send_streaming_request_inner(url, payload, cancel, true),
+                        )
+                        .await;
                     } else if status >= 400 {
                         // Non-retryable error — fail immediately
                         let body = resp.text().await.unwrap_or_default();
-                        let error_msg = serde_json::from_str::<serde_json::Value>(&body)
-                            .ok()
-                            .and_then(|v| {
-                                v.get("error")
-                                    .and_then(|e| e.get("message"))
-                                    .and_then(|m| m.as_str())
-                                    .map(String::from)
-                            })
-                            .unwrap_or_else(|| format!("HTTP {status}"));
+                        let error_msg = api_error_message(status, &body);
                         warn!(request_id = %request_id, status, error = %error_msg, "Streaming request failed");
                         self.cb_record_failure();
                         return Err(HttpError::Other(format!(

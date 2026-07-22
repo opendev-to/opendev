@@ -95,6 +95,25 @@ fn test_get_api_key_allows_keyless_providers() {
 }
 
 #[test]
+fn test_openai_chatgpt_authentication_selects_the_oauth_provider() {
+    assert_eq!(
+        resolve_provider_authentication("openai".to_string(), OpenAiAuthentication::ChatGptBrowser,),
+        ("openai-chatgpt".to_string(), false)
+    );
+    assert_eq!(
+        resolve_provider_authentication(
+            "openai".to_string(),
+            OpenAiAuthentication::ChatGptHeadless,
+        ),
+        ("openai-chatgpt".to_string(), true)
+    );
+    assert_eq!(
+        resolve_provider_authentication("openai".to_string(), OpenAiAuthentication::ApiKey),
+        ("openai".to_string(), false)
+    );
+}
+
+#[test]
 fn test_setup_error_variants() {
     let errors: Vec<SetupError> = vec![
         SetupError::Cancelled,

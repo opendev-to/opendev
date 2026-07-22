@@ -64,6 +64,51 @@ fn test_resolve_switch_credentials_keyless_builtin_fallback() {
 }
 
 #[test]
+fn test_chatgpt_switch_never_falls_back_to_platform_api_key_authentication() {
+    let registry = opendev_config::ModelRegistry::new();
+    let config = AppConfig {
+        model_provider: "openai-chatgpt".to_string(),
+        api_key: Some("must-not-be-used".to_string()),
+        experimental: opendev_models::ExperimentalConfig { chatgpt_auth: true },
+        ..AppConfig::default()
+    };
+
+    let (key, base_url) = resolve_switch_credentials(&registry, "openai-chatgpt", &config).unwrap();
+    assert!(key.is_empty());
+    assert!(base_url.is_none());
+}
+
+#[test]
+fn test_shared_provider_factory_builds_keyless_chatgpt_client() {
+    let client = AgentRuntime::build_http_client("openai-chatgpt", "", "gpt-5.2-codex", None)
+        .expect("ChatGPT OAuth transport must not require a Platform API key");
+    assert_eq!(
+        client.api_url(),
+        "https://chatgpt.com/backend-api/codex/responses"
+    );
+    assert!(!client.uses_curl_transport());
+}
+
+#[test]
+fn test_chatgpt_provider_accepts_dynamically_discovered_models() {
+    AgentRuntime::build_http_client("openai-chatgpt", "", "gpt-5.4", None)
+        .expect("dynamic catalogue entries must reach the ChatGPT transport");
+}
+
+#[test]
+fn test_model_switch_keeps_chatgpt_transport_for_openai_models() {
+    assert_eq!(
+        select_transport_provider("openai", "openai-chatgpt"),
+        "openai-chatgpt"
+    );
+    assert_eq!(
+        select_transport_provider("anthropic", "openai-chatgpt"),
+        "anthropic"
+    );
+    assert_eq!(select_transport_provider("openai", "openai"), "openai");
+}
+
+#[test]
 fn test_resolve_switch_credentials_missing_key_errors() {
     // Provider that declares an API key env var which is not set, with no
     // key stored in config: must error with the env var hint.

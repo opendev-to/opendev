@@ -106,3 +106,95 @@ fn test_nonexistent_file() {
     // Use a provider with no env var to avoid interference
     assert!(store.get_key("testprovider").is_none());
 }
+
+#[test]
+fn test_chatgpt_oauth_credentials_are_typed_redacted_and_persistent() {
+    let dir = tempfile::tempdir().unwrap();
+    let auth_path = dir.path().join("auth.json");
+    let credential = ChatGptOAuthCredential {
+        access_token: "access-secret".to_string(),
+        refresh_token: "refresh-secret".to_string(),
+        expires_at_ms: 1_700_000_000_000,
+        account_id: Some("workspace-123".to_string()),
+    };
+
+    let mut store = CredentialStore::new(Some(auth_path.clone()));
+    store.store_chatgpt_oauth(credential.clone()).unwrap();
+    assert_eq!(store.get_chatgpt_oauth(), Some(credential));
+    let debug = format!("{:?}", store.get_chatgpt_oauth().unwrap());
+    assert!(!debug.contains("access-secret"));
+    assert!(!debug.contains("refresh-secret"));
+    assert!(debug.contains("[REDACTED]"));
+
+    let mut reloaded = CredentialStore::new(Some(auth_path));
+    assert!(reloaded.get_chatgpt_oauth().is_some());
+    assert!(reloaded.remove_chatgpt_oauth().unwrap());
+    assert!(reloaded.get_chatgpt_oauth().is_none());
+}
+
+#[test]
+fn test_chatgpt_oauth_read_bypasses_stale_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("auth.json");
+    let mut first = CredentialStore::new(Some(path.clone()));
+    let mut second = CredentialStore::new(Some(path));
+
+    first
+        .store_chatgpt_oauth(ChatGptOAuthCredential {
+            access_token: "first-access".to_string(),
+            refresh_token: "first-refresh".to_string(),
+            expires_at_ms: 1,
+            account_id: None,
+        })
+        .unwrap();
+    assert_eq!(
+        second.get_chatgpt_oauth().unwrap().access_token,
+        "first-access"
+    );
+
+    first
+        .store_chatgpt_oauth(ChatGptOAuthCredential {
+            access_token: "rotated-access".to_string(),
+            refresh_token: "rotated-refresh".to_string(),
+            expires_at_ms: 2,
+            account_id: None,
+        })
+        .unwrap();
+    assert_eq!(
+        second.get_chatgpt_oauth().unwrap().access_token,
+        "rotated-access"
+    );
+}
+
+#[test]
+fn test_chatgpt_oauth_successful_login_replaces_the_previous_credential() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = CredentialStore::new(Some(dir.path().join("auth.json")));
+
+    store
+        .store_chatgpt_oauth(ChatGptOAuthCredential {
+            access_token: "old-access".to_string(),
+            refresh_token: "old-refresh".to_string(),
+            expires_at_ms: 1,
+            account_id: Some("old-account".to_string()),
+        })
+        .unwrap();
+    store
+        .store_chatgpt_oauth(ChatGptOAuthCredential {
+            access_token: "new-access".to_string(),
+            refresh_token: "new-refresh".to_string(),
+            expires_at_ms: 2,
+            account_id: Some("new-account".to_string()),
+        })
+        .unwrap();
+
+    assert_eq!(
+        store.get_chatgpt_oauth(),
+        Some(ChatGptOAuthCredential {
+            access_token: "new-access".to_string(),
+            refresh_token: "new-refresh".to_string(),
+            expires_at_ms: 2,
+            account_id: Some("new-account".to_string()),
+        })
+    );
+}
