@@ -200,7 +200,38 @@ fn save_notebook(path: &PathBuf, notebook: &serde_json::Value) -> Result<(), Str
     } else {
         format!("{json}\n")
     };
-    std::fs::write(path, &json).map_err(|e| format!("Failed to write notebook: {e}"))
+
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new(""));
+    let temp_path = if parent.as_os_str().is_empty() {
+        std::path::PathBuf::from(format!(".tmp-{}", uuid::Uuid::new_v4()))
+    } else {
+        parent.join(format!(".tmp-{}", uuid::Uuid::new_v4()))
+    };
+
+    let write_res = (|| -> std::io::Result<()> {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        use std::io::Write;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+        Ok(())
+    })();
+
+    match write_res {
+        Ok(_) => {
+            if let Err(e) = std::fs::rename(&temp_path, path) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(format!("Cannot rename temp file for notebook: {e}"));
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp_path);
+            Err(format!("Failed to write notebook: {e}"))
+        }
+    }
 }
 
 /// Replace an existing cell's content. Returns (updated_cells, ToolResult) on success.
