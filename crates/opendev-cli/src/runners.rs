@@ -93,13 +93,14 @@ pub async fn run_non_interactive(
         config.default_agent = Some(a.to_string());
     }
 
-    let mut agent_runtime = match runtime::AgentRuntime::new(config, working_dir, session_manager) {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("Failed to initialize agent runtime: {e}");
-            std::process::exit(1);
-        }
-    };
+    let mut agent_runtime =
+        match runtime::AgentRuntime::new(config, working_dir, session_manager).await {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("Failed to initialize agent runtime: {e}");
+                std::process::exit(1);
+            }
+        };
 
     // No TUI to drain the approval channel — auto-execute every tool.
     agent_runtime.disable_tool_approvals();
@@ -283,7 +284,7 @@ pub async fn run_interactive(
 
     // Create agent runtime (prompt composer is initialized inside)
     let mut agent_runtime =
-        match runtime::AgentRuntime::new(config.clone(), working_dir, session_manager) {
+        match runtime::AgentRuntime::new(config.clone(), working_dir, session_manager).await {
             Ok(rt) => rt,
             Err(e) => {
                 eprintln!("Failed to initialize agent runtime: {e}");

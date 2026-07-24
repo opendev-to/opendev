@@ -1,14 +1,14 @@
 use super::*;
 
-#[test]
-fn test_runtime_creation() {
+#[tokio::test]
+async fn test_runtime_creation() {
     let tmp = tempfile::tempdir().unwrap();
     let session_dir = tmp.path().join("sessions");
     std::fs::create_dir_all(&session_dir).unwrap();
     let sm = SessionManager::new(session_dir).unwrap();
     let config = AppConfig::default();
 
-    let runtime = AgentRuntime::new(config, tmp.path(), sm);
+    let runtime = AgentRuntime::new(config, tmp.path(), sm).await;
     assert!(runtime.is_ok());
     let rt = runtime.unwrap();
     // Should have tools registered
@@ -20,24 +20,27 @@ fn test_runtime_creation() {
         "batch_tool should not be registered"
     );
     assert!(
-        !rt.tool_registry.get_schemas().iter().any(|schema| schema
-            .get("function")
-            .and_then(|f| f.get("name"))
-            .and_then(|n| n.as_str())
-            == Some("batch_tool")),
+        !rt.tool_registry
+            .get_schemas()
+            .iter()
+            .any(|schema: &serde_json::Value| schema
+                .get("function")
+                .and_then(|f: &serde_json::Value| f.get("name"))
+                .and_then(|n: &serde_json::Value| n.as_str())
+                == Some("batch_tool")),
         "batch_tool schema should not be exposed"
     );
 }
 
-#[test]
-fn test_runtime_debug_format() {
+#[tokio::test]
+async fn test_runtime_debug_format() {
     let tmp = tempfile::tempdir().unwrap();
     let session_dir = tmp.path().join("sessions");
     std::fs::create_dir_all(&session_dir).unwrap();
     let sm = SessionManager::new(session_dir).unwrap();
     let config = AppConfig::default();
 
-    let runtime = AgentRuntime::new(config, tmp.path(), sm).unwrap();
+    let runtime = AgentRuntime::new(config, tmp.path(), sm).await.unwrap();
     let debug = format!("{:?}", runtime);
     assert!(debug.contains("AgentRuntime"));
 }

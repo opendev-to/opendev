@@ -40,7 +40,7 @@ pub struct ConsolidationReport {
 }
 
 /// Check whether consolidation should run.
-pub async fn should_consolidate(working_dir: &Path) -> bool {
+pub fn should_consolidate(working_dir: &Path) -> bool {
     let paths = opendev_config::paths::Paths::new(Some(working_dir.to_path_buf()));
     let memory_dir = paths.project_memory_dir();
 
@@ -72,7 +72,7 @@ pub async fn should_consolidate(working_dir: &Path) -> bool {
     }
 
     // Count session files
-    let session_count = count_session_files(&memory_dir).await;
+    let session_count = count_session_files(&memory_dir);
     if session_count < MIN_SESSION_FILES {
         debug!(
             "Only {session_count} session files (need {MIN_SESSION_FILES}), skipping consolidation"

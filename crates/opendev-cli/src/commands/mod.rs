@@ -375,7 +375,9 @@ pub async fn handle_run(action: RunAction, working_dir: &std::path::Path) {
                     }
                 };
 
-            match crate::runtime::AgentRuntime::new(config, working_dir, runtime_session_manager) {
+            match crate::runtime::AgentRuntime::new(config, working_dir, runtime_session_manager)
+                .await
+            {
                 Ok(mut agent_runtime) => {
                     agent_runtime.start_mcp_connections();
 
