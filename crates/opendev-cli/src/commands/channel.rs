@@ -326,7 +326,8 @@ pub async fn handle_remote(
 
     // Create agent runtime
     let agent_runtime =
-        match crate::runtime::AgentRuntime::new(config.clone(), working_dir, session_manager) {
+        match crate::runtime::AgentRuntime::new(config.clone(), working_dir, session_manager).await
+        {
             Ok(rt) => rt,
             Err(e) => {
                 eprintln!("Failed to initialize agent runtime: {e}");

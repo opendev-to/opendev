@@ -52,6 +52,7 @@ impl ChannelAgentExecutor {
         session_manager.create_session();
 
         let runtime = AgentRuntime::new(self.config.clone(), &self.working_dir, session_manager)
+            .await
             .map_err(|e| {
                 ChannelError::AgentError(format!("failed to create agent runtime: {e}"))
             })?;

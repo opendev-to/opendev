@@ -17,14 +17,14 @@ fn test_parse_type_and_body_without_frontmatter() {
     assert_eq!(body, content.trim());
 }
 
-#[test]
-fn test_count_session_files_empty() {
+#[tokio::test]
+async fn test_count_session_files_empty() {
     let dir = TempDir::new().unwrap();
-    assert_eq!(count_session_files(dir.path()), 0);
+    assert_eq!(count_session_files(dir.path()).await, 0);
 }
 
-#[test]
-fn test_count_session_files_mixed() {
+#[tokio::test]
+async fn test_count_session_files_mixed() {
     let dir = TempDir::new().unwrap();
 
     // Session file (by name prefix)
@@ -51,11 +51,11 @@ fn test_count_session_files_mixed() {
     // MEMORY.md should be excluded
     std::fs::write(dir.path().join("MEMORY.md"), "# Index").unwrap();
 
-    assert_eq!(count_session_files(dir.path()), 2);
+    assert_eq!(count_session_files(dir.path()).await, 2);
 }
 
-#[test]
-fn test_scan_all_memory_files() {
+#[tokio::test]
+async fn test_scan_all_memory_files() {
     let dir = TempDir::new().unwrap();
 
     std::fs::write(
@@ -71,7 +71,7 @@ fn test_scan_all_memory_files() {
     std::fs::write(dir.path().join("MEMORY.md"), "# Index").unwrap();
     std::fs::write(dir.path().join("not-md.txt"), "text").unwrap();
 
-    let files = scan_all_memory_files(dir.path());
+    let files = scan_all_memory_files(dir.path()).await;
     assert_eq!(files.len(), 2);
     assert!(
         files
@@ -131,11 +131,11 @@ async fn test_regenerate_index() {
     assert!(index.contains("Beta file"));
 }
 
-#[test]
-fn test_should_consolidate_no_dir() {
+#[tokio::test]
+async fn test_should_consolidate_no_dir() {
     let dir = TempDir::new().unwrap();
     // No memory dir exists
-    assert!(!should_consolidate(dir.path()));
+    assert!(!should_consolidate(dir.path()).await);
 }
 
 #[test]

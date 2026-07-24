@@ -98,7 +98,7 @@ pub struct ToolChannelReceivers {
 
 impl AgentRuntime {
     /// Create a new agent runtime with all tools registered.
-    pub fn new(
+    pub async fn new(
         config: AppConfig,
         working_dir: &Path,
         session_manager: SessionManager,
@@ -671,7 +671,7 @@ impl AgentRuntime {
         // Check if memory consolidation should run (background, non-blocking)
         {
             let wd = working_dir.to_path_buf();
-            if opendev_agents::memory_consolidation::should_consolidate(&wd) {
+            if opendev_agents::memory_consolidation::should_consolidate(&wd).await {
                 tokio::spawn(async move {
                     tracing::info!("Starting background memory consolidation");
                     match opendev_agents::memory_consolidation::consolidate(&wd).await {

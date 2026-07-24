@@ -40,7 +40,7 @@ pub struct ConsolidationReport {
 }
 
 /// Check whether consolidation should run.
-pub fn should_consolidate(working_dir: &Path) -> bool {
+pub async fn should_consolidate(working_dir: &Path) -> bool {
     let paths = opendev_config::paths::Paths::new(Some(working_dir.to_path_buf()));
     let memory_dir = paths.project_memory_dir();
 
@@ -72,7 +72,7 @@ pub fn should_consolidate(working_dir: &Path) -> bool {
     }
 
     // Count session files
-    let session_count = count_session_files(&memory_dir);
+    let session_count = count_session_files(&memory_dir).await;
     if session_count < MIN_SESSION_FILES {
         debug!(
             "Only {session_count} session files (need {MIN_SESSION_FILES}), skipping consolidation"
@@ -129,7 +129,7 @@ pub async fn consolidate(working_dir: &Path) -> Option<ConsolidationReport> {
 
 async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<ConsolidationReport> {
     // Phase 1: Orient — collect all memory files
-    let all_files = scan_all_memory_files(memory_dir);
+    let all_files = scan_all_memory_files(memory_dir).await;
     let session_files: Vec<&MemoryFile> = all_files
         .iter()
         .filter(|f| f.file_type == "session")
@@ -309,14 +309,14 @@ struct MemoryFile {
     modified: SystemTime,
 }
 
-fn scan_all_memory_files(dir: &Path) -> Vec<MemoryFile> {
-    let read_dir = match std::fs::read_dir(dir) {
+async fn scan_all_memory_files(dir: &Path) -> Vec<MemoryFile> {
+    let mut read_dir = match tokio::fs::read_dir(dir).await {
         Ok(rd) => rd,
         Err(_) => return Vec::new(),
     };
 
     let mut files = Vec::new();
-    for entry in read_dir.flatten() {
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -328,10 +328,11 @@ fn scan_all_memory_files(dir: &Path) -> Vec<MemoryFile> {
 
         let modified = entry
             .metadata()
+            .await
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
 
-        let content = match std::fs::read_to_string(&path) {
+        let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(_) => continue,
         };
@@ -373,36 +374,36 @@ fn parse_type_and_body(content: &str) -> (String, String) {
     (file_type, trimmed.to_string())
 }
 
-fn count_session_files(dir: &Path) -> usize {
-    let read_dir = match std::fs::read_dir(dir) {
+async fn count_session_files(dir: &Path) -> usize {
+    let mut read_dir = match tokio::fs::read_dir(dir).await {
         Ok(rd) => rd,
         Err(_) => return 0,
     };
 
-    read_dir
-        .flatten()
-        .filter(|entry| {
-            let path = entry.path();
-            if !path.is_file() {
-                return false;
+    let mut count = 0;
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !name.ends_with(".md") || name == "MEMORY.md" {
+            continue;
+        }
+        // Quick check: session files start with "session-"
+        if name.starts_with("session-") {
+            count += 1;
+            continue;
+        }
+        // Full check: read frontmatter for type: session
+        if let Ok(content) = tokio::fs::read_to_string(path).await {
+            let (ft, _) = parse_type_and_body(&content);
+            if ft == "session" {
+                count += 1;
             }
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.ends_with(".md") || name == "MEMORY.md" {
-                return false;
-            }
-            // Quick check: session files start with "session-"
-            if name.starts_with("session-") {
-                return true;
-            }
-            // Full check: read frontmatter for type: session
-            if let Ok(content) = std::fs::read_to_string(path) {
-                let (ft, _) = parse_type_and_body(&content);
-                ft == "session"
-            } else {
-                false
-            }
-        })
-        .count()
+        }
+    }
+    count
 }
 
 fn load_meta(path: &Path) -> ConsolidationMeta {
