@@ -130,8 +130,31 @@ pub(super) fn apply_structured_patch(patch: &str, cwd: &Path) -> ToolResult {
                 if let Err(e) = ensure_parent(&full) {
                     return ToolResult::fail(format!("Cannot create directory for {path}: {e}"));
                 }
-                if let Err(e) = std::fs::write(&full, content) {
-                    return ToolResult::fail(format!("Cannot write {path}: {e}"));
+                let tmp_path = full.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_path)
+                {
+                    Ok(mut f) => {
+                        use std::io::Write;
+                        if let Err(e) = f.write_all(content.as_bytes()).and_then(|_| f.sync_all()) {
+                            let _ = std::fs::remove_file(&tmp_path);
+                            return ToolResult::fail(format!("Cannot write {path}: {e}"));
+                        }
+                        drop(f);
+                        if let Err(e) = std::fs::rename(&tmp_path, &full) {
+                            let _ = std::fs::remove_file(&tmp_path);
+                            return ToolResult::fail(format!(
+                                "Cannot rename temporary file for {path}: {e}"
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        return ToolResult::fail(format!(
+                            "Cannot create temporary file for {path}: {e}"
+                        ));
+                    }
                 }
                 summary.push(format!("A {path}"));
             }
@@ -155,8 +178,34 @@ pub(super) fn apply_structured_patch(patch: &str, cwd: &Path) -> ToolResult {
                 // Copy content then delete old
                 match std::fs::read(&old_full) {
                     Ok(data) => {
-                        if let Err(e) = std::fs::write(&new_full, &data) {
-                            return ToolResult::fail(format!("Cannot write {new_path}: {e}"));
+                        let tmp_path =
+                            new_full.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+                        match std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&tmp_path)
+                        {
+                            Ok(mut f) => {
+                                use std::io::Write;
+                                if let Err(e) = f.write_all(&data).and_then(|_| f.sync_all()) {
+                                    let _ = std::fs::remove_file(&tmp_path);
+                                    return ToolResult::fail(format!(
+                                        "Cannot write {new_path}: {e}"
+                                    ));
+                                }
+                                drop(f);
+                                if let Err(e) = std::fs::rename(&tmp_path, &new_full) {
+                                    let _ = std::fs::remove_file(&tmp_path);
+                                    return ToolResult::fail(format!(
+                                        "Cannot rename temporary file for {new_path}: {e}"
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                return ToolResult::fail(format!(
+                                    "Cannot create temporary file for {new_path}: {e}"
+                                ));
+                            }
                         }
                         if let Err(e) = std::fs::remove_file(&old_full) {
                             return ToolResult::fail(format!("Cannot remove {old_path}: {e}"));
@@ -178,8 +227,34 @@ pub(super) fn apply_structured_patch(patch: &str, cwd: &Path) -> ToolResult {
                 };
                 match apply_context_changes(&content, changes) {
                     Ok(new_content) => {
-                        if let Err(e) = std::fs::write(&full, &new_content) {
-                            return ToolResult::fail(format!("Cannot write {path}: {e}"));
+                        let tmp_path = full.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+                        match std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&tmp_path)
+                        {
+                            Ok(mut f) => {
+                                use std::io::Write;
+                                if let Err(e) = f
+                                    .write_all(new_content.as_bytes())
+                                    .and_then(|_| f.sync_all())
+                                {
+                                    let _ = std::fs::remove_file(&tmp_path);
+                                    return ToolResult::fail(format!("Cannot write {path}: {e}"));
+                                }
+                                drop(f);
+                                if let Err(e) = std::fs::rename(&tmp_path, &full) {
+                                    let _ = std::fs::remove_file(&tmp_path);
+                                    return ToolResult::fail(format!(
+                                        "Cannot rename temporary file for {path}: {e}"
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                return ToolResult::fail(format!(
+                                    "Cannot create temporary file for {path}: {e}"
+                                ));
+                            }
                         }
                     }
                     Err(e) => {
