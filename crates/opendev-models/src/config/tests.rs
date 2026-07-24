@@ -1,4 +1,10 @@
 use super::*;
+use std::sync::Mutex;
+
+// `std::env::set_var`/`remove_var` mutate process-wide state, and Rust runs
+// tests in parallel by default. Tests that touch OPENAI_API_KEY must hold
+// this lock for their duration or they race each other's set/remove calls.
+static OPENAI_API_KEY_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_default_config() {
@@ -31,6 +37,7 @@ fn test_partial_config_deserialization() {
 
 #[test]
 fn test_get_api_key_prefers_env_over_config() {
+    let _guard = OPENAI_API_KEY_ENV_LOCK.lock().unwrap();
     let env_name = "OPENAI_API_KEY";
     let old = std::env::var(env_name).ok();
     unsafe {
@@ -66,6 +73,7 @@ fn test_get_api_key_custom_provider_prefers_config_key() {
 fn test_get_api_key_custom_provider_openai_env_fallback() {
     // Unknown provider without config key → falls back to OPENAI_API_KEY
     // We isolate this test by ensuring OPENAI_API_KEY is set.
+    let _guard = OPENAI_API_KEY_ENV_LOCK.lock().unwrap();
     let old_key = std::env::var("OPENAI_API_KEY").ok();
     unsafe {
         std::env::set_var("OPENAI_API_KEY", "dummy-key-for-test");
