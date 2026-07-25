@@ -6,6 +6,7 @@ license.workspace = true
 description = "Symbol operations for OpenDev: find, references, rename, and replace body via LSP"
 
 [dependencies]
+uuid = { workspace = true }
 opendev-models = { workspace = true }
 opendev-config = { workspace = true }
 opendev-tools-core = { workspace = true }

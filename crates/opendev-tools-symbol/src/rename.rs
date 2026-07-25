@@ -129,7 +129,30 @@ fn apply_file_edits(file_path: &Path, edits: &[TextEdit]) -> Result<usize, Symbo
     }
 
     let result = lines.join("\n");
-    std::fs::write(file_path, result)?;
+
+    use std::io::Write;
+    let tmp_name = format!("{}.tmp", uuid::Uuid::new_v4());
+    let tmp_path = file_path.with_file_name(&tmp_name);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+
+    let write_result = opts.open(&tmp_path).and_then(|mut f| {
+        f.write_all(result.as_bytes())?;
+        f.sync_all()
+    });
+
+    match write_result {
+        Ok(_) => {
+            if let Err(e) = std::fs::rename(&tmp_path, file_path) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(SymbolError::Io(e));
+            }
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(SymbolError::Io(e));
+        }
+    }
 
     Ok(sorted.len())
 }
