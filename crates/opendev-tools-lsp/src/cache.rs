@@ -180,8 +180,30 @@ impl SymbolCache {
         let file = ws_dir.join(format!("{}.json", Self::cache_key(query)));
         match serde_json::to_string(entry) {
             Ok(content) => {
-                if let Err(e) = tokio::fs::write(&file, content).await {
-                    warn!("Failed to write cache file: {}", e);
+                let temp_name = format!(".{}.tmp", uuid::Uuid::new_v4());
+                let temp_path = ws_dir.join(&temp_name);
+
+                let mut opts = tokio::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+
+                let write_result = async {
+                    use tokio::io::AsyncWriteExt;
+                    let mut temp_file = opts.open(&temp_path).await?;
+                    temp_file.write_all(content.as_bytes()).await?;
+                    temp_file.sync_all().await?;
+                    Ok::<(), std::io::Error>(())
+                }
+                .await;
+
+                if let Err(e) = write_result {
+                    warn!("Failed to write to temp cache file: {}", e);
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    return;
+                }
+
+                if let Err(e) = tokio::fs::rename(&temp_path, &file).await {
+                    warn!("Failed to rename temp cache file: {}", e);
+                    let _ = tokio::fs::remove_file(&temp_path).await;
                 }
             }
             Err(e) => warn!("Failed to serialize cache entry: {}", e),
