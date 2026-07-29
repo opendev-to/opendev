@@ -96,3 +96,6 @@
 ## 2024-11-20 - Replacing synchronous std::fs operations with tokio::fs in memory consolidation
 **Learning:** In `crates/opendev-agents/src/memory_consolidation.rs`, using synchronous `std::fs` operations inside `scan_all_memory_files` and `count_session_files` blocks the async executor thread.
 **Action:** Replace `std::fs` calls within these functions with `tokio::fs` equivalents and make them `async` to ensure non-blocking file I/O operations and improve overall application concurrency.
+## 2024-11-20 - Replacing synchronous std::fs operations with tokio::fs in memory consolidation
+**Learning:** In `crates/opendev-agents/src/memory_consolidation.rs`, using synchronous `std::fs` operations inside `load_meta` and `save_meta` blocks the async executor thread, even though these are called from async contexts.
+**Action:** Replace `std::fs` calls within these functions with `tokio::fs` equivalents and make them `async` to ensure non-blocking file I/O operations and improve overall application concurrency.
