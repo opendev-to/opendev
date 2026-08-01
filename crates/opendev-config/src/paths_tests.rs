@@ -50,6 +50,15 @@ fn test_opendev_dir_env_override() {
 
     unsafe { env::set_var(key, "/tmp/custom-opendev") };
     let paths = Paths::new(Some(PathBuf::from("/tmp/wd")));
+
+    // Restore early so we don't pollute other tests that run in parallel
+    unsafe {
+        match original {
+            Some(ref v) => env::set_var(key, v),
+            None => env::remove_var(key),
+        }
+    }
+
     assert_eq!(paths.global_dir(), PathBuf::from("/tmp/custom-opendev"));
     assert_eq!(
         paths.global_settings(),
@@ -63,12 +72,6 @@ fn test_opendev_dir_env_override() {
         paths.global_logs_dir(),
         PathBuf::from("/tmp/custom-opendev/logs")
     );
-
-    // Restore
-    match original {
-        Some(v) => unsafe { env::set_var(key, v) },
-        None => unsafe { env::remove_var(key) },
-    }
 }
 
 #[test]
