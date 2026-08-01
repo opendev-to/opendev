@@ -85,13 +85,13 @@ async fn test_scan_all_memory_files() {
     );
 }
 
-#[test]
-fn test_load_save_meta() {
+#[tokio::test]
+async fn test_load_save_meta() {
     let dir = TempDir::new().unwrap();
     let meta_path = dir.path().join("meta.json");
 
     // Load non-existent file returns default
-    let meta = load_meta(&meta_path);
+    let meta = load_meta(&meta_path).await;
     assert!(meta.last_run.is_none());
     assert_eq!(meta.files_processed, 0);
 
@@ -100,8 +100,8 @@ fn test_load_save_meta() {
         last_run: Some("2026-01-01T00:00:00Z".to_string()),
         files_processed: 5,
     };
-    save_meta(&meta_path, &meta);
-    let loaded = load_meta(&meta_path);
+    save_meta(&meta_path, &meta).await;
+    let loaded = load_meta(&meta_path).await;
     assert_eq!(loaded.last_run.unwrap(), "2026-01-01T00:00:00Z");
     assert_eq!(loaded.files_processed, 5);
 }
