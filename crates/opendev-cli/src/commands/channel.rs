@@ -145,8 +145,11 @@ pub async fn handle_channel(action: ChannelAction, working_dir: &std::path::Path
                         if let Ok(mut file) = opts.open(&temp_path) {
                             use std::io::Write;
                             if file.write_all(pid.to_string().as_bytes()).is_ok() {
+                                let _ = file.sync_all();
+                                drop(file);
                                 let _ = std::fs::rename(&temp_path, &pid_path);
                             } else {
+                                drop(file);
                                 let _ = std::fs::remove_file(&temp_path);
                             }
                         }
