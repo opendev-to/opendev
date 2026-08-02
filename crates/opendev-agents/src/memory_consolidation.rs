@@ -208,10 +208,13 @@ async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<Conso
 
             let mut opts = tokio::fs::OpenOptions::new();
             opts.write(true).create_new(true).mode(0o600);
-            match opts.open(&tmp_path).await {
-                Ok(mut f) => f.write_all(full_content.as_bytes()).await,
-                Err(e) => Err(e),
+            async {
+                let mut f = opts.open(&tmp_path).await?;
+                f.write_all(full_content.as_bytes()).await?;
+                f.sync_all().await?;
+                Ok::<_, std::io::Error>(())
             }
+            .await
         }
         #[cfg(not(unix))]
         {
@@ -219,10 +222,13 @@ async fn run_consolidation(memory_dir: &Path, backup_dir: &Path) -> Option<Conso
 
             let mut opts = tokio::fs::OpenOptions::new();
             opts.write(true).create_new(true);
-            match opts.open(&tmp_path).await {
-                Ok(mut f) => f.write_all(full_content.as_bytes()).await,
-                Err(e) => Err(e),
+            async {
+                let mut f = opts.open(&tmp_path).await?;
+                f.write_all(full_content.as_bytes()).await?;
+                f.sync_all().await?;
+                Ok::<_, std::io::Error>(())
             }
+            .await
         }
     };
 
@@ -434,7 +440,8 @@ async fn save_meta(path: &Path, meta: &ConsolidationMeta) {
                 opts.write(true).create_new(true).mode(0o600);
                 async {
                     if let Ok(mut f) = opts.open(&tmp_path).await {
-                        f.write_all(json.as_bytes()).await
+                        f.write_all(json.as_bytes()).await?;
+                        f.sync_all().await
                     } else {
                         Err(std::io::Error::other("Failed to open file"))
                     }
@@ -449,7 +456,8 @@ async fn save_meta(path: &Path, meta: &ConsolidationMeta) {
                 opts.write(true).create_new(true);
                 async {
                     if let Ok(mut f) = opts.open(&tmp_path).await {
-                        f.write_all(json.as_bytes()).await
+                        f.write_all(json.as_bytes()).await?;
+                        f.sync_all().await
                     } else {
                         Err(std::io::Error::other("Failed to open file"))
                     }
