@@ -209,17 +209,18 @@ impl SessionManager {
             use std::os::unix::fs::OpenOptionsExt;
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create_new(true).mode(0o600);
-            std::io::Write::write_all(&mut opts.open(&tmp_json)?, json_content.as_bytes())?;
+            let mut file = opts.open(&tmp_json)?;
+            std::io::Write::write_all(&mut file, json_content.as_bytes())?;
+            file.sync_all()?;
         }
         #[cfg(not(unix))]
         {
-            std::io::Write::write_all(
-                &mut std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&tmp_json)?,
-                json_content.as_bytes(),
-            )?;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_json)?;
+            std::io::Write::write_all(&mut file, json_content.as_bytes())?;
+            file.sync_all()?;
         }
         std::fs::rename(&tmp_json, &json_path)?;
 
@@ -249,17 +250,18 @@ impl SessionManager {
             use std::os::unix::fs::OpenOptionsExt;
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create_new(true).mode(0o600);
-            std::io::Write::write_all(&mut opts.open(&tmp_jsonl)?, jsonl_content.as_bytes())?;
+            let mut file = opts.open(&tmp_jsonl)?;
+            std::io::Write::write_all(&mut file, jsonl_content.as_bytes())?;
+            file.sync_all()?;
         }
         #[cfg(not(unix))]
         {
-            std::io::Write::write_all(
-                &mut std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&tmp_jsonl)?,
-                jsonl_content.as_bytes(),
-            )?;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_jsonl)?;
+            std::io::Write::write_all(&mut file, jsonl_content.as_bytes())?;
+            file.sync_all()?;
         }
         std::fs::rename(&tmp_jsonl, &jsonl_path)?;
 
