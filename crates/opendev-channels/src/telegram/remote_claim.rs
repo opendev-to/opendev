@@ -78,7 +78,14 @@ impl RemoteSessionClaim {
         {
             use std::io::Write;
             let mut file = opts.open(&temp_path)?;
-            file.write_all(pid.to_string().as_bytes())?;
+            if let Err(e) = file
+                .write_all(pid.to_string().as_bytes())
+                .and_then(|_| file.sync_all())
+            {
+                drop(file);
+                let _ = fs::remove_file(&temp_path);
+                return Err(e);
+            }
         }
 
         fs::rename(&temp_path, &pid_file)?;
@@ -187,6 +194,7 @@ mod tests {
             use std::io::Write;
             let mut file = opts.open(&temp_path).expect("open temp file");
             file.write_all(b"999999").expect("write temp file");
+            file.sync_all().expect("sync temp file");
         }
         fs::rename(&temp_path, &claim.pid_file).expect("overwrite pid file");
 
@@ -213,6 +221,7 @@ mod tests {
             use std::io::Write;
             let mut file = opts.open(&temp_path).expect("open temp file");
             file.write_all(b"999999").expect("write temp file");
+            file.sync_all().expect("sync temp file");
         }
         fs::rename(&temp_path, &pid_file).expect("seed stale pid");
 
