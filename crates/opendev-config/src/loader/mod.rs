@@ -110,10 +110,13 @@ impl ConfigLoader {
                 #[cfg(unix)]
                 std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
                 if let Ok(mut file) = opts.open(&tmp_path) {
-                    let success = std::io::Write::write_all(&mut file, json.as_bytes()).is_ok();
+                    let write_ok = std::io::Write::write_all(&mut file, json.as_bytes()).is_ok();
+                    let sync_ok = file.sync_data().is_ok();
                     drop(file);
-                    if success {
-                        let _ = std::fs::rename(&tmp_path, path);
+                    if write_ok && sync_ok {
+                        if std::fs::rename(&tmp_path, path).is_err() {
+                            let _ = std::fs::remove_file(&tmp_path);
+                        }
                     } else {
                         let _ = std::fs::remove_file(&tmp_path);
                     }
@@ -208,7 +211,7 @@ impl ConfigLoader {
         })?;
 
         // Atomic write: write to .tmp then rename
-        let tmp_path = path.with_extension("json.tmp");
+        let tmp_path = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
 
         #[cfg(unix)]
         {
@@ -220,35 +223,55 @@ impl ConfigLoader {
                 path: tmp_path.display().to_string(),
                 source: e,
             })?;
-            std::io::Write::write_all(&mut file, json.as_bytes()).map_err(|e| {
-                ConfigError::ReadError {
+            if let Err(e) = std::io::Write::write_all(&mut file, json.as_bytes()) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(ConfigError::ReadError {
                     path: tmp_path.display().to_string(),
                     source: e,
-                }
-            })?;
+                });
+            }
+            if let Err(e) = file.sync_data() {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(ConfigError::ReadError {
+                    path: tmp_path.display().to_string(),
+                    source: e,
+                });
+            }
+            drop(file);
         }
         #[cfg(not(unix))]
         {
-            std::io::Write::write_all(
-                &mut std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&tmp_path)
-                    .map_err(|e| ConfigError::ReadError {
-                        path: tmp_path.display().to_string(),
-                        source: e,
-                    })?,
-                json.as_bytes(),
-            )
-            .map_err(|e| ConfigError::ReadError {
-                path: tmp_path.display().to_string(),
-                source: e,
-            })?;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)
+                .map_err(|e| ConfigError::ReadError {
+                    path: tmp_path.display().to_string(),
+                    source: e,
+                })?;
+            if let Err(e) = std::io::Write::write_all(&mut file, json.as_bytes()) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(ConfigError::ReadError {
+                    path: tmp_path.display().to_string(),
+                    source: e,
+                });
+            }
+            if let Err(e) = file.sync_data() {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(ConfigError::ReadError {
+                    path: tmp_path.display().to_string(),
+                    source: e,
+                });
+            }
+            drop(file);
         }
 
-        std::fs::rename(&tmp_path, path).map_err(|e| ConfigError::ReadError {
-            path: path.display().to_string(),
-            source: e,
+        std::fs::rename(&tmp_path, path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            ConfigError::ReadError {
+                path: path.display().to_string(),
+                source: e,
+            }
         })?;
 
         debug!("Saved config to {:?}", path);
