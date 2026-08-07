@@ -170,6 +170,8 @@ pub fn install_panic_handler() {
                     Ok(mut file) => {
                         use std::io::Write;
                         if file.write_all(report.as_bytes()).is_ok() {
+                            let _ = file.sync_all();
+                            drop(file);
                             std::fs::rename(&temp_path, &crash_path).is_ok()
                         } else {
                             let _ = std::fs::remove_file(&temp_path);
