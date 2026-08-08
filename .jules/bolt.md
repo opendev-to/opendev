@@ -99,3 +99,6 @@
 ## 2024-11-20 - Replacing synchronous std::fs operations with tokio::fs in memory consolidation
 **Learning:** In `crates/opendev-agents/src/memory_consolidation.rs`, using synchronous `std::fs` operations inside `load_meta` and `save_meta` blocks the async executor thread, even though these are called from async contexts.
 **Action:** Replace `std::fs` calls within these functions with `tokio::fs` equivalents and make them `async` to ensure non-blocking file I/O operations and improve overall application concurrency.
+## 2025-06-03 - Replacing Array.prototype.reduce with for...of loops for large array aggregations
+**Learning:** Using `Array.prototype.reduce` inside `useMemo` for aggregating properties of large arrays creates unnecessary overhead due to callback function allocations and execution overhead on every render when dependencies change. This can cause minor UI lag compared to traditional iterative loops.
+**Action:** Replace `.reduce()` array aggregations with a traditional `for...of` loop to avoid closure allocation overhead and improve execution speed, particularly for frequently updated components.

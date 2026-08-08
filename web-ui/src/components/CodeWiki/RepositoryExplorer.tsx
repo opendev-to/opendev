@@ -97,7 +97,11 @@ export function RepositoryExplorer({ selectedRepo, onRepoSelect, searchQuery }: 
   }, [deferredSearchQuery]);
 
   const totalFiles = useMemo(() => {
-    return filteredRepos.reduce((sum, repo) => sum + repo.files, 0);
+    let sum = 0;
+    for (const repo of filteredRepos) {
+      sum += repo.files;
+    }
+    return sum;
   }, [filteredRepos]);
 
   const toggleExpanded = (repoId: string) => {

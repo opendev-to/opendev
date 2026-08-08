@@ -39,9 +39,15 @@ export function RepositoryGrid({ repositories, searchQuery, onSearchChange, onAd
   // ⚡ Bolt Performance Optimization:
   // Memoize the aggregations derived from filteredRepositories.
   const { totalFiles, totalDocs } = useMemo(() => {
+    let files = 0;
+    let docs = 0;
+    for (const repo of filteredRepositories) {
+      files += repo.files;
+      docs += repo.docsFound;
+    }
     return {
-      totalFiles: filteredRepositories.reduce((sum, repo) => sum + repo.files, 0),
-      totalDocs: filteredRepositories.reduce((sum, repo) => sum + repo.docsFound, 0),
+      totalFiles: files,
+      totalDocs: docs,
     };
   }, [filteredRepositories]);
 
