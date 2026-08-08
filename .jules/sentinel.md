@@ -231,3 +231,7 @@
 **Vulnerability:** A missing `file.sync_all()` call before an atomic rename in `crates/opendev-cli/src/helpers.rs` meant that the crash report could end up empty or corrupted in the event of a sudden crash or power loss. Additionally, on Windows, attempting to rename a file while the handle is still open results in a `PermissionDenied` error.
 **Learning:** Atomic writes on cross-platform codebases must flush data to disk using `sync_all()` and explicitly close the file handle (e.g., using `drop(file)`) before invoking `std::fs::rename`. Failure to do so leads to data corruption on crash and functional breakage on Windows due to strict file locking semantics.
 **Prevention:** In atomic write sequences, always include a step to sync the file data to disk and explicitly drop the open file handle before performing the rename operation.
+## 2024-08-08 - Fix missing file sync before rename in sessions index
+**Vulnerability:** A missing `file.sync_all()` call before an atomic rename in `crates/opendev-history/src/index.rs` meant that the sessions index file could end up empty or corrupted in the event of a sudden crash or power loss.
+**Learning:** Atomic writes on cross-platform codebases must flush data to disk using `sync_all()` (or `sync_data()`) before invoking `std::fs::rename`. Failure to do so leads to data corruption on crash.
+**Prevention:** In atomic write sequences, always include a step to sync the file data to disk before performing the rename operation.

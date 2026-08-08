@@ -76,7 +76,7 @@ fn bench_conversation_render(c: &mut Criterion) {
         group.bench_function(format!("{count}_messages"), |b| {
             b.iter(|| {
                 let mut widget = ConversationWidget::new(black_box(&messages), 0);
-                widget.terminal_width = 120;
+
                 let mut buf = Buffer::empty(area);
                 widget.render(area, &mut buf);
             });
@@ -99,7 +99,7 @@ fn bench_build_lines(c: &mut Criterion) {
         group.bench_function(format!("{count}_messages"), |b| {
             b.iter(|| {
                 let mut widget = ConversationWidget::new(black_box(&messages), 0);
-                widget.terminal_width = 120;
+
                 // build_lines is called internally during render; we exercise it
                 // via a full render but into a minimal buffer to isolate line building cost.
                 let area = Rect::new(0, 0, 120, 1);
