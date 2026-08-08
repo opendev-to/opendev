@@ -115,17 +115,18 @@ impl SessionIndex {
                 use std::os::unix::fs::OpenOptionsExt;
                 let mut opts = std::fs::OpenOptions::new();
                 opts.write(true).create_new(true).mode(0o600);
-                std::io::Write::write_all(&mut opts.open(&tmp_path)?, content.as_bytes())?;
+                let mut file = opts.open(&tmp_path)?;
+                std::io::Write::write_all(&mut file, content.as_bytes())?;
+                file.sync_all()?;
             }
             #[cfg(not(unix))]
             {
-                std::io::Write::write_all(
-                    &mut std::fs::OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .open(&tmp_path)?,
-                    content.as_bytes(),
-                )?;
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp_path)?;
+                std::io::Write::write_all(&mut file, content.as_bytes())?;
+                file.sync_all()?;
             }
             std::fs::rename(&tmp_path, &index_path)?;
             Ok(())
