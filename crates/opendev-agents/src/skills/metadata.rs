@@ -27,6 +27,80 @@ impl std::fmt::Display for SkillSource {
     }
 }
 
+/// Execution context for a skill.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SkillContext {
+    /// Skill content is injected directly into the current conversation.
+    #[default]
+    Inline,
+    /// Skill is executed in an isolated sub-agent with a separate token budget.
+    Fork,
+}
+
+impl SkillContext {
+    /// Parse from a frontmatter string value.
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "inline" => Some(Self::Inline),
+            "fork" => Some(Self::Fork),
+            _ => None,
+        }
+    }
+}
+
+/// Effort level controlling thinking budget for forked skills.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SkillEffort {
+    Low,
+    #[default]
+    Medium,
+    High,
+    Max,
+}
+
+impl SkillEffort {
+    /// Parse from a frontmatter string value.
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "max" => Some(Self::Max),
+            _ => None,
+        }
+    }
+
+    /// Maximum iterations for the sub-agent when forked.
+    pub fn max_steps(&self) -> u32 {
+        match self {
+            Self::Low => 10,
+            Self::Medium => 25,
+            Self::High => 50,
+            Self::Max => 100,
+        }
+    }
+
+    /// Reasoning effort hint for the LLM.
+    pub fn reasoning_effort(&self) -> &str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High | Self::Max => "high",
+        }
+    }
+}
+
+/// An embedded hook definition from skill frontmatter.
+#[derive(Debug, Clone)]
+pub struct SkillHookDef {
+    /// Hook event name (e.g. `"PreToolUse"`, `"PostToolUse"`).
+    pub event: String,
+    /// Optional regex pattern to match against (e.g. tool name).
+    pub matcher: Option<String>,
+    /// Shell command to execute.
+    pub command: String,
+}
+
 /// Metadata extracted from a skill file's YAML frontmatter.
 #[derive(Debug, Clone)]
 pub struct SkillMetadata {
@@ -46,6 +120,22 @@ pub struct SkillMetadata {
     /// Optional agent override for this skill.
     /// When set, the skill should be executed by the specified agent instead of the current one.
     pub agent: Option<String>,
+    /// Glob patterns for conditional activation. When non-empty, the skill is
+    /// only visible after files matching these patterns are touched.
+    pub paths: Vec<String>,
+    /// Execution context: inline (default) or forked sub-agent.
+    pub context: SkillContext,
+    /// Effort level for forked skill execution.
+    pub effort: SkillEffort,
+    /// Tool names this skill is allowed to use when forked. Empty means all.
+    pub allowed_tools: Vec<String>,
+    /// If true, the model cannot invoke this skill autonomously — only user
+    /// slash commands can trigger it.
+    pub disable_model_invocation: bool,
+    /// If true (default), user can invoke via `/skill-name` slash command.
+    pub user_invocable: bool,
+    /// Embedded hook definitions from frontmatter.
+    pub hooks: Vec<SkillHookDef>,
 }
 
 impl SkillMetadata {

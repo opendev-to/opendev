@@ -545,6 +545,286 @@ fn test_url_skills_dont_override_local() {
     );
 }
 
+// ---- Conditional activation via paths ----
+
+#[test]
+fn test_skill_with_no_paths_is_always_active() {
+    let mut loader = SkillLoader::new(vec![]);
+    loader.discover_skills();
+    let commit = loader
+        .metadata_cache
+        .values()
+        .find(|m| m.name == "commit")
+        .unwrap();
+    assert!(loader.is_skill_active(commit));
+}
+
+#[test]
+fn test_skill_with_paths_inactive_by_default() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("ts-fixer.md"),
+        "---\nname: ts-fixer\ndescription: Fix TS\npaths: [\"**/*.ts\", \"**/*.tsx\"]\n---\n\n# TS Fixer\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    loader.discover_skills();
+
+    let ts_fixer = loader
+        .metadata_cache
+        .values()
+        .find(|m| m.name == "ts-fixer")
+        .unwrap();
+    assert!(!loader.is_skill_active(ts_fixer));
+}
+
+#[test]
+fn test_skill_activated_by_file_touch() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("ts-fixer.md"),
+        "---\nname: ts-fixer\ndescription: Fix TS\npaths: [\"**/*.ts\"]\n---\n\n# TS Fixer\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    loader.discover_skills();
+
+    // Touch a .ts file.
+    let activated = loader.notify_file_touched("src/main.ts");
+    assert!(activated.contains(&"ts-fixer".to_string()));
+
+    let ts_fixer = loader
+        .metadata_cache
+        .values()
+        .find(|m| m.name == "ts-fixer")
+        .unwrap();
+    assert!(loader.is_skill_active(ts_fixer));
+}
+
+#[test]
+fn test_skill_not_activated_by_non_matching_file() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("ts-fixer.md"),
+        "---\nname: ts-fixer\ndescription: Fix TS\npaths: [\"**/*.ts\"]\n---\n\n# TS Fixer\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    loader.discover_skills();
+
+    // Touch a .py file — should NOT activate.
+    let activated = loader.notify_file_touched("main.py");
+    assert!(activated.is_empty());
+}
+
+#[test]
+fn test_inactive_skill_hidden_from_index() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("conditional.md"),
+        "---\nname: conditional\ndescription: Conditional skill\npaths: [\"**/*.rs\"]\n---\n\n# Conditional\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    let index = loader.build_skills_index();
+    // conditional should NOT appear (no .rs files touched).
+    assert!(!index.contains("conditional"));
+}
+
+#[test]
+fn test_inactive_skill_hidden_from_names() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("hidden.md"),
+        "---\nname: hidden\ndescription: Hidden skill\npaths: [\"**/*.go\"]\n---\n\nBody\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    let names = loader.get_skill_names();
+    assert!(!names.contains(&"hidden".to_string()));
+}
+
+#[test]
+fn test_clear_session_state_resets_touched_files() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("cond.md"),
+        "---\nname: cond\ndescription: Cond\npaths: [\"**/*.rs\"]\n---\n\nBody\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    loader.discover_skills();
+    loader.notify_file_touched("main.rs");
+
+    let cond = loader
+        .metadata_cache
+        .values()
+        .find(|m| m.name == "cond")
+        .unwrap();
+    assert!(loader.is_skill_active(cond));
+
+    loader.clear_session_state();
+    let cond = loader
+        .metadata_cache
+        .values()
+        .find(|m| m.name == "cond")
+        .unwrap();
+    assert!(!loader.is_skill_active(cond));
+}
+
+// ---- Visibility controls ----
+
+#[test]
+fn test_disable_model_invocation_hides_from_names() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("secret.md"),
+        "---\nname: secret\ndescription: Secret skill\ndisable-model-invocation: true\n---\n\nBody\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    let names = loader.get_skill_names();
+    assert!(!names.contains(&"secret".to_string()));
+}
+
+#[test]
+fn test_disable_model_invocation_hides_from_index() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("secret.md"),
+        "---\nname: secret\ndescription: Secret skill\ndisable-model-invocation: true\n---\n\nBody\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    let index = loader.build_skills_index();
+    assert!(!index.contains("secret"));
+}
+
+#[test]
+fn test_user_invocable_skill_names() {
+    let tmp = TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    fs::create_dir_all(&skill_dir).unwrap();
+
+    fs::write(
+        skill_dir.join("visible.md"),
+        "---\nname: visible\ndescription: Visible\nuser-invocable: true\n---\n\nBody\n",
+    )
+    .unwrap();
+    fs::write(
+        skill_dir.join("hidden.md"),
+        "---\nname: hidden\ndescription: Hidden\nuser-invocable: false\n---\n\nBody\n",
+    )
+    .unwrap();
+
+    let mut loader = SkillLoader::new(vec![skill_dir]);
+    let names = loader.get_user_invocable_skill_names();
+    assert!(names.contains(&"visible".to_string()));
+    assert!(!names.contains(&"hidden".to_string()));
+}
+
+// ---- Token budgeting ----
+
+#[test]
+fn test_build_skills_index_budgeted() {
+    let mut loader = SkillLoader::new(vec![]);
+    let index = loader.build_skills_index_budgeted(100_000);
+    assert!(index.contains("## Available Skills"));
+    assert!(index.contains("**commit**"));
+}
+
+#[test]
+fn test_build_skills_index_budgeted_truncates_on_small_context() {
+    let mut loader = SkillLoader::new(vec![]);
+    // Very small context — should still produce something minimal.
+    let index = loader.build_skills_index_budgeted(100);
+    assert!(index.contains("## Available Skills"));
+}
+
+// ---- Runtime variable expansion ----
+
+#[test]
+fn test_expand_dollar_variables() {
+    let mut vars = HashMap::new();
+    vars.insert("SKILL_DIR".to_string(), "/skills/ts-fix".to_string());
+    vars.insert("SESSION_ID".to_string(), "abc-123".to_string());
+
+    let content = "Dir: ${SKILL_DIR}, Session: $SESSION_ID";
+    let result = SkillLoader::expand_dollar_variables(content, &vars);
+    assert_eq!(result, "Dir: /skills/ts-fix, Session: abc-123");
+}
+
+#[test]
+fn test_expand_dollar_variables_no_match() {
+    let vars = HashMap::new();
+    let content = "No vars ${HERE}";
+    let result = SkillLoader::expand_dollar_variables(content, &vars);
+    assert_eq!(result, "No vars ${HERE}");
+}
+
+#[test]
+fn test_build_runtime_variables() {
+    use super::super::metadata::*;
+    let skill = LoadedSkill {
+        metadata: SkillMetadata {
+            name: "test".into(),
+            description: "Test".into(),
+            namespace: "default".into(),
+            path: Some(PathBuf::from("/skills/testing/SKILL.md")),
+            source: SkillSource::Project,
+            model: None,
+            agent: None,
+            paths: vec![],
+            context: SkillContext::default(),
+            effort: SkillEffort::default(),
+            allowed_tools: vec![],
+            disable_model_invocation: false,
+            user_invocable: true,
+            hooks: vec![],
+        },
+        content: "test content".into(),
+        companion_files: vec![],
+        cached_mtime: None,
+    };
+
+    let vars = SkillLoader::build_runtime_variables(&skill, "sess-42");
+    assert_eq!(vars.get("SKILL_DIR").unwrap(), "/skills/testing");
+    assert_eq!(vars.get("SESSION_ID").unwrap(), "sess-42");
+    assert!(vars.contains_key("WORKING_DIR"));
+}
+
 // --- Cache invalidation via mtime ---
 
 #[test]

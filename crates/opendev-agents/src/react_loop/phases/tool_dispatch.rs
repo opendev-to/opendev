@@ -491,6 +491,60 @@ where
         };
         let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
 
+        // Handle forked skill execution: when the Skill tool returns
+        // `skill_fork: true` in metadata, automatically spawn a subagent
+        // with the skill content instead of letting the model run it inline.
+        let tool_result = if matches!(tool_name, "Skill" | "invoke_skill")
+            && tool_result.success
+            && tool_result
+                .metadata
+                .get("skill_fork")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            let skill_content = extract_skill_fork_content(
+                tool_result.output.as_deref().unwrap_or(""),
+            );
+            let skill_name = tool_result
+                .metadata
+                .get("skill_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("skill");
+            let max_steps = tool_result
+                .metadata
+                .get("skill_max_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(25);
+
+            info!(
+                skill = skill_name,
+                max_steps,
+                "Forked skill detected — spawning subagent"
+            );
+
+            // Build args for the Agent tool
+            let mut agent_args = std::collections::HashMap::new();
+            agent_args.insert(
+                "agent_type".to_string(),
+                serde_json::json!("General"),
+            );
+            agent_args.insert(
+                "task".to_string(),
+                serde_json::json!(skill_content),
+            );
+            agent_args.insert(
+                "description".to_string(),
+                serde_json::json!(format!("Forked skill: {skill_name}")),
+            );
+
+            // Execute via the Agent tool in the registry
+            tool_registry
+                .execute("Agent", agent_args, &exec_tool_context)
+                .await
+        } else {
+            tool_result
+        };
+
         iter_metrics.tool_calls.push(ToolCallMetric {
             tool_name: tool_name.to_string(),
             duration_ms: tool_duration_ms,
@@ -1336,4 +1390,21 @@ async fn execute_concurrent_batch(
     ReactLoop::track_exploration_tools(tool_context, &tool_names, messages);
 
     None
+}
+
+/// Extract skill content from a `<skill_fork>` tag in the Skill tool output.
+///
+/// Falls back to returning the full output if tags are not found.
+fn extract_skill_fork_content(output: &str) -> String {
+    if let Some(start) = output.find("<skill_fork") {
+        // Skip past the closing `>` of the opening tag
+        if let Some(tag_end) = output[start..].find('>') {
+            let content_start = start + tag_end + 1;
+            if let Some(end) = output[content_start..].find("</skill_fork>") {
+                return output[content_start..content_start + end].trim().to_string();
+            }
+        }
+    }
+    // Fallback: return everything (strip the wrapper text if possible)
+    output.to_string()
 }
