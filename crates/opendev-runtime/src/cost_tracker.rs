@@ -55,6 +55,16 @@ pub struct PricingInfo {
     pub output_price_per_million: f64,
 }
 
+impl PricingInfo {
+    /// Look up per-million pricing for `model` in llm-budget's built-in price table.
+    pub fn for_model(model: &str) -> Option<Self> {
+        llm_budget::PriceTable::builtin().get(model).map(|p| Self {
+            input_price_per_million: p.input_per_million,
+            output_price_per_million: p.output_per_million,
+        })
+    }
+}
+
 /// Tracks cumulative token usage and estimated cost for a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostTracker {
