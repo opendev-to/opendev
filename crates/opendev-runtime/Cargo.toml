@@ -19,6 +19,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 regex = { workspace = true }
 dirs-next = "2"
+llm-budget = { version = "0.10.0", default-features = false }
 fd-lock = "4"
 notify = "8"
 notify-debouncer-mini = "0.7"

@@ -10,7 +10,7 @@ use crate::prompts::reminders::{append_directive, get_reminder};
 use crate::traits::{AgentError, AgentResult, TaskMonitor};
 use opendev_context::ContextCompactor;
 use opendev_http::adapted_client::AdaptedClient;
-use opendev_runtime::{CostTracker, TokenUsage};
+use opendev_runtime::{CostTracker, PricingInfo, TokenUsage};
 use tokio_util::sync::CancellationToken;
 
 use super::super::ReactLoop;
@@ -63,8 +63,12 @@ where
                         && let Some(ref usage_json) = response.usage
                     {
                         let token_usage = TokenUsage::from_json(usage_json);
+                        let pricing = body
+                            .get("model")
+                            .and_then(|m| m.as_str())
+                            .and_then(PricingInfo::for_model);
                         if let Ok(mut tracker) = ct.lock() {
-                            tracker.record_usage(&token_usage, None);
+                            tracker.record_usage(&token_usage, pricing.as_ref());
                         }
                     }
 

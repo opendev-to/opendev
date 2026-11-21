@@ -180,6 +180,22 @@ impl ReactLoop {
                 state.collector_runner.run(&turn_ctx, messages).await;
             }
 
+            if cost_tracker
+                .and_then(|ct| ct.lock().ok())
+                .is_some_and(|ct| ct.is_over_budget())
+            {
+                warn!(
+                    iteration = state.iteration,
+                    "Session cost budget exhausted, aborting"
+                );
+                let mut result = AgentResult::fail(
+                    "Session cost budget exhausted".to_string(),
+                    messages.clone(),
+                );
+                result.completion_status = Some("budget_exceeded".to_string());
+                return Ok(result);
+            }
+
             if let Some(result) = super::phases::check_safety(
                 self,
                 caller,

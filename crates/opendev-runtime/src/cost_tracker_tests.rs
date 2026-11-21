@@ -435,3 +435,26 @@ fn test_budget_serialization() {
     assert!(!restored.is_over_budget());
     assert!((restored.remaining_budget().unwrap() - 1.75).abs() < 1e-9);
 }
+
+#[test]
+fn test_pricing_for_known_model_makes_budget_enforceable() {
+    let pricing = PricingInfo::for_model("gpt-4o").expect("gpt-4o is priced");
+    assert!(pricing.input_price_per_million > 0.0);
+    assert!(pricing.output_price_per_million > 0.0);
+
+    let mut tracker = CostTracker::new();
+    tracker.set_budget(0.01);
+    let usage = TokenUsage {
+        prompt_tokens: 100_000,
+        completion_tokens: 10_000,
+        ..Default::default()
+    };
+    tracker.record_usage(&usage, Some(&pricing));
+    assert!(tracker.total_cost_usd > 0.0);
+    assert!(tracker.is_over_budget());
+}
+
+#[test]
+fn test_pricing_for_unknown_model_is_none() {
+    assert!(PricingInfo::for_model("not-a-real-model-xyz").is_none());
+}
